@@ -2,7 +2,11 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PLAUD Manager">
+<meta name="theme-color" content="#0d0d1a">
 <title>PLAUD NotePin Manager</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -27,7 +31,9 @@
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
+    min-height: -webkit-fill-available;
     font-size: 14px;
+    -webkit-text-size-adjust: 100%;
   }
 
   /* ========== LAYOUT ========== */
@@ -36,6 +42,9 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 20px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-left: calc(20px + env(safe-area-inset-left));
+    padding-right: calc(20px + env(safe-area-inset-right));
     background: var(--card-bg);
     border-bottom: 1px solid var(--border);
     position: sticky;
@@ -59,6 +68,7 @@
   .main-layout {
     display: flex;
     height: calc(100vh - 53px);
+    height: calc(100dvh - 53px);
   }
 
   /* Left panel */
@@ -74,15 +84,19 @@
 
   .left-panel-inner {
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     flex: 1;
     padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
   }
 
   /* Right panel */
   .right-panel {
     flex: 1;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -94,6 +108,7 @@
     align-items: center;
     gap: 4px;
     padding: 6px 12px;
+    min-height: 44px; /* iOSタッチターゲット最小サイズ */
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--card-bg);
@@ -103,6 +118,8 @@
     transition: all 0.15s;
     text-decoration: none;
     white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
   .btn:hover { border-color: var(--accent); color: var(--accent); }
   .btn-primary {
@@ -160,9 +177,11 @@
     border-radius: 6px;
     color: var(--text);
     padding: 8px 10px;
-    font-size: 13px;
+    font-size: 16px; /* 16px必須: iOSの自動ズームを防ぐ */
     transition: border-color 0.15s;
     font-family: inherit;
+    -webkit-appearance: none;
+    appearance: none;
   }
   input:focus, select:focus, textarea:focus {
     outline: none;
@@ -479,8 +498,8 @@
   /* ========== TOAST ========== */
   #toast-container {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    right: calc(20px + env(safe-area-inset-right));
     z-index: 9999;
     display: flex;
     flex-direction: column;
@@ -560,7 +579,12 @@
   @media (max-width: 768px) {
     .main-layout { flex-direction: column; height: auto; }
 
-    .mobile-toggle-btn { display: block; }
+    .mobile-toggle-btn {
+      display: block;
+      padding-left: calc(16px + env(safe-area-inset-left));
+      padding-right: calc(16px + env(safe-area-inset-right));
+      min-height: 44px;
+    }
 
     .left-panel {
       width: 100%;
@@ -569,16 +593,38 @@
       border-bottom: 1px solid var(--border);
       max-height: 0;
       overflow: hidden;
-      transition: max-height 0.3s ease;
+      transition: max-height 0.35s ease;
     }
-    .left-panel.mobile-open {
-      max-height: 2000px;
+    .left-panel.mobile-open { max-height: 3000px; }
+    .left-panel-inner {
+      overflow-y: visible;
+      padding-left: calc(16px + env(safe-area-inset-left));
+      padding-right: calc(16px + env(safe-area-inset-right));
     }
-    .left-panel-inner { overflow-y: visible; }
 
-    .right-panel { padding: 12px; }
+    .right-panel {
+      padding: 12px;
+      padding-left: calc(12px + env(safe-area-inset-left));
+      padding-right: calc(12px + env(safe-area-inset-right));
+      padding-bottom: calc(80px + env(safe-area-inset-bottom));
+    }
+
     .filter-row { flex-direction: column; }
-    .filter-row input, .filter-row select { min-width: unset; }
+    .filter-row input, .filter-row select { min-width: unset; width: 100%; }
+
+    .card-actions { gap: 8px; }
+    .btn-sm { min-height: 40px; padding: 6px 10px; font-size: 13px; }
+
+    .modal {
+      max-height: calc(95vh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+      margin-top: env(safe-area-inset-top);
+    }
+
+    .modal-overlay { padding: 8px; align-items: flex-end; }
+    .modal { border-radius: 16px 16px 0 0; max-width: 100%; }
+
+    #toast-container { left: 12px; right: 12px; bottom: calc(16px + env(safe-area-inset-bottom)); }
+    .toast { min-width: unset; max-width: 100%; }
   }
 
   /* note */
