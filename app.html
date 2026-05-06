@@ -1,0 +1,1795 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PLAUD NotePin Manager</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0d1a;
+    --card-bg: #1a1a2e;
+    --form-bg: #16213e;
+    --accent: #8b5cf6;
+    --accent-light: rgba(139,92,246,0.15);
+    --accent-border: rgba(139,92,246,0.4);
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --border: #2d2d4e;
+    --success: #22c55e;
+    --error: #ef4444;
+    --input-bg: #0d0d1a;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+  }
+
+  /* ========== LAYOUT ========== */
+  .app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .app-header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .main-layout {
+    display: flex;
+    height: calc(100vh - 53px);
+  }
+
+  /* Left panel */
+  .left-panel {
+    width: 380px;
+    min-width: 380px;
+    background: var(--form-bg);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .left-panel-inner {
+    overflow-y: auto;
+    flex: 1;
+    padding: 16px;
+  }
+
+  /* Right panel */
+  .right-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ========== BUTTONS ========== */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--card-bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.15s;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .btn-primary:hover { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+  .btn-sm { padding: 4px 8px; font-size: 12px; }
+  .btn-icon {
+    padding: 4px 6px;
+    font-size: 14px;
+    border-radius: 4px;
+  }
+  .btn-danger { border-color: var(--error); color: var(--error); }
+  .btn-danger:hover { background: var(--error); color: #fff; }
+  .btn-success { border-color: var(--success); color: var(--success); }
+  .btn-full { width: 100%; justify-content: center; }
+  .btn-ai {
+    background: linear-gradient(135deg, #6d28d9, #8b5cf6);
+    border-color: #8b5cf6;
+    color: #fff;
+  }
+  .btn-ai:hover { background: linear-gradient(135deg, #5b21b6, #7c3aed); color: #fff; }
+  .btn-learning {
+    background: var(--accent-light);
+    border-color: var(--accent-border);
+    color: var(--accent);
+  }
+  .btn-learning.has-data {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* ========== FORM ELEMENTS ========== */
+  .form-group { margin-bottom: 12px; }
+  .form-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+    font-weight: 500;
+  }
+  .form-label .required { color: var(--error); margin-left: 2px; }
+  input[type="text"],
+  input[type="url"],
+  input[type="password"],
+  select,
+  textarea {
+    width: 100%;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 8px 10px;
+    font-size: 13px;
+    transition: border-color 0.15s;
+    font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  input.confirmed {
+    border-color: var(--success);
+  }
+  textarea { resize: vertical; min-height: 80px; }
+  select option { background: var(--card-bg); }
+
+  .input-row {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+  }
+  .input-row input, .input-row select { flex: 1; }
+
+  .url-status {
+    font-size: 11px;
+    margin-top: 3px;
+    color: var(--success);
+    display: none;
+  }
+  .url-status.visible { display: block; }
+
+  /* ========== TABS ========== */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+  }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ========== SECTIONS ========== */
+  .form-section {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .form-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+  }
+  .learning-section {
+    border: 1px dashed var(--accent-border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: var(--accent-light);
+  }
+  .learning-section .form-section-title { color: var(--accent); }
+
+  /* ========== CARDS ========== */
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .card:hover { border-color: var(--accent-border); }
+
+  .card-header {
+    padding: 12px 14px 8px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .card-title {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.3;
+    flex: 1;
+  }
+  .category-badge {
+    background: var(--accent-light);
+    border: 1px solid var(--accent-border);
+    color: var(--accent);
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .card-meta {
+    padding: 0 14px 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .platform-badge {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .date-text { font-size: 11px; color: var(--text-muted); }
+
+  .card-memo {
+    padding: 0 14px 8px;
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .card-actions {
+    padding: 8px 14px 12px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  /* Learning expand */
+  .learning-expand {
+    background: rgba(139,92,246,0.08);
+    border-top: 1px solid var(--accent-border);
+    padding: 12px 14px;
+    display: none;
+  }
+  .learning-expand.open { display: block; }
+  .learning-expand h4 {
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .learning-block { margin-bottom: 10px; }
+  .learning-block-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .learning-block p {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+  details summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 6px;
+    user-select: none;
+  }
+  details p {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+
+  /* ========== RIGHT PANEL CONTROLS ========== */
+  .list-tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .list-tab-btn {
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+  }
+  .list-tab-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .badge {
+    background: rgba(255,255,255,0.2);
+    border-radius: 10px;
+    padding: 1px 5px;
+    font-size: 10px;
+  }
+  .list-tab-btn:not(.active) .badge {
+    background: var(--border);
+    color: var(--text-muted);
+  }
+
+  .filter-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .filter-row input { flex: 1; min-width: 150px; }
+  .filter-row select { min-width: 120px; }
+
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state p { font-size: 15px; }
+
+  /* ========== MODAL ========== */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 24px;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .modal-header h2 { font-size: 18px; font-weight: 700; }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 20px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .modal-close:hover { color: var(--text); background: var(--border); }
+  .modal-footer {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .modal-section {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .modal-section h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--accent);
+  }
+
+  /* Category list */
+  .cat-list { display: flex; flex-direction: column; gap: 6px; }
+  .cat-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--form-bg);
+    border-radius: 6px;
+    font-size: 13px;
+  }
+  .cat-item-info { display: flex; flex-direction: column; gap: 2px; }
+  .cat-main { font-weight: 600; }
+  .cat-sub { color: var(--text-muted); font-size: 12px; }
+
+  /* ========== TOAST ========== */
+  #toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toast {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 16px;
+    min-width: 220px;
+    max-width: 340px;
+    font-size: 13px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    animation: slideInRight 0.25s ease;
+    border-left: 3px solid var(--border);
+  }
+  .toast.success { border-left-color: var(--success); }
+  .toast.error { border-left-color: var(--error); }
+  @keyframes slideInRight {
+    from { transform: translateX(120%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+  .toast.fade-out {
+    animation: fadeOut 0.25s ease forwards;
+  }
+  @keyframes fadeOut {
+    to { opacity: 0; transform: translateX(120%); }
+  }
+
+  /* ========== SPINNER ========== */
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* AI result area */
+  .ai-result {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 8px;
+    font-size: 12px;
+    display: none;
+  }
+  .ai-result.visible { display: block; }
+  .ai-result-label {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .ai-result p { color: var(--text-muted); line-height: 1.6; white-space: pre-wrap; }
+
+  /* ========== MOBILE ========== */
+  .mobile-toggle-btn {
+    display: none;
+    width: 100%;
+    padding: 10px;
+    background: var(--form-bg);
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  @media (max-width: 768px) {
+    .main-layout { flex-direction: column; height: auto; }
+
+    .mobile-toggle-btn { display: block; }
+
+    .left-panel {
+      width: 100%;
+      min-width: unset;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+    }
+    .left-panel.mobile-open {
+      max-height: 2000px;
+    }
+    .left-panel-inner { overflow-y: visible; }
+
+    .right-panel { padding: 12px; }
+    .filter-row { flex-direction: column; }
+    .filter-row input, .filter-row select { min-width: unset; }
+  }
+
+  /* note */
+  .note-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .data-actions { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+
+<!-- ========== HEADER ========== -->
+<header class="app-header">
+  <h1>🎙️ PLAUD Manager</h1>
+  <div class="header-actions">
+    <button class="btn btn-sm" id="settingsBtn">⚙️ 設定</button>
+  </div>
+</header>
+
+<!-- ========== MOBILE TOGGLE ========== -->
+<button class="mobile-toggle-btn" id="mobileToggleBtn">➕ 新規登録フォームを開く</button>
+
+<!-- ========== MAIN LAYOUT ========== -->
+<div class="main-layout">
+
+  <!-- LEFT PANEL -->
+  <aside class="left-panel" id="leftPanel">
+    <div class="left-panel-inner">
+
+      <!-- Form Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="manual">手動入力</button>
+        <button class="tab-btn" data-tab="paste">メモ貼り付け</button>
+      </div>
+
+      <!-- ===== MANUAL FORM ===== -->
+      <div class="tab-content active" id="tab-manual">
+        <form id="mainForm" autocomplete="off">
+
+          <!-- 基本情報 -->
+          <div class="form-section">
+            <div class="form-section-title">基本情報</div>
+
+            <div class="form-group">
+              <label class="form-label">大カテゴリ</label>
+              <div class="input-row">
+                <select id="categoryMain"></select>
+                <button type="button" class="btn btn-icon" id="addMainCatBtn" title="大カテゴリを追加">+</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">小カテゴリ</label>
+              <div class="input-row">
+                <select id="categorySub"></select>
+                <button type="button" class="btn btn-icon" id="addSubCatBtn" title="小カテゴリを追加">+</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">タイトル <span class="required">*</span></label>
+              <input type="text" id="title" placeholder="タイトルを入力" required>
+            </div>
+          </div>
+
+          <!-- URL -->
+          <div class="form-section">
+            <div class="form-section-title">URL</div>
+
+            <div class="form-group">
+              <label class="form-label">メインURL <span class="required">*</span></label>
+              <div class="input-row">
+                <input type="url" id="mainUrl" placeholder="https://..." data-confirmed="false">
+                <button type="button" class="btn btn-sm" id="confirmMainUrl">確認</button>
+              </div>
+              <div class="url-status" id="mainUrlStatus">✅ 確認済み</div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">サブURL（任意）</label>
+              <div class="input-row">
+                <input type="url" id="subUrl" placeholder="https://..." data-confirmed="false">
+                <button type="button" class="btn btn-sm" id="confirmSubUrl">確認</button>
+              </div>
+              <div class="url-status" id="subUrlStatus">✅ 確認済み</div>
+            </div>
+          </div>
+
+          <!-- メモ -->
+          <div class="form-section">
+            <div class="form-section-title">メモ</div>
+            <div class="form-group">
+              <textarea id="memo" placeholder="メモを入力（任意）" rows="3"></textarea>
+            </div>
+          </div>
+
+          <!-- 学び -->
+          <div class="learning-section">
+            <div class="form-section-title">🧠 学び・示唆</div>
+
+            <div class="form-group">
+              <label class="form-label">音声録音URL（任意）</label>
+              <input type="url" id="audioUrl" placeholder="https://...">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">文字起こしテキスト（任意）</label>
+              <textarea id="transcriptOriginal" placeholder="文字起こしを貼り付け..." rows="4"></textarea>
+            </div>
+
+            <div class="form-group">
+              <button type="button" class="btn btn-ai btn-full" id="aiBtn">
+                ✨ AIで誤字脱字修正・要約
+              </button>
+            </div>
+
+            <div class="ai-result" id="aiResult">
+              <div class="ai-result-label">📝 修正済みテキスト</div>
+              <p id="aiCorrected"></p>
+              <div class="ai-result-label" style="margin-top:8px;">💡 要約</div>
+              <p id="aiSummary"></p>
+            </div>
+
+            <div class="form-group" style="margin-top:8px;">
+              <label class="form-label">要約・テキストメモ（任意）</label>
+              <textarea id="learningNote" placeholder="要約やメモ..." rows="3"></textarea>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-full">💾 登録する</button>
+        </form>
+      </div>
+
+      <!-- ===== PASTE FORM ===== -->
+      <div class="tab-content" id="tab-paste">
+        <div class="form-group">
+          <label class="form-label">メモを貼り付け</label>
+          <textarea id="pasteText" placeholder="テキストをここに貼り付け..." rows="12"></textarea>
+        </div>
+        <button type="button" class="btn btn-primary btn-full" id="parseBtn">
+          🔍 解析して登録フォームに反映
+        </button>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- RIGHT PANEL -->
+  <main class="right-panel">
+    <!-- List tabs -->
+    <div class="list-tabs" id="listTabs"></div>
+
+    <!-- Filters -->
+    <div class="filter-row">
+      <input type="text" id="searchInput" placeholder="🔍 キーワード検索...">
+      <select id="platformFilter">
+        <option value="">全プラットフォーム</option>
+        <option value="YouTube">YouTube</option>
+        <option value="Zoom">Zoom</option>
+        <option value="Vimeo">Vimeo</option>
+        <option value="その他">その他</option>
+      </select>
+      <select id="sortSelect">
+        <option value="newest">登録順</option>
+        <option value="alpha">あいうえお順</option>
+        <option value="category">カテゴリ順</option>
+      </select>
+    </div>
+
+    <!-- Card grid -->
+    <div id="cardGrid"></div>
+  </main>
+
+</div>
+
+<!-- ========== SETTINGS MODAL ========== -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>⚙️ 設定</h2>
+      <button class="modal-close" data-close="settingsModal">✕</button>
+    </div>
+
+    <!-- API Key -->
+    <div class="modal-section">
+      <h3>Claude API Key</h3>
+      <div class="form-group">
+        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
+        <p class="note-text">※ localStorageに保存されます</p>
+      </div>
+      <button class="btn btn-primary" id="saveApiKeyBtn">保存</button>
+    </div>
+
+    <!-- Categories -->
+    <div class="modal-section">
+      <h3>カテゴリ管理</h3>
+      <div class="cat-list" id="catList"></div>
+    </div>
+
+    <!-- Data -->
+    <div class="modal-section">
+      <h3>データ管理</h3>
+      <div class="data-actions">
+        <button class="btn" id="exportBtn">📤 エクスポート（JSON）</button>
+        <button class="btn" id="importBtn">📥 インポート</button>
+        <input type="file" id="importFile" accept=".json" style="display:none">
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn" data-close="settingsModal">キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== EDIT MODAL ========== -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>✏️ 編集</h2>
+      <button class="modal-close" data-close="editModal">✕</button>
+    </div>
+
+    <form id="editForm" autocomplete="off">
+      <input type="hidden" id="editId">
+
+      <div class="form-section">
+        <div class="form-section-title">基本情報</div>
+        <div class="form-group">
+          <label class="form-label">大カテゴリ</label>
+          <div class="input-row">
+            <select id="editCategoryMain"></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">小カテゴリ</label>
+          <div class="input-row">
+            <select id="editCategorySub"></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">タイトル <span class="required">*</span></label>
+          <input type="text" id="editTitle" required>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">URL</div>
+        <div class="form-group">
+          <label class="form-label">メインURL</label>
+          <div class="input-row">
+            <input type="url" id="editMainUrl" data-confirmed="false">
+            <button type="button" class="btn btn-sm" id="editConfirmMainUrl">確認</button>
+          </div>
+          <div class="url-status" id="editMainUrlStatus">✅ 確認済み</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">サブURL（任意）</label>
+          <div class="input-row">
+            <input type="url" id="editSubUrl" data-confirmed="false">
+            <button type="button" class="btn btn-sm" id="editConfirmSubUrl">確認</button>
+          </div>
+          <div class="url-status" id="editSubUrlStatus">✅ 確認済み</div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <div class="form-section-title">メモ</div>
+        <div class="form-group">
+          <textarea id="editMemo" rows="3"></textarea>
+        </div>
+      </div>
+
+      <div class="learning-section">
+        <div class="form-section-title">🧠 学び・示唆</div>
+        <div class="form-group">
+          <label class="form-label">音声録音URL（任意）</label>
+          <input type="url" id="editAudioUrl">
+        </div>
+        <div class="form-group">
+          <label class="form-label">文字起こしテキスト（任意）</label>
+          <textarea id="editTranscriptOriginal" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">修正済みテキスト（任意）</label>
+          <textarea id="editTranscriptCorrected" rows="3"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">要約（任意）</label>
+          <textarea id="editSummary" rows="2"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">学びメモ（任意）</label>
+          <textarea id="editLearningNote" rows="3"></textarea>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn" data-close="editModal">キャンセル</button>
+        <button type="submit" class="btn btn-primary">💾 保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========== TOAST CONTAINER ========== -->
+<div id="toast-container"></div>
+
+<script>
+'use strict';
+
+// ========== UTILS ==========
+
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeOpen(url) {
+  if (!url) return;
+  const lower = url.trim().toLowerCase();
+  if (lower.startsWith('javascript:') || lower.startsWith('data:')) {
+    toast('無効なURLです', 'error');
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function toast(msg, type = 'success') {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('fade-out');
+    el.addEventListener('animationend', () => el.remove());
+  }, 3000);
+}
+
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function detectPlatform(url) {
+  if (!url) return 'その他';
+  const u = url.toLowerCase();
+  if (u.includes('youtube.com') || u.includes('youtu.be')) return 'YouTube';
+  if (u.includes('zoom.us')) return 'Zoom';
+  if (u.includes('vimeo.com')) return 'Vimeo';
+  return 'その他';
+}
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// ========== STATE ==========
+
+const DEFAULT_CATEGORIES = {
+  '自治体': ['横浜市', '北九州市', '豊島区'],
+  '会議': ['自治体', '事業者', '営業推進']
+};
+
+let state = {
+  records: [],
+  categories: structuredClone(DEFAULT_CATEGORIES),
+  settings: { apiKey: '' }
+};
+
+function loadState() {
+  try {
+    const records = localStorage.getItem('plaud_records');
+    if (records) state.records = JSON.parse(records);
+    const cats = localStorage.getItem('plaud_categories');
+    if (cats) state.categories = JSON.parse(cats);
+    const settings = localStorage.getItem('plaud_settings');
+    if (settings) state.settings = JSON.parse(settings);
+  } catch(e) {
+    console.error('loadState error', e);
+  }
+}
+
+function saveRecords() {
+  localStorage.setItem('plaud_records', JSON.stringify(state.records));
+}
+
+function saveCategories() {
+  localStorage.setItem('plaud_categories', JSON.stringify(state.categories));
+}
+
+function saveSettings() {
+  localStorage.setItem('plaud_settings', JSON.stringify(state.settings));
+}
+
+// ========== CATEGORY HELPERS ==========
+
+function getMainCats() {
+  return Object.keys(state.categories);
+}
+
+function getSubCats(main) {
+  return state.categories[main] || [];
+}
+
+function populateMainSelect(sel, selectedValue) {
+  const mains = getMainCats();
+  sel.innerHTML = mains.map(m => `<option value="${escHtml(m)}" ${m === selectedValue ? 'selected' : ''}>${escHtml(m)}</option>`).join('');
+}
+
+function populateSubSelect(sel, main, selectedValue) {
+  const subs = getSubCats(main);
+  if (subs.length === 0) {
+    sel.innerHTML = '<option value="">（なし）</option>';
+  } else {
+    sel.innerHTML = subs.map(s => `<option value="${escHtml(s)}" ${s === selectedValue ? 'selected' : ''}>${escHtml(s)}</option>`).join('');
+  }
+}
+
+// ========== URL CONFIRM ==========
+
+function setupUrlConfirm(inputId, btnId, statusId) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  const status = document.getElementById(statusId);
+
+  function setConfirmed(val) {
+    input.dataset.confirmed = val ? 'true' : 'false';
+    if (val) {
+      input.classList.add('confirmed');
+      status.classList.add('visible');
+    } else {
+      input.classList.remove('confirmed');
+      status.classList.remove('visible');
+    }
+  }
+
+  btn.addEventListener('click', () => {
+    const url = input.value.trim();
+    if (!url) { toast('URLを入力してください', 'error'); return; }
+    const lower = url.toLowerCase();
+    if (lower.startsWith('javascript:') || lower.startsWith('data:')) {
+      toast('無効なURLです', 'error'); return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setConfirmed(true);
+  });
+
+  input.addEventListener('input', () => setConfirmed(false));
+
+  return { setConfirmed };
+}
+
+// ========== FORM INIT ==========
+
+let mainUrlCtrl, subUrlCtrl, editMainUrlCtrl, editSubUrlCtrl;
+
+function initForm() {
+  // Populate main category
+  const mainSel = document.getElementById('categoryMain');
+  const subSel = document.getElementById('categorySub');
+  populateMainSelect(mainSel, getMainCats()[0]);
+  populateSubSelect(subSel, mainSel.value);
+
+  mainSel.addEventListener('change', () => {
+    populateSubSelect(subSel, mainSel.value);
+  });
+
+  // Add main category
+  document.getElementById('addMainCatBtn').addEventListener('click', () => {
+    const name = prompt('新しい大カテゴリ名を入力してください:');
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    if (state.categories[trimmed]) { toast('同じ名前のカテゴリが既に存在します', 'error'); return; }
+    state.categories[trimmed] = [];
+    saveCategories();
+    populateMainSelect(mainSel, trimmed);
+    populateSubSelect(subSel, trimmed);
+    renderListTabs();
+    toast('大カテゴリを追加しました', 'success');
+  });
+
+  // Add sub category
+  document.getElementById('addSubCatBtn').addEventListener('click', () => {
+    const main = mainSel.value;
+    if (!main) { toast('大カテゴリを選択してください', 'error'); return; }
+    const name = prompt(`「${main}」に追加する小カテゴリ名:`);
+    if (!name || !name.trim()) return;
+    const trimmed = name.trim();
+    if (!state.categories[main]) state.categories[main] = [];
+    if (state.categories[main].includes(trimmed)) { toast('同じ名前のサブカテゴリが既に存在します', 'error'); return; }
+    state.categories[main].push(trimmed);
+    saveCategories();
+    populateSubSelect(subSel, main, trimmed);
+    toast('小カテゴリを追加しました', 'success');
+  });
+
+  // URL confirm
+  mainUrlCtrl = setupUrlConfirm('mainUrl', 'confirmMainUrl', 'mainUrlStatus');
+  subUrlCtrl = setupUrlConfirm('subUrl', 'confirmSubUrl', 'subUrlStatus');
+
+  // AI button
+  document.getElementById('aiBtn').addEventListener('click', handleAI);
+
+  // Form submit
+  document.getElementById('mainForm').addEventListener('submit', handleFormSubmit);
+}
+
+// ========== AI CALL ==========
+
+async function callClaudeAI(text) {
+  const apiKey = state.settings.apiKey;
+  if (!apiKey) {
+    toast('API Keyが設定されていません。設定から入力してください。', 'error');
+    return null;
+  }
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-calls': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4096,
+      messages: [{
+        role: 'user',
+        content: `以下はPLAUD NotePinで録音された音声の文字起こしテキストです。\n\n1. 誤字脱字・文法的なミスを修正してください\n2. 内容を200〜300字程度で要約してください\n\n【文字起こしテキスト】\n${text}\n\n以下のJSON形式のみで回答してください（他のテキストは不要）：\n{"corrected": "修正後のテキスト", "summary": "要約文"}`
+      }]
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`API Error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json();
+  const raw = data.content[0].text;
+
+  // JSONを抽出
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('JSONのパースに失敗しました');
+  return JSON.parse(match[0]);
+}
+
+async function handleAI() {
+  const text = document.getElementById('transcriptOriginal').value.trim();
+  if (!text) { toast('文字起こしテキストを入力してください', 'error'); return; }
+
+  const btn = document.getElementById('aiBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 処理中...';
+
+  try {
+    const result = await callClaudeAI(text);
+    if (!result) return;
+
+    document.getElementById('aiCorrected').textContent = result.corrected || '';
+    document.getElementById('aiSummary').textContent = result.summary || '';
+    document.getElementById('aiResult').classList.add('visible');
+    document.getElementById('learningNote').value = result.summary || '';
+    toast('AI処理が完了しました！', 'success');
+  } catch(e) {
+    console.error(e);
+    toast(`エラー: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '✨ AIで誤字脱字修正・要約';
+  }
+}
+
+// ========== FORM SUBMIT ==========
+
+function getFormData() {
+  const mainUrl = document.getElementById('mainUrl').value.trim();
+  const mainConfirmed = document.getElementById('mainUrl').dataset.confirmed === 'true';
+  const subUrl = document.getElementById('subUrl').value.trim();
+  const subConfirmed = document.getElementById('subUrl').dataset.confirmed === 'true';
+
+  return {
+    categoryMain: document.getElementById('categoryMain').value,
+    categorySub: document.getElementById('categorySub').value,
+    title: document.getElementById('title').value.trim(),
+    mainUrl,
+    mainUrlConfirmed: mainConfirmed,
+    subUrl,
+    subUrlConfirmed: subUrl ? subConfirmed : true,
+    memo: document.getElementById('memo').value.trim(),
+    learning: {
+      audioUrl: document.getElementById('audioUrl').value.trim(),
+      transcriptOriginal: document.getElementById('transcriptOriginal').value.trim(),
+      transcriptCorrected: document.getElementById('aiCorrected').textContent.trim(),
+      summary: document.getElementById('aiSummary').textContent.trim(),
+      note: document.getElementById('learningNote').value.trim()
+    }
+  };
+}
+
+function handleFormSubmit(e) {
+  e.preventDefault();
+  const data = getFormData();
+
+  if (!data.title) { toast('タイトルは必須です', 'error'); return; }
+  if (!data.mainUrl) { toast('メインURLは必須です', 'error'); return; }
+  if (!data.mainUrlConfirmed) { toast('メインURLを確認してください', 'error'); return; }
+  if (data.subUrl && !data.subUrlConfirmed) { toast('サブURLを確認してください', 'error'); return; }
+
+  const record = {
+    id: genId(),
+    ...data,
+    platform: detectPlatform(data.mainUrl),
+    createdAt: new Date().toISOString()
+  };
+
+  state.records.unshift(record);
+  saveRecords();
+  resetForm();
+  renderCards();
+  renderListTabs();
+  toast('登録しました！', 'success');
+}
+
+function resetForm() {
+  document.getElementById('mainForm').reset();
+  mainUrlCtrl.setConfirmed(false);
+  subUrlCtrl.setConfirmed(false);
+  document.getElementById('aiResult').classList.remove('visible');
+  document.getElementById('aiCorrected').textContent = '';
+  document.getElementById('aiSummary').textContent = '';
+  document.getElementById('mainUrlStatus').classList.remove('visible');
+  document.getElementById('subUrlStatus').classList.remove('visible');
+}
+
+// ========== PASTE PARSE ==========
+
+function initPaste() {
+  document.getElementById('parseBtn').addEventListener('click', () => {
+    const text = document.getElementById('pasteText').value.trim();
+    if (!text) { toast('テキストを貼り付けてください', 'error'); return; }
+
+    const urlRegex = /https?:\/\/[^\s　、。！-￯]+/g;
+    const urls = text.match(urlRegex) || [];
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const nonUrlLines = lines.filter(l => !l.match(/^https?:\/\//));
+
+    const mainUrl = urls[0] || '';
+    const subUrl = urls[1] || '';
+    const titleLine = nonUrlLines[0] || '';
+    const memoLines = nonUrlLines.slice(1).join('\n');
+
+    // Switch to manual tab
+    switchFormTab('manual');
+
+    // Populate fields
+    document.getElementById('title').value = titleLine;
+    document.getElementById('mainUrl').value = mainUrl;
+    document.getElementById('subUrl').value = subUrl;
+    document.getElementById('memo').value = memoLines;
+
+    // Reset confirmations
+    mainUrlCtrl.setConfirmed(false);
+    subUrlCtrl.setConfirmed(false);
+
+    // Clear paste
+    document.getElementById('pasteText').value = '';
+
+    toast('フォームに反映しました', 'success');
+  });
+}
+
+// ========== TABS ==========
+
+function switchFormTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => {
+    c.classList.toggle('active', c.id === `tab-${name}`);
+  });
+}
+
+function initFormTabs() {
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchFormTab(btn.dataset.tab));
+  });
+}
+
+// ========== LIST TABS ==========
+
+let activeListTab = 'all';
+
+function renderListTabs() {
+  const container = document.getElementById('listTabs');
+  const mains = getMainCats();
+
+  const allCount = state.records.length;
+  const tabs = [
+    { key: 'all', label: '全て', count: allCount }
+  ];
+  mains.forEach(m => {
+    const count = state.records.filter(r => r.categoryMain === m).length;
+    tabs.push({ key: m, label: m, count });
+  });
+
+  container.innerHTML = tabs.map(t => `
+    <button class="list-tab-btn ${activeListTab === t.key ? 'active' : ''}" data-tab="${escHtml(t.key)}">
+      ${escHtml(t.label)} <span class="badge">${t.count}</span>
+    </button>
+  `).join('');
+
+  container.querySelectorAll('.list-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeListTab = btn.dataset.tab;
+      renderListTabs();
+      renderCards();
+    });
+  });
+}
+
+// ========== FILTER / SORT ==========
+
+function getFilteredRecords() {
+  let records = [...state.records];
+
+  // Category filter
+  if (activeListTab !== 'all') {
+    records = records.filter(r => r.categoryMain === activeListTab);
+  }
+
+  // Keyword
+  const kw = document.getElementById('searchInput').value.trim().toLowerCase();
+  if (kw) {
+    records = records.filter(r => {
+      return (
+        (r.title || '').toLowerCase().includes(kw) ||
+        (r.memo || '').toLowerCase().includes(kw) ||
+        (r.categoryMain || '').toLowerCase().includes(kw) ||
+        (r.categorySub || '').toLowerCase().includes(kw) ||
+        (r.learning?.note || '').toLowerCase().includes(kw) ||
+        (r.learning?.summary || '').toLowerCase().includes(kw)
+      );
+    });
+  }
+
+  // Platform
+  const platform = document.getElementById('platformFilter').value;
+  if (platform) {
+    records = records.filter(r => r.platform === platform);
+  }
+
+  // Sort
+  const sort = document.getElementById('sortSelect').value;
+  if (sort === 'alpha') {
+    records.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'ja'));
+  } else if (sort === 'category') {
+    records.sort((a, b) => {
+      const cm = (a.categoryMain || '').localeCompare(b.categoryMain || '', 'ja');
+      if (cm !== 0) return cm;
+      return (a.categorySub || '').localeCompare(b.categorySub || '', 'ja');
+    });
+  }
+  // default: newest (already in order)
+
+  return records;
+}
+
+// ========== RENDER CARDS ==========
+
+function renderCards() {
+  const grid = document.getElementById('cardGrid');
+  const records = getFilteredRecords();
+
+  if (records.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">🎙️</div>
+        <p>登録されたデータがありません</p>
+      </div>
+    `;
+    return;
+  }
+
+  grid.innerHTML = records.map(r => buildCardHTML(r)).join('');
+
+  // Bind events
+  grid.querySelectorAll('[data-action]').forEach(el => {
+    el.addEventListener('click', handleCardAction);
+  });
+}
+
+function buildCardHTML(r) {
+  const hasLearning = r.learning && (
+    r.learning.audioUrl || r.learning.transcriptOriginal ||
+    r.learning.transcriptCorrected || r.learning.summary || r.learning.note
+  );
+
+  return `
+  <div class="card" id="card-${escHtml(r.id)}">
+    <div class="card-header">
+      <div class="card-title">${escHtml(r.title)}</div>
+      <span class="category-badge">${escHtml(r.categoryMain)}${r.categorySub ? ' / ' + escHtml(r.categorySub) : ''}</span>
+    </div>
+    <div class="card-meta">
+      <span class="platform-badge">${escHtml(r.platform || 'その他')}</span>
+      <span class="date-text">${formatDate(r.createdAt)}</span>
+    </div>
+    ${r.memo ? `<div class="card-memo">${escHtml(r.memo)}</div>` : ''}
+    <div class="card-actions">
+      <button class="btn btn-sm" data-action="open" data-id="${escHtml(r.id)}">↗ 開く</button>
+      ${r.subUrl ? `<button class="btn btn-sm" data-action="opensub" data-id="${escHtml(r.id)}">📄 サブ</button>` : ''}
+      <button class="btn btn-sm btn-learning ${hasLearning ? 'has-data' : ''}" data-action="learning" data-id="${escHtml(r.id)}">🧠 学び${hasLearning ? '●' : ''}</button>
+      <button class="btn btn-sm" data-action="edit" data-id="${escHtml(r.id)}">✏️ 編集</button>
+      <button class="btn btn-sm btn-danger" data-action="delete" data-id="${escHtml(r.id)}">✕ 削除</button>
+    </div>
+    <div class="learning-expand" id="learning-${escHtml(r.id)}">
+      ${buildLearningHTML(r)}
+    </div>
+  </div>
+  `;
+}
+
+function buildLearningHTML(r) {
+  const l = r.learning || {};
+  if (!l.audioUrl && !l.summary && !l.note && !l.transcriptCorrected) {
+    return '<p style="color:var(--text-muted);font-size:13px;">学びデータはありません</p>';
+  }
+
+  let html = '';
+
+  if (l.audioUrl) {
+    html += `<div class="learning-block">
+      <button class="btn btn-sm" onclick="safeOpen(${JSON.stringify(l.audioUrl)})">🎙️ 音声を開く</button>
+    </div>`;
+  }
+
+  if (l.summary) {
+    html += `<div class="learning-block">
+      <div class="learning-block-label">📝 要約</div>
+      <p>${escHtml(l.summary)}</p>
+    </div>`;
+  }
+
+  if (l.note) {
+    html += `<div class="learning-block">
+      <div class="learning-block-label">💡 メモ</div>
+      <p>${escHtml(l.note)}</p>
+    </div>`;
+  }
+
+  if (l.transcriptCorrected) {
+    html += `<div class="learning-block">
+      <details>
+        <summary>📄 修正済みテキストを表示</summary>
+        <p>${escHtml(l.transcriptCorrected)}</p>
+      </details>
+    </div>`;
+  }
+
+  return html;
+}
+
+function handleCardAction(e) {
+  const btn = e.currentTarget;
+  const action = btn.dataset.action;
+  const id = btn.dataset.id;
+  const record = state.records.find(r => r.id === id);
+  if (!record && action !== 'delete') return;
+
+  switch(action) {
+    case 'open':
+      safeOpen(record.mainUrl);
+      break;
+    case 'opensub':
+      safeOpen(record.subUrl);
+      break;
+    case 'learning':
+      toggleLearning(id);
+      break;
+    case 'edit':
+      openEditModal(record);
+      break;
+    case 'delete':
+      if (confirm('このレコードを削除しますか？')) {
+        state.records = state.records.filter(r => r.id !== id);
+        saveRecords();
+        renderCards();
+        renderListTabs();
+        toast('削除しました', 'success');
+      }
+      break;
+  }
+}
+
+function toggleLearning(id) {
+  const el = document.getElementById(`learning-${id}`);
+  if (!el) return;
+  el.classList.toggle('open');
+}
+
+// ========== EDIT MODAL ==========
+
+function initEditModal() {
+  const mainSel = document.getElementById('editCategoryMain');
+  const subSel = document.getElementById('editCategorySub');
+
+  mainSel.addEventListener('change', () => {
+    populateSubSelect(subSel, mainSel.value);
+  });
+
+  editMainUrlCtrl = setupUrlConfirm('editMainUrl', 'editConfirmMainUrl', 'editMainUrlStatus');
+  editSubUrlCtrl = setupUrlConfirm('editSubUrl', 'editConfirmSubUrl', 'editSubUrlStatus');
+
+  document.getElementById('editForm').addEventListener('submit', handleEditSubmit);
+}
+
+function openEditModal(record) {
+  const mainSel = document.getElementById('editCategoryMain');
+  const subSel = document.getElementById('editCategorySub');
+
+  populateMainSelect(mainSel, record.categoryMain);
+  populateSubSelect(subSel, record.categoryMain, record.categorySub);
+
+  document.getElementById('editId').value = record.id;
+  document.getElementById('editTitle').value = record.title || '';
+  document.getElementById('editMainUrl').value = record.mainUrl || '';
+  document.getElementById('editSubUrl').value = record.subUrl || '';
+  document.getElementById('editMemo').value = record.memo || '';
+
+  const l = record.learning || {};
+  document.getElementById('editAudioUrl').value = l.audioUrl || '';
+  document.getElementById('editTranscriptOriginal').value = l.transcriptOriginal || '';
+  document.getElementById('editTranscriptCorrected').value = l.transcriptCorrected || '';
+  document.getElementById('editSummary').value = l.summary || '';
+  document.getElementById('editLearningNote').value = l.note || '';
+
+  // Set confirmed status
+  editMainUrlCtrl.setConfirmed(record.mainUrlConfirmed || false);
+  editSubUrlCtrl.setConfirmed(record.subUrlConfirmed || false);
+
+  openModal('editModal');
+}
+
+function handleEditSubmit(e) {
+  e.preventDefault();
+
+  const id = document.getElementById('editId').value;
+  const mainUrl = document.getElementById('editMainUrl').value.trim();
+  const mainConfirmed = document.getElementById('editMainUrl').dataset.confirmed === 'true';
+  const subUrl = document.getElementById('editSubUrl').value.trim();
+  const subConfirmed = document.getElementById('editSubUrl').dataset.confirmed === 'true';
+  const title = document.getElementById('editTitle').value.trim();
+
+  if (!title) { toast('タイトルは必須です', 'error'); return; }
+  if (!mainUrl) { toast('メインURLは必須です', 'error'); return; }
+  if (!mainConfirmed) { toast('メインURLを確認してください', 'error'); return; }
+  if (subUrl && !subConfirmed) { toast('サブURLを確認してください', 'error'); return; }
+
+  const idx = state.records.findIndex(r => r.id === id);
+  if (idx === -1) { toast('レコードが見つかりません', 'error'); return; }
+
+  const mainSel = document.getElementById('editCategoryMain');
+  const subSel = document.getElementById('editCategorySub');
+
+  state.records[idx] = {
+    ...state.records[idx],
+    categoryMain: mainSel.value,
+    categorySub: subSel.value,
+    title,
+    mainUrl,
+    mainUrlConfirmed: mainConfirmed,
+    subUrl,
+    subUrlConfirmed: subUrl ? subConfirmed : true,
+    memo: document.getElementById('editMemo').value.trim(),
+    platform: detectPlatform(mainUrl),
+    learning: {
+      audioUrl: document.getElementById('editAudioUrl').value.trim(),
+      transcriptOriginal: document.getElementById('editTranscriptOriginal').value.trim(),
+      transcriptCorrected: document.getElementById('editTranscriptCorrected').value.trim(),
+      summary: document.getElementById('editSummary').value.trim(),
+      note: document.getElementById('editLearningNote').value.trim()
+    }
+  };
+
+  saveRecords();
+  closeModal('editModal');
+  renderCards();
+  renderListTabs();
+  toast('更新しました！', 'success');
+}
+
+// ========== SETTINGS MODAL ==========
+
+function initSettingsModal() {
+  document.getElementById('settingsBtn').addEventListener('click', () => {
+    document.getElementById('apiKeyInput').value = state.settings.apiKey || '';
+    renderCatList();
+    openModal('settingsModal');
+  });
+
+  document.getElementById('saveApiKeyBtn').addEventListener('click', () => {
+    state.settings.apiKey = document.getElementById('apiKeyInput').value.trim();
+    saveSettings();
+    toast('API Keyを保存しました', 'success');
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', exportData);
+  document.getElementById('importBtn').addEventListener('click', () => {
+    document.getElementById('importFile').click();
+  });
+  document.getElementById('importFile').addEventListener('change', importData);
+}
+
+function renderCatList() {
+  const container = document.getElementById('catList');
+  const cats = state.categories;
+  const mains = Object.keys(cats);
+
+  if (mains.length === 0) {
+    container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">カテゴリがありません</p>';
+    return;
+  }
+
+  let html = '';
+  mains.forEach(main => {
+    html += `
+      <div class="cat-item">
+        <div class="cat-item-info">
+          <span class="cat-main">📁 ${escHtml(main)}</span>
+        </div>
+        <button class="btn btn-sm btn-danger" data-action="del-main" data-main="${escHtml(main)}">削除</button>
+      </div>
+    `;
+    const subs = cats[main] || [];
+    subs.forEach(sub => {
+      html += `
+        <div class="cat-item" style="margin-left:16px;">
+          <div class="cat-item-info">
+            <span class="cat-sub">└ ${escHtml(sub)}</span>
+          </div>
+          <button class="btn btn-sm btn-danger" data-action="del-sub" data-main="${escHtml(main)}" data-sub="${escHtml(sub)}">削除</button>
+        </div>
+      `;
+    });
+  });
+
+  container.innerHTML = html;
+
+  container.querySelectorAll('[data-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      const main = btn.dataset.main;
+      const sub = btn.dataset.sub;
+
+      if (action === 'del-main') {
+        if (!confirm(`大カテゴリ「${main}」を削除しますか？（サブカテゴリも全て削除されます）`)) return;
+        delete state.categories[main];
+      } else if (action === 'del-sub') {
+        if (!confirm(`小カテゴリ「${sub}」を削除しますか？`)) return;
+        state.categories[main] = (state.categories[main] || []).filter(s => s !== sub);
+      }
+
+      saveCategories();
+      renderCatList();
+
+      // Rebuild selects
+      const mainSel = document.getElementById('categoryMain');
+      const subSel = document.getElementById('categorySub');
+      const currentMain = mainSel.value;
+      populateMainSelect(mainSel, Object.keys(state.categories).includes(currentMain) ? currentMain : Object.keys(state.categories)[0]);
+      populateSubSelect(subSel, mainSel.value);
+
+      renderListTabs();
+      toast('削除しました', 'success');
+    });
+  });
+}
+
+// ========== EXPORT / IMPORT ==========
+
+function exportData() {
+  const data = {
+    records: state.records,
+    categories: state.categories,
+    exportedAt: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `plaud-export-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('エクスポートしました', 'success');
+}
+
+function importData(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!Array.isArray(data.records)) { toast('無効なJSONファイルです', 'error'); return; }
+      if (confirm(`${data.records.length}件のデータをインポートしますか？（既存データに追加されます）`)) {
+        // Merge: avoid duplicates by id
+        const existingIds = new Set(state.records.map(r => r.id));
+        const newRecords = data.records.filter(r => !existingIds.has(r.id));
+        state.records = [...newRecords, ...state.records];
+        if (data.categories) {
+          // Merge categories
+          Object.keys(data.categories).forEach(main => {
+            if (!state.categories[main]) state.categories[main] = [];
+            data.categories[main].forEach(sub => {
+              if (!state.categories[main].includes(sub)) state.categories[main].push(sub);
+            });
+          });
+        }
+        saveRecords();
+        saveCategories();
+        renderCards();
+        renderListTabs();
+        toast(`${newRecords.length}件をインポートしました`, 'success');
+      }
+    } catch(err) {
+      toast('JSONのパースに失敗しました', 'error');
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+// ========== MODALS ==========
+
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+function initModals() {
+  // Close buttons
+  document.querySelectorAll('[data-close]').forEach(btn => {
+    btn.addEventListener('click', () => closeModal(btn.dataset.close));
+  });
+  // Click overlay to close
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal(overlay.id);
+    });
+  });
+  // Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-overlay.open').forEach(m => closeModal(m.id));
+    }
+  });
+}
+
+// ========== MOBILE ==========
+
+function initMobileToggle() {
+  const btn = document.getElementById('mobileToggleBtn');
+  const panel = document.getElementById('leftPanel');
+
+  btn.addEventListener('click', () => {
+    const isOpen = panel.classList.toggle('mobile-open');
+    btn.textContent = isOpen ? '✖ フォームを閉じる' : '➕ 新規登録フォームを開く';
+  });
+}
+
+// ========== FILTER EVENTS ==========
+
+function initFilters() {
+  document.getElementById('searchInput').addEventListener('input', renderCards);
+  document.getElementById('platformFilter').addEventListener('change', renderCards);
+  document.getElementById('sortSelect').addEventListener('change', renderCards);
+}
+
+// ========== INIT ==========
+
+function init() {
+  loadState();
+  initFormTabs();
+  initForm();
+  initPaste();
+  initModals();
+  initSettingsModal();
+  initEditModal();
+  initFilters();
+  initMobileToggle();
+  renderListTabs();
+  renderCards();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
