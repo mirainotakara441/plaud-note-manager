@@ -830,8 +830,9 @@
     <!-- Data -->
     <div class="modal-section">
       <h3>データ管理</h3>
+      <p class="note-text" style="margin-bottom:10px;">デバイス間でデータを同期するには、エクスポートしたJSONをもう一方のデバイスでインポートしてください。差分のみ自動マージします。</p>
       <div class="data-actions">
-        <button class="btn" id="exportBtn">📤 エクスポート（JSON）</button>
+        <button class="btn" id="exportBtn">📤 エクスポート</button>
         <button class="btn" id="importBtn">📥 インポート</button>
         <input type="file" id="importFile" accept=".json" style="display:none">
       </div>
@@ -930,6 +931,22 @@
         <button type="submit" class="btn btn-primary">💾 保存</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ========== IMPORT PREVIEW MODAL ========== -->
+<div class="modal-overlay" id="importModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>📥 インポート確認</h2>
+      <button class="modal-close" data-close="importModal">✕</button>
+    </div>
+    <div id="importPreview"></div>
+    <div class="modal-footer" style="flex-direction:column;gap:8px;align-items:stretch;">
+      <button class="btn btn-primary" id="importMergeBtn">🔀 マージ（差分のみ適用）</button>
+      <button class="btn" id="importReplaceBtn" style="border-color:var(--error);color:var(--error);">⚠️ 全置換（ローカルデータを上書き）</button>
+      <button class="btn" data-close="importModal">キャンセル</button>
+    </div>
   </div>
 </div>
 
@@ -1245,11 +1262,13 @@ function handleFormSubmit(e) {
   if (!data.mainUrlConfirmed) { toast('メインURLを確認してください', 'error'); return; }
   if (data.subUrl && !data.subUrlConfirmed) { toast('サブURLを確認してください', 'error'); return; }
 
+  const now = new Date().toISOString();
   const record = {
     id: genId(),
     ...data,
     platform: detectPlatform(data.mainUrl),
-    createdAt: new Date().toISOString()
+    createdAt: now,
+    updatedAt: now
   };
 
   state.records.unshift(record);
@@ -1612,6 +1631,7 @@ function handleEditSubmit(e) {
     subUrlConfirmed: subUrl ? subConfirmed : true,
     memo: document.getElementById('editMemo').value.trim(),
     platform: detectPlatform(mainUrl),
+    updatedAt: new Date().toISOString(),
     learning: {
       audioUrl: document.getElementById('editAudioUrl').value.trim(),
       transcriptOriginal: document.getElementById('editTranscriptOriginal').value.trim(),
@@ -1648,6 +1668,12 @@ function initSettingsModal() {
     document.getElementById('importFile').click();
   });
   document.getElementById('importFile').addEventListener('change', importData);
+  document.getElementById('importMergeBtn').addEventListener('click', () => applyImport('merge'));
+  document.getElementById('importReplaceBtn').addEventListener('click', () => {
+    if (confirm('ローカルのデータをすべて上書きしますか？この操作は元に戻せません。')) {
+      applyImport('replace');
+    }
+  });
 }
 
 function renderCatList() {
@@ -1718,8 +1744,14 @@ function renderCatList() {
 // ========== EXPORT / IMPORT ==========
 
 function exportData() {
+  // 既存レコードにupdatedAtがなければcreatedAtで補完
+  const records = state.records.map(r => ({
+    ...r,
+    updatedAt: r.updatedAt || r.createdAt || new Date().toISOString()
+  }));
   const data = {
-    records: state.records,
+    version: 2,
+    records,
     categories: state.categories,
     exportedAt: new Date().toISOString()
   };
@@ -1727,11 +1759,15 @@ function exportData() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `plaud-export-${Date.now()}.json`;
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.download = `plaud-export-${dateStr}.json`;
   a.click();
   URL.revokeObjectURL(url);
   toast('エクスポートしました', 'success');
 }
+
+// インポート用の一時データ
+let _importPending = null;
 
 function importData(e) {
   const file = e.target.files[0];
@@ -1742,32 +1778,103 @@ function importData(e) {
     try {
       const data = JSON.parse(ev.target.result);
       if (!Array.isArray(data.records)) { toast('無効なJSONファイルです', 'error'); return; }
-      if (confirm(`${data.records.length}件のデータをインポートしますか？（既存データに追加されます）`)) {
-        // Merge: avoid duplicates by id
-        const existingIds = new Set(state.records.map(r => r.id));
-        const newRecords = data.records.filter(r => !existingIds.has(r.id));
-        state.records = [...newRecords, ...state.records];
-        if (data.categories) {
-          // Merge categories
-          Object.keys(data.categories).forEach(main => {
-            if (!state.categories[main]) state.categories[main] = [];
-            data.categories[main].forEach(sub => {
-              if (!state.categories[main].includes(sub)) state.categories[main].push(sub);
-            });
-          });
+
+      // 差分を計算
+      const localMap = new Map(state.records.map(r => [r.id, r]));
+      let toAdd = [], toUpdate = [], toSkip = [];
+
+      data.records.forEach(incoming => {
+        const local = localMap.get(incoming.id);
+        if (!local) {
+          toAdd.push(incoming);
+        } else {
+          const incomingTime = new Date(incoming.updatedAt || incoming.createdAt || 0).getTime();
+          const localTime   = new Date(local.updatedAt   || local.createdAt   || 0).getTime();
+          if (incomingTime > localTime) {
+            toUpdate.push(incoming);
+          } else {
+            toSkip.push(incoming);
+          }
         }
-        saveRecords();
-        saveCategories();
-        renderCards();
-        renderListTabs();
-        toast(`${newRecords.length}件をインポートしました`, 'success');
-      }
+      });
+
+      _importPending = { data, toAdd, toUpdate, toSkip };
+
+      // プレビュー表示
+      document.getElementById('importPreview').innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px;">
+          <div style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:24px;font-weight:700;color:#22c55e;">${toAdd.length}</div>
+            <div style="font-size:12px;color:var(--text-muted);">新規追加</div>
+          </div>
+          <div style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.3);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:24px;font-weight:700;color:var(--accent);">${toUpdate.length}</div>
+            <div style="font-size:12px;color:var(--text-muted);">更新（新しい版）</div>
+          </div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;">
+            <div style="font-size:24px;font-weight:700;color:var(--text-muted);">${toSkip.length}</div>
+            <div style="font-size:12px;color:var(--text-muted);">スキップ（最新）</div>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:4px;">
+          📁 ファイル: <strong style="color:var(--text);">${escHtml(file.name)}</strong><br>
+          📅 エクスポート日時: <strong style="color:var(--text);">${data.exportedAt ? new Date(data.exportedAt).toLocaleString('ja-JP') : '不明'}</strong><br>
+          📊 合計: <strong style="color:var(--text);">${data.records.length}件</strong>（ローカル: ${state.records.length}件）
+        </p>
+        ${toUpdate.length > 0 ? `
+        <details style="margin-top:10px;">
+          <summary style="font-size:12px;color:var(--accent);cursor:pointer;">更新されるレコードを確認（${toUpdate.length}件）</summary>
+          <ul style="font-size:12px;color:var(--text-muted);margin-top:6px;padding-left:16px;line-height:2;">
+            ${toUpdate.map(r => `<li>${escHtml(r.title)}</li>`).join('')}
+          </ul>
+        </details>` : ''}
+      `;
+
+      closeModal('settingsModal');
+      openModal('importModal');
     } catch(err) {
       toast('JSONのパースに失敗しました', 'error');
     }
     e.target.value = '';
   };
   reader.readAsText(file);
+}
+
+function mergeCategories(importedCats) {
+  if (!importedCats) return;
+  Object.keys(importedCats).forEach(main => {
+    if (!state.categories[main]) state.categories[main] = [];
+    (importedCats[main] || []).forEach(sub => {
+      if (!state.categories[main].includes(sub)) state.categories[main].push(sub);
+    });
+  });
+}
+
+function applyImport(mode) {
+  if (!_importPending) return;
+  const { data, toAdd, toUpdate } = _importPending;
+
+  if (mode === 'replace') {
+    state.records = data.records.map(r => ({ ...r, updatedAt: r.updatedAt || r.createdAt }));
+  } else {
+    // マージ: 更新対象をローカルで差し替え、新規を先頭に追加
+    const updateMap = new Map(toUpdate.map(r => [r.id, r]));
+    state.records = state.records.map(r => updateMap.has(r.id) ? { ...updateMap.get(r.id) } : r);
+    state.records = [...toAdd, ...state.records];
+  }
+
+  mergeCategories(data.categories);
+  saveRecords();
+  saveCategories();
+  renderCards();
+  renderListTabs();
+  closeModal('importModal');
+
+  const msg = mode === 'replace'
+    ? `全置換しました（${data.records.length}件）`
+    : `マージ完了：追加 ${toAdd.length}件・更新 ${toUpdate.length}件`;
+  toast(msg, 'success');
+  _importPending = null;
 }
 
 // ========== MODALS ==========
