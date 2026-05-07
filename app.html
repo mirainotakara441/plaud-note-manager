@@ -1164,40 +1164,62 @@ function initForm() {
 async function callClaudeAI(text) {
   const apiKey = state.settings.apiKey;
   if (!apiKey) {
-    toast('API Keyが設定されていません。設定から入力してください。', 'error');
+    toast('⚙️ APIキーが未設定です。設定から入力してください', 'error');
+    openModal('settingsModal');
     return null;
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-calls': 'true'
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
-      messages: [{
-        role: 'user',
-        content: `以下はPLAUD NotePinで録音された音声の文字起こしテキストです。\n\n1. 誤字脱字・文法的なミスを修正してください\n2. 内容を200〜300字程度で要約してください\n\n【文字起こしテキスト】\n${text}\n\n以下のJSON形式のみで回答してください（他のテキストは不要）：\n{"corrected": "修正後のテキスト", "summary": "要約文"}`
-      }]
-    })
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`API Error ${response.status}: ${err}`);
+  let response;
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-calls': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 4096,
+        messages: [{
+          role: 'user',
+          content: `以下はPLAUD NotePinで録音された音声の文字起こしテキストです。\n\n1. 誤字脱字・文法的なミスを修正してください\n2. 内容を200〜300字程度で要約してください\n\n【文字起こしテキスト】\n${text}\n\n以下のJSON形式のみで回答してください（他のテキストは不要）：\n{"corrected": "修正後のテキスト", "summary": "要約文"}`
+        }]
+      })
+    });
+  } catch (networkErr) {
+    throw new Error('通信エラーが発生しました。ネットワーク接続を確認してください');
   }
 
-  const data = await response.json();
-  const raw = data.content[0].text;
+  if (!response.ok) {
+    if (response.status === 401) {
+      toast('⚙️ APIキーが無効です。設定を確認してください', 'error');
+      openModal('settingsModal');
+      throw new Error('APIキーが無効です（401）');
+    }
+    if (response.status === 429) {
+      throw new Error('APIの利用上限に達しました。しばらくしてから再試行してください');
+    }
+    throw new Error(`APIエラーが発生しました（${response.status}）`);
+  }
 
-  // JSONを抽出
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('AIの応答を読み取れませんでした。もう一度お試しください');
+  }
+
+  const raw = data.content?.[0]?.text || '';
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('JSONのパースに失敗しました');
-  return JSON.parse(match[0]);
+  if (!match) throw new Error('AIの応答を解析できませんでした。もう一度お試しください');
+
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    throw new Error('AIの応答を解析できませんでした。もう一度お試しください');
+  }
 }
 
 async function handleAI() {
@@ -1258,8 +1280,7 @@ function handleFormSubmit(e) {
   const data = getFormData();
 
   if (!data.title) { toast('タイトルは必須です', 'error'); return; }
-  if (!data.mainUrl) { toast('メインURLは必須です', 'error'); return; }
-  if (!data.mainUrlConfirmed) { toast('メインURLを確認してください', 'error'); return; }
+  if (data.mainUrl && !data.mainUrlConfirmed) { toast('メインURLを確認してください', 'error'); return; }
   if (data.subUrl && !data.subUrlConfirmed) { toast('サブURLを確認してください', 'error'); return; }
 
   const now = new Date().toISOString();
