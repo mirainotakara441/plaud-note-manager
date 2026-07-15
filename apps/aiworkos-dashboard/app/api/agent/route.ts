@@ -239,7 +239,9 @@ export async function POST(req: NextRequest) {
   try {
     const message = await client.messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      // 論点・打ち手・骨子まで構造化出力するには4096では途中で切れる。8000に引き上げ
+      // （非ストリーミングの安全上限16000未満なのでタイムアウトも回避）。
+      max_tokens: 8000,
       // 最後の system ブロックの cache_control が tools＋system をまとめてキャッシュする
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
@@ -254,8 +256,9 @@ export async function POST(req: NextRequest) {
       ],
     });
 
-    // cache_read_input_tokens が繰り返し呼び出しで 0 のままなら prefix が小さすぎてキャッシュ未発火
-    console.log("提案生成 usage:", JSON.stringify(message.usage));
+    // stop_reason が "max_tokens" なら出力途中で切れている（max_tokens を上げる）。
+    // cache_read_input_tokens が繰り返し呼び出しで 0 のままなら prefix が小さすぎてキャッシュ未発火。
+    console.log("提案生成:", message.stop_reason, JSON.stringify(message.usage));
 
     const toolUse = message.content.find(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
