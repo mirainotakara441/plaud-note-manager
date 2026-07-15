@@ -130,6 +130,76 @@ async function fetchRelatedMemos(
   }
 }
 
+// 会議データの決定的署名。件数・最新日付・総content長が変わらなければ同一とみなす。
+function computeSignature(meetings: Meeting[]): string {
+  const latest = meetings.reduce(
+    (max, m) => (m.event_date && (!max || m.event_date > max) ? m.event_date : max),
+    ""
+  );
+  const totalChars = meetings.reduce((s, m) => s + (m.content?.length ?? 0), 0);
+  return `${meetings.length}:${latest}:${totalChars}`;
+}
+
+// proposal-cache Edge Function から取得。失敗しても null を返し生成にフォールバック。
+async function fetchProposalCache(
+  supabaseUrl: string,
+  anonKey: string,
+  organization: string
+): Promise<{ signature: string; proposal: Proposal } | null> {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/proposal-cache`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action: "get", organization }),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const cache = data?.cache;
+    if (
+      cache &&
+      typeof cache.signature === "string" &&
+      cache.proposal &&
+      typeof cache.proposal === "object"
+    ) {
+      return { signature: cache.signature, proposal: cache.proposal as Proposal };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// proposal-cache Edge Function へ保存。失敗は握りつぶす（保存できなくても返却は続行）。
+async function saveProposalCache(
+  supabaseUrl: string,
+  anonKey: string,
+  payload: {
+    organization: string;
+    signature: string;
+    proposal: Proposal;
+    meetings: Meeting[];
+    model: string;
+  }
+): Promise<void> {
+  try {
+    await fetch(`${supabaseUrl}/functions/v1/proposal-cache`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ action: "set", ...payload }),
+      cache: "no-store",
+    });
+  } catch {
+    // キャッシュ保存失敗は致命的でない
+  }
+}
+
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "日付不明";
   const d = new Date(dateStr);
@@ -204,7 +274,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { organization?: unknown };
+  let body: { organization?: unknown; force?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -232,6 +302,21 @@ export async function POST(req: NextRequest) {
       { error: "会議履歴の取得に失敗しました。しばらくしてから再度お試しください。" },
       { status: 502 }
     );
+  }
+
+  // a-2. 永続キャッシュ確認。会議データが変わっておらず force でなければ Claude を呼ばず即返す。
+  const force = body.force === true;
+  const signature = computeSignature(meetings);
+  if (!force && meetings.length > 0) {
+    const cached = await fetchProposalCache(supabaseUrl, anonKey, organization);
+    if (cached && cached.signature === signature) {
+      return NextResponse.json({
+        organization,
+        meetings,
+        proposal: cached.proposal,
+        cached: true,
+      });
+    }
   }
 
   // b. 関連メモ（補強・失敗しても続行）
@@ -323,5 +408,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ organization, meetings, proposal });
+  // 生成できたら永続キャッシュに保存（同一自治体の次回表示は Claude を呼ばず即返す）
+  await saveProposalCache(supabaseUrl, anonKey, {
+    organization,
+    signature,
+    proposal,
+    meetings,
+    model: MODEL,
+  });
+
+  return NextResponse.json({ organization, meetings, proposal, cached: false });
 }

@@ -26,6 +26,7 @@ type AgentResponse = {
   organization: string;
   meetings: Meeting[];
   proposal: Proposal;
+  cached?: boolean;
 };
 
 function formatDate(dateStr: string | null): string {
@@ -111,7 +112,8 @@ export default function AgentPage() {
     };
   }, []);
 
-  const runAgent = useCallback(async () => {
+  const runAgent = useCallback(
+    async (force = false) => {
     if (!selected || loading) return;
     setLoading(true);
     setError(null);
@@ -120,7 +122,7 @@ export default function AgentPage() {
       const res = await fetch("/api/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organization: selected }),
+        body: JSON.stringify({ organization: selected, force }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -136,7 +138,9 @@ export default function AgentPage() {
     } finally {
       setLoading(false);
     }
-  }, [selected, loading]);
+    },
+    [selected, loading]
+  );
 
   return (
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
@@ -182,7 +186,7 @@ export default function AgentPage() {
           </select>
           <button
             type="button"
-            onClick={runAgent}
+            onClick={() => runAgent(false)}
             disabled={!selected || loading}
             className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition active:bg-indigo-700 disabled:opacity-40"
           >
@@ -248,7 +252,22 @@ export default function AgentPage() {
 
             {/* AI提案パネル */}
             <div className="space-y-5">
-              <h2 className="text-lg font-bold text-gray-900">AI提案</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-lg font-bold text-gray-900">AI提案</h2>
+                {result.cached && (
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                    キャッシュ
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => runAgent(true)}
+                  disabled={loading}
+                  className="ml-auto rounded-lg border border-indigo-200 px-3 py-1.5 text-sm font-medium text-indigo-600 transition active:bg-indigo-50 disabled:opacity-40"
+                >
+                  再生成
+                </button>
+              </div>
 
               {/* 経緯サマリ */}
               <section className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
