@@ -174,7 +174,12 @@ ${meetingsText}
 ==== 関連メモ ====
 ${memosText}
 
-上記の事実だけをもとに、${organization}への営業・提案戦略を build_proposal ツールで構造化して返してください。`;
+上記の事実だけをもとに、${organization}への営業・提案戦略を build_proposal ツールで構造化して返してください。
+その際、summary（経緯）だけでなく、以下も必ず空にせず具体的に記述すること:
+- issues: 現状の論点・ボトルネックを2〜4個。会議履歴中の「課題：」を主な材料にする。
+- actions: 次の打ち手を3〜5個。それぞれ title（見出し）と detail（具体策）。会議履歴中の「アクション：」「示唆：」を材料にする。
+- materialOutline: 提案資料の見出し骨子を4〜6個。
+いずれのフィールドも空配列のまま返してはならない。`;
 }
 
 export async function POST(req: NextRequest) {
@@ -269,6 +274,13 @@ export async function POST(req: NextRequest) {
     }
 
     const input = toolUse.input as Partial<Proposal>;
+    // Claude が実際に返した各フィールドの件数を確認（空なら生成側の問題と特定できる）
+    console.log(
+      "proposal keys:",
+      `issues=${Array.isArray(input.issues) ? input.issues.length : "n/a"}`,
+      `actions=${Array.isArray(input.actions) ? input.actions.length : "n/a"}`,
+      `outline=${Array.isArray(input.materialOutline) ? input.materialOutline.length : "n/a"}`
+    );
     proposal = {
       summary: typeof input.summary === "string" ? input.summary : "",
       issues: Array.isArray(input.issues)
