@@ -43,25 +43,26 @@ const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス
 - 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
 - 出力は必ず指定されたツール（build_proposal）で構造化して返すこと。`;
 
+// フィールド順は issues→actions→materialOutline→summary。Sonnet はスキーマ順に埋めるため、
+// summary を最後に置くことで、重要な論点・打ち手・骨子を先に埋めさせる（summary だけ書いて
+// 後続を空配列で終える挙動を防ぐ）。
 const PROPOSAL_TOOL: Anthropic.Tool = {
   name: "build_proposal",
   description:
-    "自治体への営業・提案戦略を構造化して返す。全ての内容は与えられた会議履歴・メモの事実に基づくこと。",
+    "自治体への営業・提案戦略を構造化して返す。全ての内容は与えられた会議履歴・メモの事実に基づくこと。issues・actions・materialOutline は必ず中身を埋め、空配列で返してはならない。",
   input_schema: {
     type: "object",
     properties: {
-      summary: {
-        type: "string",
-        description: "これまでの経緯を時系列で3〜5文でまとめた要約",
-      },
       issues: {
         type: "array",
-        description: "現状の論点・ボトルネックを2〜4個",
+        description:
+          "【必須・空配列禁止】現状の論点・ボトルネックを2〜4個。会議履歴の「課題：」を材料にする。",
         items: { type: "string" },
       },
       actions: {
         type: "array",
-        description: "次の打ち手を3〜5個。それぞれ具体的なアクション",
+        description:
+          "【必須・空配列禁止】次の打ち手を3〜5個。会議履歴の「アクション：」「示唆：」を材料にする。",
         items: {
           type: "object",
           properties: {
@@ -74,11 +75,15 @@ const PROPOSAL_TOOL: Anthropic.Tool = {
       },
       materialOutline: {
         type: "array",
-        description: "提案資料の見出し骨子を4〜6個",
+        description: "【必須・空配列禁止】提案資料の見出し骨子を4〜6個。",
         items: { type: "string" },
       },
+      summary: {
+        type: "string",
+        description: "これまでの経緯を時系列で3〜5文でまとめた要約。",
+      },
     },
-    required: ["summary", "issues", "actions", "materialOutline"],
+    required: ["issues", "actions", "materialOutline", "summary"],
     additionalProperties: false,
   },
 };
