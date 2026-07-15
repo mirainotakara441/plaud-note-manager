@@ -252,6 +252,68 @@ ${memosText}
 いずれのフィールドも空配列のまま返してはならない。`;
 }
 
+// summary だけでなく論点・打ち手・骨子まで揃っているか。空の結果をキャッシュしないための判定。
+function isComplete(p: Proposal): boolean {
+  return (
+    !!p.summary &&
+    p.issues.length > 0 &&
+    p.actions.length > 0 &&
+    p.materialOutline.length > 0
+  );
+}
+
+// Claude で1回生成し Proposal を組み立てる。tool use で構造化出力を強制。
+async function generateProposal(
+  client: Anthropic,
+  organization: string,
+  meetings: Meeting[],
+  memos: MemoResult[]
+): Promise<Proposal> {
+  const message = await client.messages.create({
+    model: MODEL,
+    // 論点・打ち手・骨子まで構造化出力するには4096では途中で切れる。8000に引き上げ。
+    max_tokens: 8000,
+    // 最後の system ブロックの cache_control が tools＋system をまとめてキャッシュする
+    system: [
+      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    ],
+    tools: [PROPOSAL_TOOL],
+    tool_choice: { type: "tool", name: "build_proposal" },
+    messages: [
+      { role: "user", content: buildUserPrompt(organization, meetings, memos) },
+    ],
+  });
+
+  console.log("提案生成:", message.stop_reason, JSON.stringify(message.usage));
+
+  const toolUse = message.content.find(
+    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
+  );
+  if (!toolUse) throw new Error("no_tool_use");
+
+  const input = toolUse.input as Partial<Proposal>;
+  return {
+    summary: typeof input.summary === "string" ? input.summary : "",
+    issues: Array.isArray(input.issues)
+      ? input.issues.filter((s): s is string => typeof s === "string")
+      : [],
+    actions: Array.isArray(input.actions)
+      ? input.actions
+          .filter(
+            (a): a is { title: string; detail: string } =>
+              !!a &&
+              typeof a === "object" &&
+              typeof (a as { title?: unknown }).title === "string" &&
+              typeof (a as { detail?: unknown }).detail === "string"
+          )
+          .map((a) => ({ title: a.title, detail: a.detail }))
+      : [],
+    materialOutline: Array.isArray(input.materialOutline)
+      ? input.materialOutline.filter((s): s is string => typeof s === "string")
+      : [],
+  };
+}
+
 export async function POST(req: NextRequest) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
@@ -327,66 +389,13 @@ export async function POST(req: NextRequest) {
 
   let proposal: Proposal;
   try {
-    const message = await client.messages.create({
-      model: MODEL,
-      // 論点・打ち手・骨子まで構造化出力するには4096では途中で切れる。8000に引き上げ
-      // （非ストリーミングの安全上限16000未満なのでタイムアウトも回避）。
-      max_tokens: 8000,
-      // 最後の system ブロックの cache_control が tools＋system をまとめてキャッシュする
-      system: [
-        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-      ],
-      tools: [PROPOSAL_TOOL],
-      tool_choice: { type: "tool", name: "build_proposal" },
-      messages: [
-        {
-          role: "user",
-          content: buildUserPrompt(organization, meetings, memos),
-        },
-      ],
-    });
-
-    // stop_reason が "max_tokens" なら出力途中で切れている（max_tokens を上げる）。
-    // cache_read_input_tokens が繰り返し呼び出しで 0 のままなら prefix が小さすぎてキャッシュ未発火。
-    console.log("提案生成:", message.stop_reason, JSON.stringify(message.usage));
-
-    const toolUse = message.content.find(
-      (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
-    );
-
-    if (!toolUse) {
-      throw new Error("no_tool_use");
+    proposal = await generateProposal(client, organization, meetings, memos);
+    // Sonnet が非決定的に論点・打ち手・骨子を空で返すことがあるため、
+    // 不完全なら1回だけ再生成して安定させる。
+    if (!isComplete(proposal)) {
+      console.log("提案が不完全のため再生成");
+      proposal = await generateProposal(client, organization, meetings, memos);
     }
-
-    const input = toolUse.input as Partial<Proposal>;
-    // Claude が実際に返した各フィールドの件数を確認（空なら生成側の問題と特定できる）
-    console.log(
-      "proposal keys:",
-      `issues=${Array.isArray(input.issues) ? input.issues.length : "n/a"}`,
-      `actions=${Array.isArray(input.actions) ? input.actions.length : "n/a"}`,
-      `outline=${Array.isArray(input.materialOutline) ? input.materialOutline.length : "n/a"}`
-    );
-    proposal = {
-      summary: typeof input.summary === "string" ? input.summary : "",
-      issues: Array.isArray(input.issues)
-        ? input.issues.filter((s): s is string => typeof s === "string")
-        : [],
-      actions: Array.isArray(input.actions)
-        ? input.actions
-            .filter(
-              (a): a is { title: string; detail: string } =>
-                !!a &&
-                typeof a === "object" &&
-                typeof (a as { title?: unknown }).title === "string" &&
-                typeof (a as { detail?: unknown }).detail === "string"
-            )
-            .map((a) => ({ title: a.title, detail: a.detail }))
-        : [],
-      materialOutline: Array.isArray(input.materialOutline)
-        ? input.materialOutline.filter((s): s is string => typeof s === "string")
-        : [],
-    };
-
     if (!proposal.summary && proposal.actions.length === 0) {
       throw new Error("empty_proposal");
     }
@@ -408,14 +417,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 生成できたら永続キャッシュに保存（同一自治体の次回表示は Claude を呼ばず即返す）
-  await saveProposalCache(supabaseUrl, anonKey, {
-    organization,
-    signature,
-    proposal,
-    meetings,
-    model: MODEL,
-  });
+  // 完全な結果のときだけ永続キャッシュに保存する（空をキャッシュして固定化しないため）。
+  // 同一自治体の次回表示は Claude を呼ばず即返す。
+  if (isComplete(proposal)) {
+    await saveProposalCache(supabaseUrl, anonKey, {
+      organization,
+      signature,
+      proposal,
+      meetings,
+      model: MODEL,
+    });
+  }
 
   return NextResponse.json({ organization, meetings, proposal, cached: false });
 }
