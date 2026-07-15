@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useState } from "react";
 
 type SearchResult = {
@@ -199,10 +200,20 @@ export default function Home() {
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
       {/* ヘッダー */}
       <header className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-          AIワークOS
-        </h1>
-        <p className="mt-1 text-sm text-gray-500">横断検索ダッシュボード</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+              AIワークOS
+            </h1>
+            <p className="mt-1 text-sm text-gray-500">横断検索ダッシュボード</p>
+          </div>
+          <Link
+            href="/agent"
+            className="mt-1 shrink-0 rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 transition active:bg-indigo-100"
+          >
+            提案エージェント →
+          </Link>
+        </div>
       </header>
 
       {/* 検索フォーム */}
