@@ -99,7 +99,7 @@ export default function DeliverablesPage() {
           href="/"
           className="text-sm font-medium text-indigo-600 active:opacity-70"
         >
-          ← 横断検索へ
+          ← ホーム
         </Link>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">
           成果物を登録
