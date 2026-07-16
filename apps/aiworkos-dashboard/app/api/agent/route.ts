@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
+// thinking を有効化すると生成に時間がかかるため、Vercel の関数タイムアウトを引き上げる
+// （Hobby プランの上限。org-history/search-memory/Claude 生成を合算しても収まる想定）。
+export const maxDuration = 60;
+
 type Meeting = {
   id: string;
   source_type: string;
@@ -41,51 +45,48 @@ const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス
 - 必ず与えられた「会議履歴」と「関連メモ」に書かれた事実のみに基づいて分析すること。
 - 資料に無い数字・人名・経緯・約束事などを憶測で創作してはならない。情報が不足している場合は、その旨を前提として扱う。
 - 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
-- 出力は必ず指定されたツール（build_proposal）で構造化して返すこと。`;
+- 出力は必ず指定された JSON スキーマに従って構造化して返すこと。issues・actions・materialOutline は必ず中身を埋め、空配列で返してはならない。まず会議履歴を読み込んで論点と打ち手を分析し、その分析結果を各フィールドに反映すること。`;
 
-// フィールド順は issues→actions→materialOutline→summary。Sonnet はスキーマ順に埋めるため、
-// summary を最後に置くことで、重要な論点・打ち手・骨子を先に埋めさせる（summary だけ書いて
-// 後続を空配列で終える挙動を防ぐ）。
-const PROPOSAL_TOOL: Anthropic.Tool = {
-  name: "build_proposal",
-  description:
-    "自治体への営業・提案戦略を構造化して返す。全ての内容は与えられた会議履歴・メモの事実に基づくこと。issues・actions・materialOutline は必ず中身を埋め、空配列で返してはならない。",
-  input_schema: {
-    type: "object",
-    properties: {
-      issues: {
-        type: "array",
-        description:
-          "【必須・空配列禁止】現状の論点・ボトルネックを2〜4個。会議履歴の「課題：」を材料にする。",
-        items: { type: "string" },
-      },
-      actions: {
-        type: "array",
-        description:
-          "【必須・空配列禁止】次の打ち手を3〜5個。会議履歴の「アクション：」「示唆：」を材料にする。",
-        items: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "打ち手の見出し（簡潔に）" },
-            detail: { type: "string", description: "具体的な内容・進め方" },
-          },
-          required: ["title", "detail"],
-          additionalProperties: false,
+// structured outputs（output_config.format）で JSON 形状を保証する。
+// ツール強制（tool_choice: tool）だと Sonnet が「考えずに即出力」して summary だけ埋め
+// issues/actions/materialOutline を空配列で返す問題があったため、ツール使用をやめて
+// adaptive thinking を有効化し、思考の上で全フィールドを埋めさせる方式に変更した。
+// フィールド順は issues→actions→materialOutline→summary（重要な分析フィールドを先に）。
+const PROPOSAL_SCHEMA = {
+  type: "object",
+  properties: {
+    issues: {
+      type: "array",
+      description:
+        "現状の論点・ボトルネックを2〜4個。会議履歴の「課題：」を材料にする。空配列にしないこと。",
+      items: { type: "string" },
+    },
+    actions: {
+      type: "array",
+      description:
+        "次の打ち手を3〜5個。会議履歴の「アクション：」「示唆：」を材料にする。空配列にしないこと。",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "打ち手の見出し（簡潔に）" },
+          detail: { type: "string", description: "具体的な内容・進め方" },
         },
-      },
-      materialOutline: {
-        type: "array",
-        description: "【必須・空配列禁止】提案資料の見出し骨子を4〜6個。",
-        items: { type: "string" },
-      },
-      summary: {
-        type: "string",
-        description: "これまでの経緯を時系列で3〜5文でまとめた要約。",
+        required: ["title", "detail"],
+        additionalProperties: false,
       },
     },
-    required: ["issues", "actions", "materialOutline", "summary"],
-    additionalProperties: false,
+    materialOutline: {
+      type: "array",
+      description: "提案資料の見出し骨子を4〜6個。空配列にしないこと。",
+      items: { type: "string" },
+    },
+    summary: {
+      type: "string",
+      description: "これまでの経緯を時系列で3〜5文でまとめた要約。",
+    },
   },
+  required: ["issues", "actions", "materialOutline", "summary"],
+  additionalProperties: false,
 };
 
 async function fetchOrgHistory(
@@ -249,7 +250,7 @@ ${meetingsText}
 ==== 関連メモ ====
 ${memosText}
 
-上記の事実だけをもとに、${organization}への営業・提案戦略を build_proposal ツールで構造化して返してください。
+上記の事実だけをもとに、${organization}への営業・提案戦略を指定の JSON スキーマで構造化して返してください。
 その際、summary（経緯）だけでなく、以下も必ず空にせず具体的に記述すること:
 - issues: 現状の論点・ボトルネックを2〜4個。会議履歴中の「課題：」を主な材料にする。
 - actions: 次の打ち手を3〜5個。それぞれ title（見出し）と detail（具体策）。会議履歴中の「アクション：」「示唆：」を材料にする。
@@ -267,7 +268,9 @@ function isComplete(p: Proposal): boolean {
   );
 }
 
-// Claude で1回生成し Proposal を組み立てる。tool use で構造化出力を強制。
+// Claude で1回生成し Proposal を組み立てる。
+// structured outputs（output_config.format）で JSON 形状を保証しつつ、
+// adaptive thinking で会議履歴を分析させてから全フィールドを埋めさせる。
 async function generateProposal(
   client: Anthropic,
   organization: string,
@@ -276,14 +279,18 @@ async function generateProposal(
 ): Promise<Proposal> {
   const message = await client.messages.create({
     model: MODEL,
-    // 論点・打ち手・骨子まで構造化出力するには4096では途中で切れる。8000に引き上げ。
-    max_tokens: 8000,
-    // 最後の system ブロックの cache_control が tools＋system をまとめてキャッシュする
+    // thinking + 4フィールドの構造化出力を収めるため 16000 に引き上げ。
+    max_tokens: 16000,
+    // 思考を有効化して、即出力ではなく会議履歴を分析させてから各フィールドを埋めさせる。
+    thinking: { type: "adaptive" },
+    // 最後の system ブロックの cache_control で system をキャッシュ対象にする
     system: [
       { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     ],
-    tools: [PROPOSAL_TOOL],
-    tool_choice: { type: "tool", name: "build_proposal" },
+    // ツール強制の代わりに structured outputs で JSON 形状を保証する
+    output_config: {
+      format: { type: "json_schema", schema: PROPOSAL_SCHEMA },
+    },
     messages: [
       { role: "user", content: buildUserPrompt(organization, meetings, memos) },
     ],
@@ -291,12 +298,23 @@ async function generateProposal(
 
   console.log("提案生成:", message.stop_reason, JSON.stringify(message.usage));
 
-  const toolUse = message.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
-  );
-  if (!toolUse) throw new Error("no_tool_use");
+  if (message.stop_reason === "refusal") {
+    throw new Error("refusal");
+  }
 
-  const input = toolUse.input as Partial<Proposal>;
+  // structured outputs では最初の text ブロックが有効な JSON になる
+  const textBlock = message.content.find(
+    (block): block is Anthropic.TextBlock => block.type === "text"
+  );
+  if (!textBlock) throw new Error("no_text_output");
+
+  let input: Partial<Proposal>;
+  try {
+    input = JSON.parse(textBlock.text) as Partial<Proposal>;
+  } catch {
+    throw new Error("invalid_json_output");
+  }
+
   return {
     summary: typeof input.summary === "string" ? input.summary : "",
     issues: Array.isArray(input.issues)
@@ -394,13 +412,9 @@ export async function POST(req: NextRequest) {
 
   let proposal: Proposal;
   try {
+    // adaptive thinking で会議履歴を分析させてから構造化出力するため、
+    // 1回の生成で全フィールドが埋まる想定（従来の空配列問題への対処）。
     proposal = await generateProposal(client, organization, meetings, memos);
-    // Sonnet が非決定的に論点・打ち手・骨子を空で返すことがあるため、
-    // 不完全なら1回だけ再生成して安定させる。
-    if (!isComplete(proposal)) {
-      console.log("提案が不完全のため再生成");
-      proposal = await generateProposal(client, organization, meetings, memos);
-    }
     if (!proposal.summary && proposal.actions.length === 0) {
       throw new Error("empty_proposal");
     }
