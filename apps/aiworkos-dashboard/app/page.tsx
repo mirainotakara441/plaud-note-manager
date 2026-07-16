@@ -15,7 +15,7 @@ type SearchResult = {
   similarity: number;
 };
 
-const SOURCE_FILTERS = ["すべて", "日記", "会議", "学び"] as const;
+const SOURCE_FILTERS = ["すべて", "日記", "会議", "学び", "成果物"] as const;
 type SourceFilter = (typeof SOURCE_FILTERS)[number];
 
 const MATCH_COUNTS = [5, 10, 20] as const;
@@ -44,6 +44,7 @@ const BADGE_STYLES: Record<string, string> = {
   日記: "bg-emerald-100 text-emerald-800",
   会議: "bg-blue-100 text-blue-800",
   学び: "bg-orange-100 text-orange-800",
+  成果物: "bg-purple-100 text-purple-800",
 };
 
 const TAG_KEYS = [
@@ -365,7 +366,7 @@ export default function Home() {
               キーワードや質問を入力して検索してください。
             </p>
             <p className="mt-3 text-xs font-medium text-gray-400">
-              日記 127件・会議 53件・学び 9件を横断検索
+              日記 127件・会議 53件・学び 9件・成果物 11件を横断検索
             </p>
           </div>
         )}

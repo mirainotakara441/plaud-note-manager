@@ -26,6 +26,7 @@ type AgentResponse = {
   organization: string;
   meetings: Meeting[];
   proposal: Proposal;
+  deliverablesCount?: number;
   cached?: boolean;
 };
 
@@ -257,6 +258,11 @@ export default function AgentPage() {
                 {result.cached && (
                   <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
                     キャッシュ
+                  </span>
+                )}
+                {(result.deliverablesCount ?? 0) > 0 && (
+                  <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
+                    過去成果物 {result.deliverablesCount}件を参照
                   </span>
                 )}
                 <button

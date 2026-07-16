@@ -42,10 +42,11 @@ const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス
 自治体（地方公共団体）への営業・提案戦略を立案します。
 
 厳守事項:
-- 必ず与えられた「会議履歴」と「関連メモ」に書かれた事実のみに基づいて分析すること。
+- 必ず与えられた「会議履歴」「過去成果物（過去にこの団体向けに作った提案書・資料）」「関連メモ」に書かれた事実のみに基づいて分析すること。
+- 過去成果物がある場合は、それを今回の提案の土台（ベース）として最大限活用し、会議履歴の最新状況で更新・発展させること。過去に整理済みの論点・打ち手・骨子は引き継ぎ、変化があった点だけ差し替える。
 - 資料に無い数字・人名・経緯・約束事などを憶測で創作してはならない。情報が不足している場合は、その旨を前提として扱う。
 - 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
-- 出力は必ず指定された JSON スキーマに従って構造化して返すこと。issues・actions・materialOutline は必ず中身を埋め、空配列で返してはならない。まず会議履歴を読み込んで論点と打ち手を分析し、その分析結果を各フィールドに反映すること。`;
+- 出力は必ず指定された JSON スキーマに従って構造化して返すこと。issues・actions・materialOutline は必ず中身を埋め、空配列で返してはならない。まず過去成果物と会議履歴を読み込んで論点と打ち手を分析し、その分析結果を各フィールドに反映すること。`;
 
 // structured outputs（output_config.format）で JSON 形状を保証する。
 // ツール強制（tool_choice: tool）だと Sonnet が「考えずに即出力」して summary だけ埋め
@@ -136,14 +137,47 @@ async function fetchRelatedMemos(
   }
 }
 
-// 会議データの決定的署名。件数・最新日付・総content長が変わらなければ同一とみなす。
-function computeSignature(meetings: Meeting[]): string {
+// 過去成果物（source_type:成果物）をこの団体に絞って取得。提案のベースとして使う。
+// organization フィルタで RPC が対象団体の行のみを返すため、match_count を大きめにして
+// その団体の成果物チャンクを網羅的に取得する（提案の土台なので取りこぼしを避ける）。
+async function fetchDeliverables(
+  supabaseUrl: string,
+  anonKey: string,
+  organization: string
+): Promise<MemoResult[]> {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: `${organization} 提案 論点 打ち手 骨子`,
+        source_type: "成果物",
+        organization,
+        match_count: 40,
+      }),
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.results) ? (data.results as MemoResult[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// 会議＋過去成果物の決定的署名。どちらかが変われば（＝新しい成果物を登録した等）
+// キャッシュが無効化され、提案が再生成される。
+function computeSignature(meetings: Meeting[], deliverables: MemoResult[]): string {
   const latest = meetings.reduce(
     (max, m) => (m.event_date && (!max || m.event_date > max) ? m.event_date : max),
     ""
   );
   const totalChars = meetings.reduce((s, m) => s + (m.content?.length ?? 0), 0);
-  return `${meetings.length}:${latest}:${totalChars}`;
+  const delChars = deliverables.reduce((s, d) => s + (d.content?.length ?? 0), 0);
+  return `${meetings.length}:${latest}:${totalChars}:d${deliverables.length}:${delChars}`;
 }
 
 // proposal-cache Edge Function から取得。失敗しても null を返し生成にフォールバック。
@@ -218,7 +252,8 @@ function formatDate(dateStr: string | null): string {
 function buildUserPrompt(
   organization: string,
   meetings: Meeting[],
-  memos: MemoResult[]
+  memos: MemoResult[],
+  deliverables: MemoResult[]
 ): string {
   const meetingsText =
     meetings.length > 0
@@ -229,6 +264,16 @@ function buildUserPrompt(
           )
           .join("\n\n")
       : "（会議履歴なし）";
+
+  const deliverablesText =
+    deliverables.length > 0
+      ? deliverables
+          .map((d) => {
+            const kind = (d.metadata?.["種別"] as string) ?? "成果物";
+            return `- [${kind}] ${d.title}: ${d.content}`;
+          })
+          .join("\n")
+      : "（過去成果物なし）";
 
   const memosText =
     memos.length > 0
@@ -242,6 +287,10 @@ function buildUserPrompt(
 
   return `対象自治体: ${organization}
 
+以下は、過去にこの自治体向けに作成した成果物（提案書・資料など）の抜粋です。今回の提案の【土台（ベース）】として活用してください。
+==== 過去成果物 ====
+${deliverablesText}
+
 以下は、この自治体に関するこれまでの会議履歴（時系列・古い順）です。
 ==== 会議履歴 ====
 ${meetingsText}
@@ -250,7 +299,7 @@ ${meetingsText}
 ==== 関連メモ ====
 ${memosText}
 
-上記の事実だけをもとに、${organization}への営業・提案戦略を指定の JSON スキーマで構造化して返してください。
+上記の事実だけをもとに（過去成果物があればそれを土台に、会議履歴の最新状況で更新して）、${organization}への営業・提案戦略を指定の JSON スキーマで構造化して返してください。
 その際、summary（経緯）だけでなく、以下も必ず空にせず具体的に記述すること:
 - issues: 現状の論点・ボトルネックを2〜4個。会議履歴中の「課題：」を主な材料にする。
 - actions: 次の打ち手を3〜5個。それぞれ title（見出し）と detail（具体策）。会議履歴中の「アクション：」「示唆：」を材料にする。
@@ -275,7 +324,8 @@ async function generateProposal(
   client: Anthropic,
   organization: string,
   meetings: Meeting[],
-  memos: MemoResult[]
+  memos: MemoResult[],
+  deliverables: MemoResult[]
 ): Promise<Proposal> {
   const message = await client.messages.create({
     model: MODEL,
@@ -292,7 +342,10 @@ async function generateProposal(
       format: { type: "json_schema", schema: PROPOSAL_SCHEMA },
     },
     messages: [
-      { role: "user", content: buildUserPrompt(organization, meetings, memos) },
+      {
+        role: "user",
+        content: buildUserPrompt(organization, meetings, memos, deliverables),
+      },
     ],
   });
 
@@ -389,16 +442,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // a-2. 永続キャッシュ確認。会議データが変わっておらず force でなければ Claude を呼ばず即返す。
+  // a-2. 過去成果物（提案のベース）。キャッシュ署名に含めるため、キャッシュ確認より先に取得する。
+  const deliverables = await fetchDeliverables(supabaseUrl, anonKey, organization);
+
+  // a-3. 永続キャッシュ確認。会議・成果物が変わっておらず force でなければ Claude を呼ばず即返す。
   const force = body.force === true;
-  const signature = computeSignature(meetings);
-  if (!force && meetings.length > 0) {
+  const signature = computeSignature(meetings, deliverables);
+  if (!force && (meetings.length > 0 || deliverables.length > 0)) {
     const cached = await fetchProposalCache(supabaseUrl, anonKey, organization);
     if (cached && cached.signature === signature) {
       return NextResponse.json({
         organization,
         meetings,
         proposal: cached.proposal,
+        deliverablesCount: deliverables.length,
         cached: true,
       });
     }
@@ -407,14 +464,20 @@ export async function POST(req: NextRequest) {
   // b. 関連メモ（補強・失敗しても続行）
   const memos = await fetchRelatedMemos(supabaseUrl, anonKey, organization);
 
-  // c. Claude で提案生成（tool use で構造化出力）
+  // c. Claude で提案生成（structured outputs + adaptive thinking）
   const client = new Anthropic({ apiKey: anthropicKey });
 
   let proposal: Proposal;
   try {
-    // adaptive thinking で会議履歴を分析させてから構造化出力するため、
+    // adaptive thinking で過去成果物・会議履歴を分析させてから構造化出力するため、
     // 1回の生成で全フィールドが埋まる想定（従来の空配列問題への対処）。
-    proposal = await generateProposal(client, organization, meetings, memos);
+    proposal = await generateProposal(
+      client,
+      organization,
+      meetings,
+      memos,
+      deliverables
+    );
     if (!proposal.summary && proposal.actions.length === 0) {
       throw new Error("empty_proposal");
     }
@@ -448,5 +511,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ organization, meetings, proposal, cached: false });
+  return NextResponse.json({
+    organization,
+    meetings,
+    proposal,
+    deliverablesCount: deliverables.length,
+    cached: false,
+  });
 }
