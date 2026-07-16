@@ -7,7 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 60;
 
-const DOC_TYPES = ["提案書", "実習書", "スライド", "報告書", "その他"];
+const DOC_TYPES = ["提案書", "実習書", "スライド", "報告書", "メモ", "その他"];
+// 対象のカテゴリー。自治体だけでなく議員・事業者も提案の対象になるため。
+const CATEGORIES = ["自治体", "議員", "事業者", "その他"];
 const MAX_CHUNKS = 300;
 const MAX_CHUNK_CHARS = 4000;
 
@@ -48,6 +50,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     organization?: unknown;
+    category?: unknown;
     docType?: unknown;
     title?: unknown;
     date?: unknown;
@@ -62,6 +65,10 @@ export async function POST(req: NextRequest) {
 
   const organization =
     typeof body.organization === "string" ? body.organization.trim() : "";
+  const category =
+    typeof body.category === "string" && CATEGORIES.includes(body.category)
+      ? body.category
+      : "自治体";
   const docType = typeof body.docType === "string" ? body.docType : "";
   const title =
     typeof body.title === "string" && body.title.trim()
@@ -122,6 +129,7 @@ export async function POST(req: NextRequest) {
       event_date: date,
       metadata: {
         種別: docType,
+        カテゴリ: category,
         ファイル名: filename,
         位置: c.pos,
         資料名: title,
@@ -139,6 +147,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     organization,
+    category,
     docType,
     title,
     stored,
