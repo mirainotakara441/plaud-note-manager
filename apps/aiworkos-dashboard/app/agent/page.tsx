@@ -265,11 +265,17 @@ export default function AgentPage() {
                     過去成果物 {result.deliverablesCount}件を参照
                   </span>
                 )}
+                <Link
+                  href={`/refine?org=${encodeURIComponent(result.organization)}`}
+                  className="ml-auto rounded-lg border border-teal-200 px-3 py-1.5 text-sm font-medium text-teal-700 transition active:bg-teal-50"
+                >
+                  壁打ちする →
+                </Link>
                 <button
                   type="button"
                   onClick={() => runAgent(true)}
                   disabled={loading}
-                  className="ml-auto rounded-lg border border-indigo-200 px-3 py-1.5 text-sm font-medium text-indigo-600 transition active:bg-indigo-50 disabled:opacity-40"
+                  className="rounded-lg border border-indigo-200 px-3 py-1.5 text-sm font-medium text-indigo-600 transition active:bg-indigo-50 disabled:opacity-40"
                 >
                   再生成
                 </button>

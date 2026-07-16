@@ -25,10 +25,17 @@ const FEATURES: Feature[] = [
     accent: "bg-blue-100 text-blue-700",
   },
   {
+    href: "/refine",
+    icon: "💬",
+    title: "壁打ち",
+    desc: "登録内容をAIが深掘り質問。答えるほど熟成し記憶に還る",
+    accent: "bg-teal-100 text-teal-700",
+  },
+  {
     href: "/deliverables",
     icon: "📎",
     title: "成果物を登録",
-    desc: "提案書・実習書・スライドを取り込み、提案の土台にする",
+    desc: "提案書・実習書・スライド・メモを取り込み、提案の土台にする",
     accent: "bg-purple-100 text-purple-700",
   },
 ];
