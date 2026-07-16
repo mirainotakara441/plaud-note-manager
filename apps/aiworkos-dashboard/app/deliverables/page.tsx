@@ -92,6 +92,11 @@ export default function DeliverablesPage() {
 
   const busy = parsing || submitting;
 
+  // 登録に足りていないものを可視化する（押せない理由が分からない状態を作らない）
+  const missing: string[] = [];
+  if (chunks.length === 0) missing.push("ファイル");
+  if (!organization.trim()) missing.push("団体名");
+
   return (
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
       <header className="mb-6">
@@ -197,10 +202,17 @@ export default function DeliverablesPage() {
           />
         </div>
 
+        {/* 何が足りないかを常に見せる（ボタンは押せる状態にして、押したら理由を出す） */}
+        {missing.length > 0 && (
+          <p className="text-xs text-amber-700">
+            登録するには {missing.join(" と ")} が必要です
+          </p>
+        )}
+
         <button
           type="button"
           onClick={onSubmit}
-          disabled={busy || chunks.length === 0 || !organization.trim()}
+          disabled={busy}
           className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white transition active:bg-indigo-700 disabled:opacity-40"
         >
           {submitting ? "登録中..." : "登録する"}

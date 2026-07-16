@@ -100,5 +100,18 @@ export async function extractChunks(
   const lower = filename.toLowerCase();
   if (lower.endsWith(".pptx")) return parsePptx(buf);
   if (lower.endsWith(".docx")) return parseDocx(buf);
-  throw new Error(`未対応の拡張子です（対応: ${SUPPORTED_EXT.join(", ")}）`);
+  // 未対応の時は「何が起きたか」を具体的に返す（無言でチャンク0にしない）
+  if (lower.endsWith(".pdf")) {
+    throw new Error(
+      "PDFはこの画面では未対応です（pptx / docx のみ）。PowerPoint・Wordの元ファイルを選ぶか、PDF対応をご依頼ください。"
+    );
+  }
+  if (lower.endsWith(".ppt") || lower.endsWith(".doc")) {
+    throw new Error(
+      "旧形式(.ppt / .doc)は未対応です。PowerPoint・Wordで .pptx / .docx として保存し直してください。"
+    );
+  }
+  throw new Error(
+    `このファイル形式は未対応です（対応: ${SUPPORTED_EXT.join(", ")}）`
+  );
 }
