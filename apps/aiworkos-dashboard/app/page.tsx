@@ -208,12 +208,20 @@ export default function Home() {
             </h1>
             <p className="mt-1 text-sm text-gray-500">横断検索ダッシュボード</p>
           </div>
-          <Link
-            href="/agent"
-            className="mt-1 shrink-0 rounded-lg bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 transition active:bg-indigo-100"
-          >
-            提案エージェント →
-          </Link>
+          <div className="mt-1 flex shrink-0 flex-col gap-2">
+            <Link
+              href="/agent"
+              className="rounded-lg bg-indigo-50 px-3 py-2 text-center text-sm font-semibold text-indigo-700 transition active:bg-indigo-100"
+            >
+              提案エージェント →
+            </Link>
+            <Link
+              href="/deliverables"
+              className="rounded-lg bg-purple-50 px-3 py-2 text-center text-sm font-semibold text-purple-700 transition active:bg-purple-100"
+            >
+              成果物を登録 →
+            </Link>
+          </div>
         </div>
       </header>
 
