@@ -1,0 +1,90 @@
+import { NextRequest, NextResponse } from "next/server";
+
+// 取込ジョブのキュー。フロントの EIGHT/PLAUD ボタンから起票(POST)し、一覧(GET)する。
+// 実行はワーカー(クラウドエージェント/Claude)が queued を拾って行い status を更新する（A2）。
+// web app は anon キーで PostgREST 経由に insert/select する（RLSで anon に許可済み）。
+
+const KINDS = ["eight", "plaud"] as const;
+type Kind = (typeof KINDS)[number];
+
+function rest(supabaseUrl: string) {
+  return `${supabaseUrl}/rest/v1/integration_jobs`;
+}
+
+export async function GET() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    return NextResponse.json(
+      { error: "サーバー設定エラー: Supabaseの環境変数が設定されていません" },
+      { status: 500 }
+    );
+  }
+  try {
+    const res = await fetch(
+      `${rest(supabaseUrl)}?select=id,kind,status,result,error,created_at,updated_at&order=created_at.desc&limit=20`,
+      {
+        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) return NextResponse.json({ jobs: [] });
+    const jobs = await res.json();
+    return NextResponse.json({ jobs: Array.isArray(jobs) ? jobs : [] });
+  } catch {
+    return NextResponse.json({ jobs: [] });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    return NextResponse.json(
+      { error: "サーバー設定エラー: Supabaseの環境変数が設定されていません" },
+      { status: 500 }
+    );
+  }
+
+  let body: { kind?: unknown; params?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
+  }
+
+  const kind = body.kind as Kind;
+  if (!KINDS.includes(kind)) {
+    return NextResponse.json(
+      { error: `kind は次から指定してください: ${KINDS.join(" / ")}` },
+      { status: 400 }
+    );
+  }
+  const params =
+    body.params && typeof body.params === "object" ? body.params : {};
+
+  try {
+    const res = await fetch(rest(supabaseUrl), {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        "Content-Type": "application/json",
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify({ kind, params }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: "ジョブの登録に失敗しました" },
+        { status: 502 }
+      );
+    }
+    const rows = await res.json();
+    const job = Array.isArray(rows) ? rows[0] : rows;
+    return NextResponse.json({ job });
+  } catch {
+    return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
+  }
+}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import IntegrationPanel from "@/app/components/IntegrationPanel";
 
 type Feature = {
   href: string;
@@ -73,6 +74,8 @@ export default function Home() {
           </Link>
         ))}
       </div>
+
+      <IntegrationPanel />
 
       <p className="mt-8 text-center text-xs font-medium text-gray-400">
         記憶: 日記 127件・会議 53件・学び 9件・成果物 11件
