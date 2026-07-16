@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { extractChunks, windowChunks, type Chunk } from "@/lib/parseDeliverable";
-
-type Organization = { name: string; count: number };
+import StakeholderPicker, {
+  rememberStakeholder,
+  type Category,
+} from "@/app/components/StakeholderPicker";
 
 const DOC_TYPES = ["提案書", "実習書", "スライド", "報告書", "メモ", "その他"] as const;
-const CATEGORIES = ["自治体", "議員", "事業者", "その他"] as const;
 type Mode = "file" | "text";
 
 function today(): string {
@@ -15,10 +16,9 @@ function today(): string {
 }
 
 export default function DeliverablesPage() {
-  const [orgs, setOrgs] = useState<Organization[]>([]);
   const [mode, setMode] = useState<Mode>("file");
   const [organization, setOrganization] = useState("");
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>("自治体");
+  const [category, setCategory] = useState<Category>("自治体");
   const [docType, setDocType] = useState<(typeof DOC_TYPES)[number]>("提案書");
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(today());
@@ -31,13 +31,6 @@ export default function DeliverablesPage() {
   const [result, setResult] = useState<{ stored: number; total: number } | null>(
     null
   );
-
-  useEffect(() => {
-    fetch("/api/organizations")
-      .then((r) => r.json())
-      .then((d) => setOrgs(Array.isArray(d?.organizations) ? d.organizations : []))
-      .catch(() => setOrgs([]));
-  }, []);
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -80,7 +73,7 @@ export default function DeliverablesPage() {
   async function onSubmit() {
     setError(null);
     setResult(null);
-    if (!organization.trim()) return setError("対象（団体・議員名）を入力してください");
+    if (!organization.trim()) return setError(`${category}名を選んでください`);
     if (chunks.length === 0) {
       return setError(
         mode === "file"
@@ -113,6 +106,8 @@ export default function DeliverablesPage() {
         setError(data?.error ?? "登録に失敗しました");
       } else {
         setResult({ stored: data.stored, total: data.total });
+        // 一覧に無い相手なら次回から選択肢に出す
+        rememberStakeholder(category, organization.trim());
       }
     } catch {
       setError("通信エラーが発生しました");
@@ -126,7 +121,7 @@ export default function DeliverablesPage() {
   // 登録に足りていないものを可視化する（押せない理由が分からない状態を作らない）
   const missing: string[] = [];
   if (chunks.length === 0) missing.push(mode === "file" ? "ファイル" : "テキスト");
-  if (!organization.trim()) missing.push("対象名");
+  if (!organization.trim()) missing.push(`${category}名`);
 
   return (
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
@@ -141,13 +136,22 @@ export default function DeliverablesPage() {
           成果物を登録
         </h1>
         <p className="mt-1 text-sm text-gray-500">
-          団体・議員向けに作った提案書・実習書・スライド・メモを取り込み、提案エージェントの土台にします
+          相手先に向けて作った提案書・実習書・スライド・メモを取り込み、提案エージェントの土台にします
         </p>
       </header>
 
       <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        {/* 相手先（カテゴリー → 具体名） */}
+        <StakeholderPicker
+          category={category}
+          onCategoryChange={setCategory}
+          name={organization}
+          onNameChange={setOrganization}
+          disabled={busy}
+        />
+
         {/* 入力方法の切替 */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 border-t border-gray-100 pt-4">
           {(["file", "text"] as const).map((m) => (
             <button
               key={m}
@@ -169,16 +173,19 @@ export default function DeliverablesPage() {
         {mode === "file" ? (
           <div>
             <label className="block text-sm font-medium text-gray-600">
-              ファイル（.pptx / .docx）
+              ファイル（.pptx / .docx / .pdf）
             </label>
             <input
               type="file"
-              accept=".pptx,.docx"
+              accept=".pptx,.docx,.pdf"
               onChange={onFile}
               disabled={busy}
               className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-indigo-700 disabled:opacity-50"
             />
             {parsing && <p className="mt-2 text-xs text-gray-400">解析中...</p>}
+            <p className="mt-2 text-xs text-gray-400">
+              ※スキャン画像のPDFや、書き出し方によっては文字を取り出せないことがあります。下のプレビューで中身を確認してください。
+            </p>
           </div>
         ) : (
           <div>
@@ -195,53 +202,18 @@ export default function DeliverablesPage() {
             />
           </div>
         )}
-        {!parsing && chunks.length > 0 && (
-          <p className="-mt-2 text-xs font-medium text-purple-700">
-            {chunks.length}個のチャンクを検出しました
-          </p>
-        )}
 
-        {/* 対象・カテゴリー */}
-        <div className="flex flex-col gap-4 sm:flex-row">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-600">
-              対象（団体・議員名）
-            </label>
-            <input
-              type="text"
-              list="org-list"
-              value={organization}
-              onChange={(e) => setOrganization(e.target.value)}
-              disabled={busy}
-              placeholder="例: 北九州市 / 辻議員"
-              className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
-            />
-            <datalist id="org-list">
-              {orgs.map((o) => (
-                <option key={o.name} value={o.name} />
-              ))}
-            </datalist>
+        {/* 抽出プレビュー（何が取り込まれるか目視で確認できるように） */}
+        {!parsing && chunks.length > 0 && (
+          <div className="rounded-lg bg-purple-50 p-3">
+            <p className="text-xs font-medium text-purple-800">
+              {chunks.length}個のチャンクを検出しました（抽出内容の先頭）
+            </p>
+            <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-purple-900/70">
+              {chunks[0].content.slice(0, 200)}
+            </p>
           </div>
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-600">
-              カテゴリー
-            </label>
-            <select
-              value={category}
-              onChange={(e) =>
-                setCategory(e.target.value as (typeof CATEGORIES)[number])
-              }
-              disabled={busy}
-              className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
-            >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+        )}
 
         {/* 種別・日付 */}
         <div className="flex flex-col gap-4 sm:flex-row">
@@ -304,7 +276,7 @@ export default function DeliverablesPage() {
         </button>
 
         {error && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
             {error}
           </p>
         )}

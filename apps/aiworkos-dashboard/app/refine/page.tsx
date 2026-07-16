@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import StakeholderPicker, {
+  rememberStakeholder,
+  type Category,
+} from "@/app/components/StakeholderPicker";
 
-type Organization = { name: string; count: number };
 type Msg = { role: "user" | "assistant"; content: string };
 type Session = {
   id: string;
@@ -14,16 +17,14 @@ type Session = {
   updated_at: string;
 };
 
-const CATEGORIES = ["自治体", "議員", "事業者", "その他"] as const;
-
 function RefineInner() {
   const searchParams = useSearchParams();
   const presetOrg = searchParams.get("org") ?? "";
 
-  const [orgs, setOrgs] = useState<Organization[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [organization, setOrganization] = useState(presetOrg);
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>("自治体");
+  const [category, setCategory] = useState<Category>("自治体");
+  const [theme, setTheme] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -31,13 +32,6 @@ function RefineInner() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/organizations")
-      .then((r) => r.json())
-      .then((d) => setOrgs(Array.isArray(d?.organizations) ? d.organizations : []))
-      .catch(() => setOrgs([]));
-  }, []);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -54,7 +48,7 @@ function RefineInner() {
   }, [loadSessions]);
 
   async function start() {
-    if (!organization.trim()) return setError("対象を入力してください");
+    if (!organization.trim()) return setError(`${category}名を選んでください`);
     setError(null);
     setSaved(null);
     setLoading(true);
@@ -66,12 +60,14 @@ function RefineInner() {
           action: "start",
           organization: organization.trim(),
           category,
+          theme: theme.trim(),
         }),
       });
       const d = await r.json();
       if (!r.ok) return setError(d?.error ?? "開始に失敗しました");
       setSessionId(d.sessionId);
       setMessages(d.messages ?? []);
+      rememberStakeholder(category, organization.trim());
       loadSessions();
     } catch {
       setError("通信エラーが発生しました");
@@ -89,7 +85,7 @@ function RefineInner() {
       const d = await r.json();
       setSessionId(s.id);
       setOrganization(s.organization);
-      setCategory((s.category as (typeof CATEGORIES)[number]) ?? "自治体");
+      setCategory((s.category as Category) ?? "自治体");
       setMessages(Array.isArray(d?.messages) ? d.messages : []);
     } catch {
       setError("読み込みに失敗しました");
@@ -158,42 +154,32 @@ function RefineInner() {
       {/* 対象選択 */}
       {!sessionId && (
         <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-4 sm:flex-row">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-600">
-                対象（団体・議員名）
-              </label>
-              <input
-                type="text"
-                list="org-list"
-                value={organization}
-                onChange={(e) => setOrganization(e.target.value)}
-                placeholder="例: 北九州市 / 辻議員"
-                className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              />
-              <datalist id="org-list">
-                {orgs.map((o) => (
-                  <option key={o.name} value={o.name} />
-                ))}
-              </datalist>
-            </div>
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-600">カテゴリー</label>
-              <select
-                value={category}
-                onChange={(e) =>
-                  setCategory(e.target.value as (typeof CATEGORIES)[number])
-                }
-                className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              >
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <StakeholderPicker
+            category={category}
+            onCategoryChange={setCategory}
+            name={organization}
+            onNameChange={setOrganization}
+            disabled={loading}
+          />
+
+          {/* テーマ出し：自分で決める／AIに任せる の両方に対応 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-600">
+              深掘りしたいテーマ（任意）
+            </label>
+            <textarea
+              value={theme}
+              onChange={(e) => setTheme(e.target.value)}
+              rows={2}
+              disabled={loading}
+              placeholder="例: 無償トライアルの出し方を詰めたい / 議員ルートの口説き方"
+              className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              空にすると、AIが登録内容を読んでテーマを決めて深掘りします。
+            </p>
           </div>
+
           <button
             type="button"
             onClick={start}

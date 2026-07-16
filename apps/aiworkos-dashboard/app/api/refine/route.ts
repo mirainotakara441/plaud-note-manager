@@ -190,8 +190,15 @@ async function askClaude(
   client: Anthropic,
   context: string,
   history: Msg[],
-  organization: string
+  organization: string,
+  theme?: string | null
 ): Promise<string> {
+  // テーマ指定があればそれを軸に深掘りし、無ければAIが土台から論点を選ぶ。
+  const themeInstruction = theme
+    ? `吉井さんが深掘りしたいテーマは次のとおりです。このテーマを軸に、資料に反映できる粒度まで具体化してください。
+【テーマ】${theme}`
+    : `テーマは指定されていません。土台を読み、まだ言語化されていない前提・急所・判断軸のうち、最も重要なものを自分で選んで深掘りしてください。`;
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
@@ -200,7 +207,9 @@ async function askClaude(
 以下が、この対象についてこれまでに登録された内容（壁打ちの土台）です。
 ${context}
 
-この土台をもとに壁打ちを始めてください。まだ言語化されていない前提・急所・判断軸を探り、深掘り質問を2〜3問投げてください。`,
+${themeInstruction}
+
+この土台をもとに壁打ちを始めてください。深掘り質問を2〜3問投げてください。`,
     },
   ];
   // 2ターン目以降は履歴をそのまま積む（先頭の土台メッセージは常に残す）
@@ -264,6 +273,7 @@ export async function POST(req: NextRequest) {
     sessionId?: unknown;
     organization?: unknown;
     category?: unknown;
+    theme?: unknown;
     message?: unknown;
   };
   try {
@@ -282,6 +292,10 @@ export async function POST(req: NextRequest) {
         typeof body.organization === "string" ? body.organization.trim() : "";
       const category =
         typeof body.category === "string" ? body.category : "自治体";
+      const theme =
+        typeof body.theme === "string" && body.theme.trim()
+          ? body.theme.trim()
+          : null;
       if (!organization) {
         return NextResponse.json({ error: "対象を入力してください" }, { status: 400 });
       }
@@ -289,7 +303,7 @@ export async function POST(req: NextRequest) {
       const created = await fetch(restUrl(supabaseUrl, "refine_sessions"), {
         method: "POST",
         headers: restHeaders(anonKey, { Prefer: "return=representation" }),
-        body: JSON.stringify({ organization, category }),
+        body: JSON.stringify({ organization, category, theme }),
         cache: "no-store",
       });
       if (!created.ok) {
@@ -299,7 +313,7 @@ export async function POST(req: NextRequest) {
       const session = Array.isArray(rows) ? rows[0] : rows;
 
       const context = await fetchContext(supabaseUrl, anonKey, organization);
-      const reply = await askClaude(client, context, [], organization);
+      const reply = await askClaude(client, context, [], organization, theme);
       await saveMessage(supabaseUrl, anonKey, session.id, "assistant", reply);
 
       return NextResponse.json({
@@ -319,11 +333,12 @@ export async function POST(req: NextRequest) {
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "refine_sessions")}?select=organization&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "refine_sessions")}?select=organization,theme&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
       const organization = srows?.[0]?.organization;
+      const theme = srows?.[0]?.theme ?? null;
       if (!organization) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
@@ -331,7 +346,7 @@ export async function POST(req: NextRequest) {
       await saveMessage(supabaseUrl, anonKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       const context = await fetchContext(supabaseUrl, anonKey, organization);
-      const reply = await askClaude(client, context, history, organization);
+      const reply = await askClaude(client, context, history, organization, theme);
       await saveMessage(supabaseUrl, anonKey, sessionId, "assistant", reply);
 
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });

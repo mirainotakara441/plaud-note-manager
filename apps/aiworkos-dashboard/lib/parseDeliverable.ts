@@ -90,7 +90,45 @@ async function parseDocx(buf: ArrayBuffer): Promise<Chunk[]> {
   return windowChunks(text, "p");
 }
 
-export const SUPPORTED_EXT = [".pptx", ".docx"] as const;
+// PDFはページ単位で抽出する。※PDFによっては文字を取り出せないことがある
+// （スキャン画像PDF、またはToUnicodeマップ無しでフォントが埋め込まれた書き出しPDF）。
+// その場合は無言で0件にせず、原因が分かるエラーを投げる。
+async function parsePdf(buf: ArrayBuffer): Promise<Chunk[]> {
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.min.mjs",
+    import.meta.url
+  ).toString();
+
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+  const chunks: Chunk[] = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const tc = await page.getTextContent();
+    const raw = tc.items
+      .map((it) => ("str" in it ? it.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const body = cleanLines(raw);
+    if (!body) continue;
+    // 長いページはさらに窓分割して埋め込みの上限に収める
+    if (body.length > 800) {
+      chunks.push(...windowChunks(body, `p${i}-`));
+    } else {
+      chunks.push({ pos: `p${i}`, content: body });
+    }
+  }
+
+  if (chunks.length === 0) {
+    throw new Error(
+      "このPDFからはテキストを抽出できませんでした。スキャン画像のPDFか、フォントの埋め込み方によって文字を取り出せない場合があります。PowerPoint/Wordの元ファイルがあれば、そちらを選んでください。"
+    );
+  }
+  return chunks;
+}
+
+export const SUPPORTED_EXT = [".pptx", ".docx", ".pdf"] as const;
 
 // ファイルの拡張子で解析器を選び、チャンク配列を返す。
 export async function extractChunks(
@@ -100,12 +138,8 @@ export async function extractChunks(
   const lower = filename.toLowerCase();
   if (lower.endsWith(".pptx")) return parsePptx(buf);
   if (lower.endsWith(".docx")) return parseDocx(buf);
+  if (lower.endsWith(".pdf")) return parsePdf(buf);
   // 未対応の時は「何が起きたか」を具体的に返す（無言でチャンク0にしない）
-  if (lower.endsWith(".pdf")) {
-    throw new Error(
-      "PDFはこの画面では未対応です（pptx / docx のみ）。PowerPoint・Wordの元ファイルを選ぶか、PDF対応をご依頼ください。"
-    );
-  }
   if (lower.endsWith(".ppt") || lower.endsWith(".doc")) {
     throw new Error(
       "旧形式(.ppt / .doc)は未対応です。PowerPoint・Wordで .pptx / .docx として保存し直してください。"
