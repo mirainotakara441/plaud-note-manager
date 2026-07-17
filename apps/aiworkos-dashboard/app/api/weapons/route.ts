@@ -38,62 +38,99 @@ export type Weapon = {
   slides: { title: string; bullets: string[] }[];
 };
 
-const WEAPON_SCHEMA = {
-  type: "object",
-  properties: {
-    story: {
-      type: "array",
-      description:
-        "自治体への想定ストーリー。掴み→現状の課題→打ち手→効果→次の一歩、のように場面を追って説明の流れを作る。5〜7場面。",
-      items: {
-        type: "object",
-        properties: {
-          scene: { type: "string", description: "場面の見出し（例: 掴み／現状の痛み）" },
-          talk: {
-            type: "string",
-            description:
-              "その場面で実際に話す内容。吉井さんがそのまま口に出せる具体的な言い回しで書く。",
+export type Kind = keyof Weapon;
+const KINDS: Kind[] = ["story", "qa", "slides"];
+
+// 3種類を1リクエストで作ると、thinking + 出力量で Vercel の60秒上限を超えて
+// FUNCTION_INVOCATION_TIMEOUT になる（実測）。種類ごとに分けて呼ぶ。
+// 画面側も、先に想定ストーリーが出て順に埋まる方が待ち時間が短く感じられる。
+const PART_SCHEMAS: Record<Kind, { [key: string]: unknown }> = {
+  story: {
+    type: "object",
+    properties: {
+      story: {
+        type: "array",
+        description:
+          "自治体への想定ストーリー。掴み→現状の課題→打ち手→効果→次の一歩、のように場面を追って説明の流れを作る。5〜7場面。",
+        items: {
+          type: "object",
+          properties: {
+            scene: { type: "string", description: "場面の見出し（例: 掴み／現状の痛み）" },
+            talk: {
+              type: "string",
+              description:
+                "その場面で実際に話す内容。吉井さんがそのまま口に出せる具体的な言い回しで書く。",
+            },
           },
+          required: ["scene", "talk"],
+          additionalProperties: false,
         },
-        required: ["scene", "talk"],
-        additionalProperties: false,
       },
     },
-    qa: {
-      type: "array",
-      description:
-        "想定問答。相手（自治体の担当者・上長）が実際に投げてきそうな反論・懸念と、その切り返し。4〜6組。会議履歴に出てくる実際の懸念を優先する。",
-      items: {
-        type: "object",
-        properties: {
-          question: { type: "string", description: "相手からの問い・反論・懸念" },
-          answer: { type: "string", description: "切り返し。事実・数字で答える" },
-        },
-        required: ["question", "answer"],
-        additionalProperties: false,
-      },
-    },
-    slides: {
-      type: "array",
-      description:
-        "提案スライドの構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。6〜10枚。",
-      items: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "スライドの見出し" },
-          bullets: {
-            type: "array",
-            description: "そのスライドに載せる要点。3〜5個。",
-            items: { type: "string" },
-          },
-        },
-        required: ["title", "bullets"],
-        additionalProperties: false,
-      },
-    },
+    required: ["story"],
+    additionalProperties: false,
   },
-  required: ["story", "qa", "slides"],
-  additionalProperties: false,
+  qa: {
+    type: "object",
+    properties: {
+      qa: {
+        type: "array",
+        description:
+          "想定問答。相手（自治体の担当者・上長）が実際に投げてきそうな反論・懸念と、その切り返し。4〜6組。会議履歴に出てくる実際の懸念を優先する。",
+        items: {
+          type: "object",
+          properties: {
+            question: { type: "string", description: "相手からの問い・反論・懸念" },
+            answer: { type: "string", description: "切り返し。事実・数字で答える" },
+          },
+          required: ["question", "answer"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["qa"],
+    additionalProperties: false,
+  },
+  slides: {
+    type: "object",
+    properties: {
+      slides: {
+        type: "array",
+        description:
+          "提案スライドの構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。6〜10枚。",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "スライドの見出し" },
+            bullets: {
+              type: "array",
+              description: "そのスライドに載せる要点。3〜5個。",
+              items: { type: "string" },
+            },
+          },
+          required: ["title", "bullets"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["slides"],
+    additionalProperties: false,
+  },
+};
+
+const PART_LABEL: Record<Kind, string> = {
+  story: "想定ストーリー",
+  qa: "想定問答",
+  slides: "スライド構成案",
+};
+
+const PART_INSTRUCTION: Record<Kind, string> = {
+  story:
+    "story のみを作ってください。要約ではなく、吉井さんがそのまま口に出せる「実際に話す言葉」で書くこと。",
+  qa:
+    "qa のみを作ってください。会議履歴に実際に出てくる相手の懸念・反論を最優先で拾うこと。実際に言われたことが最も価値があります。",
+  slides:
+    "slides のみを作ってください。1要素が1枚。表紙は不要で、中身のスライドだけ。この構成案はそのまま .pptx に清書されます。",
 };
 
 const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
@@ -169,42 +206,41 @@ function windowChunks(text: string): string[] {
   return chunks;
 }
 
-/** 武器を、記憶に戻すための1本のテキストにする */
-function weaponToText(weapon: Weapon, actions: string[]): string {
-  const parts: string[] = [];
-  parts.push(`【決定した施策】\n${actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`);
-  parts.push(
-    `【想定ストーリー】\n` +
-      weapon.story.map((s) => `■${s.scene}\n${s.talk}`).join("\n\n")
-  );
-  parts.push(
-    `【想定問答】\n` + weapon.qa.map((q) => `Q: ${q.question}\nA: ${q.answer}`).join("\n\n")
-  );
-  parts.push(
-    `【スライド構成案】\n` +
-      weapon.slides
-        .map((s, i) => `${i + 1}. ${s.title}\n${s.bullets.map((b) => `  - ${b}`).join("\n")}`)
-        .join("\n")
-  );
-  return parts.join("\n\n");
+/** 武器の1種類を、記憶に戻すための1本のテキストにする */
+function partToText(kind: Kind, part: Partial<Weapon>, actions: string[]): string {
+  const head = `【決定した施策】\n${actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`;
+  if (kind === "story") {
+    return `${head}\n\n【想定ストーリー】\n${(part.story ?? [])
+      .map((s) => `■${s.scene}\n${s.talk}`)
+      .join("\n\n")}`;
+  }
+  if (kind === "qa") {
+    return `${head}\n\n【想定問答】\n${(part.qa ?? [])
+      .map((q) => `Q: ${q.question}\nA: ${q.answer}`)
+      .join("\n\n")}`;
+  }
+  return `${head}\n\n【スライド構成案】\n${(part.slides ?? [])
+    .map((s, i) => `${i + 1}. ${s.title}\n${s.bullets.map((b) => `  - ${b}`).join("\n")}`)
+    .join("\n")}`;
 }
 
-async function saveWeapon(
+async function savePart(
   supabaseUrl: string,
   anonKey: string,
   organization: string,
   weaponId: string,
+  kind: Kind,
   title: string,
   text: string
 ): Promise<number> {
   const chunks = windowChunks(text);
   const today = new Date().toISOString().slice(0, 10);
 
-  // 同じ武器を作り直すとチャンク数が変わるため、前回分を source_id 前方一致で一掃してから入れ直す
+  // 同じ武器を作り直すとチャンク数が変わるため、この種類の前回分を一掃してから入れ直す
   await fetch(`${supabaseUrl}/functions/v1/purge-memory`, {
     method: "POST",
     headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ source_id_prefix: `weapon:${weaponId}` }),
+    body: JSON.stringify({ source_id_prefix: `weapon:${weaponId}:${kind}:` }),
     cache: "no-store",
   });
 
@@ -215,15 +251,16 @@ async function saveWeapon(
         headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           source_type: "成果物",
-          source_id: `weapon:${weaponId}:${i + 1}`,
+          source_id: `weapon:${weaponId}:${kind}:${i + 1}`,
           organization,
-          title: `${title}｜武器｜${today}｜${i + 1}/${chunks.length}`,
+          title: `${title}｜${PART_LABEL[kind]}｜${today}｜${i + 1}/${chunks.length}`,
           content: chunk,
           event_date: today,
           metadata: {
             種別: "その他",
             資料名: title,
             出所: "武器生成",
+            武器種別: PART_LABEL[kind],
             位置: `${i + 1}/${chunks.length}`,
           },
         }),
@@ -246,11 +283,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ANTHROPIC_APIキーが未設定です" }, { status: 500 });
   }
 
-  let body: { organization?: unknown; actions?: unknown; note?: unknown };
+  let body: {
+    organization?: unknown;
+    actions?: unknown;
+    note?: unknown;
+    kind?: unknown;
+  };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
+  }
+
+  const kind = body.kind as Kind;
+  if (!KINDS.includes(kind)) {
+    return NextResponse.json(
+      { error: `kind は次から指定してください: ${KINDS.join(" / ")}` },
+      { status: 400 }
+    );
   }
 
   const organization =
@@ -272,18 +322,19 @@ export async function POST(req: NextRequest) {
   const note = typeof body.note === "string" ? body.note.trim() : "";
 
   // 土台を集める。壁打ちの熟成メモも成果物なのでここに含まれる。
+  // 60秒上限に収めるため、件数は控えめにして類似度上位だけを使う。
   const [deliverables, commonDocs, meetings] = await Promise.all([
     searchMemory(supabaseUrl, anonKey, {
       query: `${organization} ${actions.join(" ")}`,
       source_type: "成果物",
       organization,
-      match_count: 30,
+      match_count: 20,
     }),
     searchMemory(supabaseUrl, anonKey, {
       query: `${organization} ${actions.join(" ")}`,
       source_type: "成果物",
       organization: COMMON_ORG,
-      match_count: 20,
+      match_count: 12,
     }),
     fetchMeetings(supabaseUrl, anonKey, organization),
   ]);
@@ -310,23 +361,22 @@ ${formatDocs(deliverables, "（この団体向けの成果物なし）")}
 ==== 会議履歴（時系列・古い順）====
 ${meetingsText}
 
-上記の事実だけをもとに、決定した施策を${organization}で実行するための武器を作ってください。
-- story: 実際に話す言葉で、場面を追った想定ストーリー
-- qa: 会議履歴に出てくる実際の懸念を優先した想定問答
-- slides: 提案スライドの構成案（1要素=1枚、表紙は不要）
-いずれの配列も空にせず、指定の JSON スキーマで返してください。`;
+上記の事実だけをもとに、決定した施策を${organization}で実行するための武器のうち【${PART_LABEL[kind]}】を作ってください。
+${PART_INSTRUCTION[kind]}
+配列を空にせず、指定の JSON スキーマで返してください。`;
 
   const client = new Anthropic({ apiKey: anthropicKey });
 
   try {
     const message = await client.messages.create({
       model: MODEL,
-      max_tokens: 16000,
+      // 1種類だけ作るので 8000 で足りる。thinking 込みで60秒に収める。
+      max_tokens: 8000,
       thinking: { type: "adaptive" },
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ],
-      output_config: { format: { type: "json_schema", schema: WEAPON_SCHEMA } },
+      output_config: { format: { type: "json_schema", schema: PART_SCHEMAS[kind] } },
       messages: [{ role: "user", content: userPrompt }],
     });
 
@@ -340,26 +390,29 @@ ${meetingsText}
       return NextResponse.json({ error: "武器の生成に失敗しました" }, { status: 502 });
     }
 
-    let weapon: Weapon;
+    let part: Partial<Weapon>;
     try {
-      weapon = JSON.parse(tb.text) as Weapon;
+      part = JSON.parse(tb.text) as Partial<Weapon>;
     } catch {
       return NextResponse.json({ error: "武器の生成に失敗しました" }, { status: 502 });
     }
 
     // 作った武器を成果物として記憶へ戻す。次に /agent や /refine を開いたとき土台に入る。
     // weaponId は決定した施策から決まるため、同じ施策で作り直すと上書きされ、増殖しない。
-    const weaponId = `${organization}:${actions.join("|")}`.slice(0, 120);
-    const title = `${organization} ${actions[0]}${actions.length > 1 ? ` ほか${actions.length - 1}件` : ""}｜武器`;
+    const weaponId = `${organization}:${actions.join("|")}`.slice(0, 100);
+    const title = `${organization} ${actions[0]}${
+      actions.length > 1 ? ` ほか${actions.length - 1}件` : ""
+    }｜武器`;
     let savedChunks = 0;
     try {
-      savedChunks = await saveWeapon(
+      savedChunks = await savePart(
         supabaseUrl,
         anonKey,
         organization,
         weaponId,
+        kind,
         title,
-        weaponToText(weapon, actions)
+        partToText(kind, part, actions)
       );
     } catch (e) {
       // 記憶への保存に失敗しても、武器そのものは画面に返す
@@ -368,7 +421,8 @@ ${meetingsText}
 
     return NextResponse.json({
       organization,
-      weapon,
+      kind,
+      part,
       title,
       savedChunks,
       deliverablesCount: deliverables.length,

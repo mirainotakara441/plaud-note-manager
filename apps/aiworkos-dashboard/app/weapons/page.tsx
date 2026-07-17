@@ -13,17 +13,16 @@ type Weapon = {
   slides: { title: string; bullets: string[] }[];
 };
 
-type Result = {
-  organization: string;
-  weapon: Weapon;
-  title: string;
-  savedChunks: number;
-  deliverablesCount: number;
-  commonDocsCount: number;
-  meetingsCount: number;
+type Tab = "story" | "qa" | "slides";
+
+const TAB_LABEL: Record<Tab, string> = {
+  story: "想定ストーリー",
+  qa: "想定問答",
+  slides: "スライド構成案",
 };
 
-type Tab = "story" | "qa" | "slides";
+// 3種類を1リクエストで作るとVercelの60秒上限を超えるため、順番に呼んで順次埋める。
+const ORDER: Tab[] = ["story", "qa", "slides"];
 
 function WeaponsInner() {
   const searchParams = useSearchParams();
@@ -36,9 +35,18 @@ function WeaponsInner() {
   const [chosen, setChosen] = useState<Record<string, boolean>>({});
   const [custom, setCustom] = useState("");
   const [note, setNote] = useState("");
-  const [result, setResult] = useState<Result | null>(null);
+  const [weapon, setWeapon] = useState<Partial<Weapon>>({});
+  const [meta, setMeta] = useState<{
+    organization: string;
+    title: string;
+    deliverablesCount: number;
+    commonDocsCount: number;
+    meetingsCount: number;
+  } | null>(null);
   const [tab, setTab] = useState<Tab>("story");
   const [loading, setLoading] = useState(false);
+  // いま何を作っているか。順番に埋まるので進捗が見える。
+  const [building, setBuilding] = useState<Tab | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [queued, setQueued] = useState(false);
 
@@ -74,26 +82,43 @@ function WeaponsInner() {
     setError(null);
     setQueued(false);
     setLoading(true);
-    try {
-      const r = await fetch("/api/weapons", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ organization: organization.trim(), actions, note }),
-      });
-      const d = await r.json();
-      if (!r.ok) return setError(d?.error ?? "生成に失敗しました");
-      setResult(d);
-      setTab("story");
-    } catch {
-      setError("通信エラーが発生しました");
-    } finally {
-      setLoading(false);
+    setWeapon({});
+    setTab("story");
+
+    // 種類ごとに順番に生成する。1つ失敗しても、できたところまでは残す。
+    for (const kind of ORDER) {
+      setBuilding(kind);
+      try {
+        const r = await fetch("/api/weapons", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organization: organization.trim(), actions, note, kind }),
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          setError(`${TAB_LABEL[kind]}の生成に失敗しました: ${d?.error ?? ""}`);
+          break;
+        }
+        setWeapon((prev) => ({ ...prev, ...d.part }));
+        setMeta({
+          organization: d.organization,
+          title: d.title,
+          deliverablesCount: d.deliverablesCount,
+          commonDocsCount: d.commonDocsCount,
+          meetingsCount: d.meetingsCount,
+        });
+      } catch {
+        setError(`${TAB_LABEL[kind]}の生成中に通信エラーが発生しました`);
+        break;
+      }
     }
+    setBuilding(null);
+    setLoading(false);
   }
 
   // スライドの .pptx 清書は Mac の Claude Code が担う。ここでは注文を積むだけ。
   async function orderPptx() {
-    if (!result) return;
+    if (!meta || !weapon.slides) return;
     setError(null);
     try {
       const r = await fetch("/api/jobs", {
@@ -102,9 +127,9 @@ function WeaponsInner() {
         body: JSON.stringify({
           kind: "slides",
           params: {
-            organization: result.organization,
-            title: result.title,
-            slides: result.weapon.slides,
+            organization: meta.organization,
+            title: meta.title,
+            slides: weapon.slides,
           },
         }),
       });
@@ -221,8 +246,24 @@ function WeaponsInner() {
           disabled={loading}
           className="w-full rounded-xl bg-amber-600 px-4 py-3 text-base font-semibold text-white transition active:bg-amber-700 disabled:opacity-40"
         >
-          {loading ? "土台を読んで武器を作っています..." : "武器を出す"}
+          {building
+            ? `${TAB_LABEL[building]}を作っています...`
+            : loading
+              ? "土台を読んでいます..."
+              : "武器を出す"}
         </button>
+        {loading && (
+          <div className="flex justify-center gap-2">
+            {ORDER.map((k) => (
+              <span
+                key={k}
+                className={`h-1.5 w-12 rounded-full ${
+                  weapon[k] ? "bg-amber-500" : building === k ? "animate-pulse bg-amber-300" : "bg-gray-200"
+                }`}
+              />
+            ))}
+          </div>
+        )}
         {actions.length > 0 && !loading && (
           <p className="text-center text-xs text-gray-400">{actions.length}件の打ち手で作ります</p>
         )}
@@ -231,61 +272,58 @@ function WeaponsInner() {
         )}
       </div>
 
-      {result && (
+      {meta && (
         <section className="mt-6 space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-bold text-gray-900">{result.organization}の武器</h2>
-            {result.deliverablesCount > 0 && (
+            <h2 className="text-lg font-bold text-gray-900">{meta.organization}の武器</h2>
+            {meta.deliverablesCount > 0 && (
               <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
-                成果物 {result.deliverablesCount}件
+                成果物 {meta.deliverablesCount}件
               </span>
             )}
-            {result.commonDocsCount > 0 && (
+            {meta.commonDocsCount > 0 && (
               <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                共通資料 {result.commonDocsCount}件
+                共通資料 {meta.commonDocsCount}件
               </span>
             )}
-            {result.meetingsCount > 0 && (
+            {meta.meetingsCount > 0 && (
               <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
-                会議 {result.meetingsCount}件
+                会議 {meta.meetingsCount}件
               </span>
             )}
           </div>
 
-          {result.savedChunks > 0 && (
-            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-              ✅ この武器は成果物として記憶に登録しました（{result.savedChunks}
-              チャンク）。次の提案・壁打ちの土台になります。
-            </p>
-          )}
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            ✅ できた武器から順に、成果物として記憶に登録しています。次の提案・壁打ちの土台になります。
+          </p>
 
-          {/* 3種類の武器をタブで切り替える */}
+          {/* 3種類の武器をタブで切り替える。まだ作れていないものは押せない。 */}
           <div className="flex gap-2">
-            {(
-              [
-                ["story", `想定ストーリー (${result.weapon.story.length})`],
-                ["qa", `想定問答 (${result.weapon.qa.length})`],
-                ["slides", `スライド構成案 (${result.weapon.slides.length})`],
-              ] as [Tab, string][]
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setTab(k)}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                  tab === k
-                    ? "bg-amber-600 text-white"
-                    : "bg-white text-gray-600 border border-gray-200 active:bg-gray-50"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            {ORDER.map((k) => {
+              const n = weapon[k]?.length;
+              const ready = n !== undefined;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => ready && setTab(k)}
+                  disabled={!ready}
+                  className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                    tab === k && ready
+                      ? "bg-amber-600 text-white"
+                      : "border border-gray-200 bg-white text-gray-600 active:bg-gray-50 disabled:opacity-40"
+                  }`}
+                >
+                  {TAB_LABEL[k]}
+                  {ready ? ` (${n})` : building === k ? " ..." : ""}
+                </button>
+              );
+            })}
           </div>
 
-          {tab === "story" && (
+          {tab === "story" && weapon.story && (
             <div className="space-y-3">
-              {result.weapon.story.map((s, i) => (
+              {weapon.story.map((s, i) => (
                 <div
                   key={i}
                   className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
@@ -304,9 +342,9 @@ function WeaponsInner() {
             </div>
           )}
 
-          {tab === "qa" && (
+          {tab === "qa" && weapon.qa && (
             <div className="space-y-3">
-              {result.weapon.qa.map((q, i) => (
+              {weapon.qa.map((q, i) => (
                 <div
                   key={i}
                   className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
@@ -322,9 +360,9 @@ function WeaponsInner() {
             </div>
           )}
 
-          {tab === "slides" && (
+          {tab === "slides" && weapon.slides && (
             <div className="space-y-3">
-              {result.weapon.slides.map((s, i) => (
+              {weapon.slides.map((s, i) => (
                 <div
                   key={i}
                   className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
