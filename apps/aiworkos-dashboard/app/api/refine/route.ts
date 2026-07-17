@@ -55,6 +55,25 @@ const SYNTHESIS_SCHEMA = {
   additionalProperties: false,
 };
 
+// 埋め込みモデル gte-small は 512token 上限で、超過分は黙って切り捨てられる。
+// 実測（embed に「先頭N字＋末尾に無関係な文」を投げて比較）では、日本語は約500字で頭打ちになり
+// 600字目以降は埋め込みに一切影響しなかった。store-memory は `title\n\ncontent` を1本の
+// 埋め込みにするため、タイトル分を差し引いて content は 400字/チャンクに刻む。
+// これを怠ると、熟成した内容の大半が検索に引っかからなくなる（保存はされるが引けない）。
+const CHUNK_SIZE = 400;
+const CHUNK_OVERLAP = 60;
+
+function windowChunks(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP): string[] {
+  const body = text.trim();
+  if (!body) return [];
+  if (body.length <= size) return [body];
+  const chunks: string[] = [];
+  for (let i = 0; i < body.length; i += size - overlap) {
+    chunks.push(body.slice(i, i + size));
+  }
+  return chunks;
+}
+
 function restUrl(supabaseUrl: string, table: string) {
   return `${supabaseUrl}/rest/v1/${table}`;
 }
@@ -411,27 +430,50 @@ ${transcript}
       const parsed = JSON.parse(tb.text) as { title: string; content: string };
 
       const today = new Date().toISOString().slice(0, 10);
-      const stored = await fetch(`${supabaseUrl}/functions/v1/store-memory`, {
+      const chunks = windowChunks(parsed.content);
+      if (chunks.length === 0) {
+        return NextResponse.json({ error: "熟成した内容が空でした" }, { status: 502 });
+      }
+
+      // 同じセッションを再度「熟成して登録」すると、会話が伸びた分だけチャンク数が変わる。
+      // 古いチャンクを先に一掃しないと、source_id のズレで前回分が孤児として残り、
+      // 古い内容が検索に混ざる。
+      await fetch(`${supabaseUrl}/functions/v1/purge-memory`, {
         method: "POST",
         headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source_type: "成果物",
-          source_id: `refine:${sessionId}`,
-          organization,
-          title: `${parsed.title}｜壁打ち熟成｜${today}`,
-          content: parsed.content,
-          event_date: today,
-          metadata: {
-            種別: "メモ",
-            カテゴリ: category,
-            資料名: parsed.title,
-            出所: "壁打ち",
-            セッション: sessionId,
-          },
-        }),
+        body: JSON.stringify({ source_id_prefix: `refine:${sessionId}` }),
         cache: "no-store",
       });
-      if (!stored.ok) {
+
+      const results = await Promise.all(
+        chunks.map((chunk, i) =>
+          fetch(`${supabaseUrl}/functions/v1/store-memory`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${anonKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              source_type: "成果物",
+              source_id: `refine:${sessionId}:${i + 1}`,
+              organization,
+              title: `${parsed.title}｜壁打ち熟成｜${today}｜${i + 1}/${chunks.length}`,
+              content: chunk,
+              event_date: today,
+              metadata: {
+                種別: "メモ",
+                カテゴリ: category,
+                資料名: parsed.title,
+                出所: "壁打ち",
+                セッション: sessionId,
+                位置: `${i + 1}/${chunks.length}`,
+              },
+            }),
+            cache: "no-store",
+          })
+        )
+      );
+      if (results.some((r) => !r.ok)) {
         return NextResponse.json({ error: "登録に失敗しました" }, { status: 502 });
       }
 
@@ -442,7 +484,7 @@ ${transcript}
         cache: "no-store",
       });
 
-      return NextResponse.json({ saved: true, title: parsed.title });
+      return NextResponse.json({ saved: true, title: parsed.title, chunks: chunks.length });
     }
 
     return NextResponse.json({ error: "不正なアクションです" }, { status: 400 });
