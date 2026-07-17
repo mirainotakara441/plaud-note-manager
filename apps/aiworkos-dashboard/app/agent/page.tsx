@@ -27,6 +27,7 @@ type AgentResponse = {
   meetings: Meeting[];
   proposal: Proposal;
   deliverablesCount?: number;
+  commonDocsCount?: number;
   cached?: boolean;
 };
 
@@ -263,6 +264,11 @@ export default function AgentPage() {
                 {(result.deliverablesCount ?? 0) > 0 && (
                   <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700">
                     過去成果物 {result.deliverablesCount}件を参照
+                  </span>
+                )}
+                {(result.commonDocsCount ?? 0) > 0 && (
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                    共通資料 {result.commonDocsCount}件を参照
                   </span>
                 )}
                 <Link

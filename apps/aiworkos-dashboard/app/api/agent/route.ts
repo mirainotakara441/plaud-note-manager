@@ -137,13 +137,20 @@ async function fetchRelatedMemos(
   }
 }
 
-// 過去成果物（source_type:成果物）をこの団体に絞って取得。提案のベースとして使う。
-// organization フィルタで RPC が対象団体の行のみを返すため、match_count を大きめにして
-// その団体の成果物チャンクを網羅的に取得する（提案の土台なので取りこぼしを避ける）。
+// 特定団体に紐づかない横断資料（初回提案資料・セミナー資料・戦略など）を入れておく
+// 擬似団体名。どの団体の提案でも共通の土台として参照する。
+const COMMON_ORG = "共通";
+
+// 過去成果物（source_type:成果物）を organization で絞って取得。提案のベースとして使う。
+// organization フィルタで RPC が対象団体の行のみを返す。
+// 検索クエリは絞込先ではなく「提案対象の団体」で作る（共通資料を引くときも、その団体に
+// 関連の深い型・戦略が上位に来るようにするため）。
 async function fetchDeliverables(
   supabaseUrl: string,
   anonKey: string,
-  organization: string
+  targetOrg: string,
+  filterOrg: string,
+  matchCount: number
 ): Promise<MemoResult[]> {
   try {
     const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
@@ -153,10 +160,10 @@ async function fetchDeliverables(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        query: `${organization} 提案 論点 打ち手 骨子`,
+        query: `${targetOrg} 提案 論点 打ち手 骨子`,
         source_type: "成果物",
-        organization,
-        match_count: 40,
+        organization: filterOrg,
+        match_count: matchCount,
       }),
       cache: "no-store",
     });
@@ -168,16 +175,21 @@ async function fetchDeliverables(
   }
 }
 
-// 会議＋過去成果物の決定的署名。どちらかが変われば（＝新しい成果物を登録した等）
+// 会議＋過去成果物の決定的署名。いずれかが変われば（＝新しい成果物を登録した等）
 // キャッシュが無効化され、提案が再生成される。
-function computeSignature(meetings: Meeting[], deliverables: MemoResult[]): string {
+function computeSignature(
+  meetings: Meeting[],
+  deliverables: MemoResult[],
+  commonDocs: MemoResult[]
+): string {
   const latest = meetings.reduce(
     (max, m) => (m.event_date && (!max || m.event_date > max) ? m.event_date : max),
     ""
   );
   const totalChars = meetings.reduce((s, m) => s + (m.content?.length ?? 0), 0);
   const delChars = deliverables.reduce((s, d) => s + (d.content?.length ?? 0), 0);
-  return `${meetings.length}:${latest}:${totalChars}:d${deliverables.length}:${delChars}`;
+  const comChars = commonDocs.reduce((s, d) => s + (d.content?.length ?? 0), 0);
+  return `${meetings.length}:${latest}:${totalChars}:d${deliverables.length}:${delChars}:c${commonDocs.length}:${comChars}`;
 }
 
 // proposal-cache Edge Function から取得。失敗しても null を返し生成にフォールバック。
@@ -249,11 +261,22 @@ function formatDate(dateStr: string | null): string {
   ).padStart(2, "0")}`;
 }
 
+function formatDeliverables(docs: MemoResult[], emptyLabel: string): string {
+  if (docs.length === 0) return emptyLabel;
+  return docs
+    .map((d) => {
+      const kind = (d.metadata?.["種別"] as string) ?? "成果物";
+      return `- [${kind}] ${d.title}: ${d.content}`;
+    })
+    .join("\n");
+}
+
 function buildUserPrompt(
   organization: string,
   meetings: Meeting[],
   memos: MemoResult[],
-  deliverables: MemoResult[]
+  deliverables: MemoResult[],
+  commonDocs: MemoResult[]
 ): string {
   const meetingsText =
     meetings.length > 0
@@ -265,15 +288,8 @@ function buildUserPrompt(
           .join("\n\n")
       : "（会議履歴なし）";
 
-  const deliverablesText =
-    deliverables.length > 0
-      ? deliverables
-          .map((d) => {
-            const kind = (d.metadata?.["種別"] as string) ?? "成果物";
-            return `- [${kind}] ${d.title}: ${d.content}`;
-          })
-          .join("\n")
-      : "（過去成果物なし）";
+  const deliverablesText = formatDeliverables(deliverables, "（この団体向けの過去成果物なし）");
+  const commonText = formatDeliverables(commonDocs, "（共通資料なし）");
 
   const memosText =
     memos.length > 0
@@ -287,8 +303,12 @@ function buildUserPrompt(
 
   return `対象自治体: ${organization}
 
-以下は、過去にこの自治体向けに作成した成果物（提案書・資料など）の抜粋です。今回の提案の【土台（ベース）】として活用してください。
-==== 過去成果物 ====
+以下は、法人請求オンラインサービスの【共通資料】（特定の団体に限らない、サービス標準の提案の型・セミナー資料・事業戦略）の抜粋です。提案の「型」「サービスの価値訴求」「全社戦略との整合」はここに従ってください。
+==== 共通資料 ====
+${commonText}
+
+以下は、過去にこの自治体向けに作成した成果物（提案書・資料など）の抜粋です。今回の提案の【土台（ベース）】として活用してください。共通資料と重複する内容は、この団体向けの記述を優先してください。
+==== この団体向けの過去成果物 ====
 ${deliverablesText}
 
 以下は、この自治体に関するこれまでの会議履歴（時系列・古い順）です。
@@ -299,7 +319,7 @@ ${meetingsText}
 ==== 関連メモ ====
 ${memosText}
 
-上記の事実だけをもとに（過去成果物があればそれを土台に、会議履歴の最新状況で更新して）、${organization}への営業・提案戦略を指定の JSON スキーマで構造化して返してください。
+上記の事実だけをもとに（共通資料の提案の型と、この団体向けの過去成果物を土台に、会議履歴の最新状況で更新して）、${organization}への営業・提案戦略を指定の JSON スキーマで構造化して返してください。
 その際、summary（経緯）だけでなく、以下も必ず空にせず具体的に記述すること:
 - issues: 現状の論点・ボトルネックを2〜4個。会議履歴中の「課題：」を主な材料にする。
 - actions: 次の打ち手を3〜5個。それぞれ title（見出し）と detail（具体策）。会議履歴中の「アクション：」「示唆：」を材料にする。
@@ -325,7 +345,8 @@ async function generateProposal(
   organization: string,
   meetings: Meeting[],
   memos: MemoResult[],
-  deliverables: MemoResult[]
+  deliverables: MemoResult[],
+  commonDocs: MemoResult[]
 ): Promise<Proposal> {
   const message = await client.messages.create({
     model: MODEL,
@@ -344,7 +365,7 @@ async function generateProposal(
     messages: [
       {
         role: "user",
-        content: buildUserPrompt(organization, meetings, memos, deliverables),
+        content: buildUserPrompt(organization, meetings, memos, deliverables, commonDocs),
       },
     ],
   });
@@ -442,12 +463,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // a-2. 過去成果物（提案のベース）。キャッシュ署名に含めるため、キャッシュ確認より先に取得する。
-  const deliverables = await fetchDeliverables(supabaseUrl, anonKey, organization);
+  // a-2. 提案のベースとなる成果物。キャッシュ署名に含めるため、キャッシュ確認より先に取得する。
+  //   - この団体向け: 取りこぼしを避けるため多め（40）に取る。
+  //   - 共通資料: 全団体分の横断資料（100件超）が対象なので、類似度上位のみに絞って
+  //     プロンプトの肥大を防ぐ。
+  const [deliverables, commonDocs] = await Promise.all([
+    fetchDeliverables(supabaseUrl, anonKey, organization, organization, 40),
+    organization === COMMON_ORG
+      ? Promise.resolve<MemoResult[]>([])
+      : fetchDeliverables(supabaseUrl, anonKey, organization, COMMON_ORG, 20),
+  ]);
 
   // a-3. 永続キャッシュ確認。会議・成果物が変わっておらず force でなければ Claude を呼ばず即返す。
   const force = body.force === true;
-  const signature = computeSignature(meetings, deliverables);
+  const signature = computeSignature(meetings, deliverables, commonDocs);
   if (!force && (meetings.length > 0 || deliverables.length > 0)) {
     const cached = await fetchProposalCache(supabaseUrl, anonKey, organization);
     if (cached && cached.signature === signature) {
@@ -456,6 +485,7 @@ export async function POST(req: NextRequest) {
         meetings,
         proposal: cached.proposal,
         deliverablesCount: deliverables.length,
+        commonDocsCount: commonDocs.length,
         cached: true,
       });
     }
@@ -476,7 +506,8 @@ export async function POST(req: NextRequest) {
       organization,
       meetings,
       memos,
-      deliverables
+      deliverables,
+      commonDocs
     );
     if (!proposal.summary && proposal.actions.length === 0) {
       throw new Error("empty_proposal");
@@ -516,6 +547,7 @@ export async function POST(req: NextRequest) {
     meetings,
     proposal,
     deliverablesCount: deliverables.length,
+    commonDocsCount: commonDocs.length,
     cached: false,
   });
 }
