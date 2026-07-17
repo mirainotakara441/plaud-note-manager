@@ -199,7 +199,7 @@ async function fetchProposalCache(
   supabaseUrl: string,
   anonKey: string,
   organization: string
-): Promise<{ signature: string; proposal: Proposal } | null> {
+): Promise<{ signature: string; proposal: Proposal; edited: boolean } | null> {
   try {
     const res = await fetch(`${supabaseUrl}/functions/v1/proposal-cache`, {
       method: "POST",
@@ -219,7 +219,11 @@ async function fetchProposalCache(
       cache.proposal &&
       typeof cache.proposal === "object"
     ) {
-      return { signature: cache.signature, proposal: cache.proposal as Proposal };
+      return {
+        signature: cache.signature,
+        proposal: cache.proposal as Proposal,
+        edited: cache.edited === true,
+      };
     }
     return null;
   } catch {
@@ -237,6 +241,7 @@ async function saveProposalCache(
     proposal: Proposal;
     meetings: Meeting[];
     model: string;
+    edited: boolean;
   }
 ): Promise<void> {
   try {
@@ -275,12 +280,29 @@ function formatDeliverables(docs: MemoResult[], emptyLabel: string): string {
     .join("\n");
 }
 
+// 吉井さんが手直しした提案を、再生成時に引き継ぐためのテキスト。
+// 手直しは「AIの間違いの訂正」か「吉井さん自身の案」であり、会議・成果物が増えた
+// というだけで捨ててよいものではない。
+function formatEdited(p: Proposal): string {
+  const lines: string[] = [];
+  if (p.summary) lines.push(`【経緯】${p.summary}`);
+  if (p.issues.length) lines.push(`【論点】\n${p.issues.map((s) => `- ${s}`).join("\n")}`);
+  if (p.actions.length)
+    lines.push(
+      `【打ち手】\n${p.actions.map((a) => `- ${a.title}: ${a.detail}`).join("\n")}`
+    );
+  if (p.materialOutline.length)
+    lines.push(`【骨子】\n${p.materialOutline.map((s) => `- ${s}`).join("\n")}`);
+  return lines.join("\n\n");
+}
+
 function buildUserPrompt(
   organization: string,
   meetings: Meeting[],
   memos: MemoResult[],
   deliverables: MemoResult[],
-  commonDocs: MemoResult[]
+  commonDocs: MemoResult[],
+  editedProposal: Proposal | null
 ): string {
   const meetingsText =
     meetings.length > 0
@@ -305,8 +327,22 @@ function buildUserPrompt(
           .join("\n")
       : "（関連メモなし）";
 
-  return `対象自治体: ${organization}
+  const editedText = editedProposal
+    ? `
+========================================
+以下は、前回の提案を【吉井さん自身が手直しした版】です。AIの間違いを訂正したか、
+吉井さんの考えを反映したものであり、最も信頼できる情報です。
+- ここに書かれた内容は原則そのまま引き継ぐこと。特に訂正された事実・数字・固有名詞は絶対に元に戻さないこと。
+- 会議履歴に新しい動きがあった場合のみ、その部分を更新・追記する。
+- 吉井さんが削除した項目を復活させないこと。
+==== 吉井さんが手直しした前回の提案 ====
+${formatEdited(editedProposal)}
+========================================
+`
+    : "";
 
+  return `対象自治体: ${organization}
+${editedText}
 以下は、法人請求オンラインサービスの【共通資料】（特定の団体に限らない、サービス標準の提案の型・セミナー資料・事業戦略）の抜粋です。提案の「型」「サービスの価値訴求」「全社戦略との整合」はここに従ってください。
 ==== 共通資料 ====
 ${commonText}
@@ -350,7 +386,8 @@ async function generateProposal(
   meetings: Meeting[],
   memos: MemoResult[],
   deliverables: MemoResult[],
-  commonDocs: MemoResult[]
+  commonDocs: MemoResult[],
+  editedProposal: Proposal | null
 ): Promise<Proposal> {
   const message = await client.messages.create({
     model: MODEL,
@@ -369,7 +406,14 @@ async function generateProposal(
     messages: [
       {
         role: "user",
-        content: buildUserPrompt(organization, meetings, memos, deliverables, commonDocs),
+        content: buildUserPrompt(
+          organization,
+          meetings,
+          memos,
+          deliverables,
+          commonDocs,
+          editedProposal
+        ),
       },
     ],
   });
@@ -413,6 +457,52 @@ async function generateProposal(
       ? input.materialOutline.filter((s): s is string => typeof s === "string")
       : [],
   };
+}
+
+// 手直しの保存。吉井さんが論点・打ち手・骨子を直したら、その版をキャッシュに書き戻す。
+// Claude は呼ばない（訂正をAIに再解釈させない）。
+export async function PUT(req: NextRequest) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
+  }
+
+  let body: { organization?: unknown; proposal?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
+  }
+
+  const organization =
+    typeof body.organization === "string" ? body.organization.trim() : "";
+  if (!organization) {
+    return NextResponse.json({ error: "自治体が指定されていません" }, { status: 400 });
+  }
+  const p = body.proposal as Proposal | undefined;
+  if (!p || typeof p !== "object" || !Array.isArray(p.issues)) {
+    return NextResponse.json({ error: "提案の形式が不正です" }, { status: 400 });
+  }
+
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/proposal-cache`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "edit", organization, proposal: p }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      return NextResponse.json(
+        { error: d?.error ?? "手直しの保存に失敗しました" },
+        { status: 502 }
+      );
+    }
+    return NextResponse.json({ saved: true, edited: true });
+  } catch {
+    return NextResponse.json({ error: "手直しの保存に失敗しました" }, { status: 502 });
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -481,19 +571,22 @@ export async function POST(req: NextRequest) {
   // a-3. 永続キャッシュ確認。会議・成果物が変わっておらず force でなければ Claude を呼ばず即返す。
   const force = body.force === true;
   const signature = computeSignature(meetings, deliverables, commonDocs);
-  if (!force && (meetings.length > 0 || deliverables.length > 0)) {
-    const cached = await fetchProposalCache(supabaseUrl, anonKey, organization);
-    if (cached && cached.signature === signature) {
-      return NextResponse.json({
-        organization,
-        meetings,
-        proposal: cached.proposal,
-        deliverablesCount: deliverables.length,
-        commonDocsCount: commonDocs.length,
-        cached: true,
-      });
-    }
+  const cached = await fetchProposalCache(supabaseUrl, anonKey, organization);
+  if (!force && cached && cached.signature === signature) {
+    return NextResponse.json({
+      organization,
+      meetings,
+      proposal: cached.proposal,
+      deliverablesCount: deliverables.length,
+      commonDocsCount: commonDocs.length,
+      cached: true,
+      edited: cached.edited,
+    });
   }
+
+  // 手直しされた版があれば再生成の土台にする。会議・成果物が増えたというだけで
+  // 吉井さんの訂正を捨ててはいけない。
+  const editedProposal = cached?.edited ? cached.proposal : null;
 
   // b. 関連メモ（補強・失敗しても続行）
   const memos = await fetchRelatedMemos(supabaseUrl, anonKey, organization);
@@ -511,7 +604,8 @@ export async function POST(req: NextRequest) {
       meetings,
       memos,
       deliverables,
-      commonDocs
+      commonDocs,
+      editedProposal
     );
     if (!proposal.summary && proposal.actions.length === 0) {
       throw new Error("empty_proposal");
@@ -543,6 +637,9 @@ export async function POST(req: NextRequest) {
       proposal,
       meetings,
       model: MODEL,
+      // 手直しを土台に再生成した場合は訂正が引き継がれているので、印を保つ。
+      // ここを落とすと次の再生成で訂正が消える。
+      edited: !!editedProposal,
     });
   }
 
@@ -553,5 +650,6 @@ export async function POST(req: NextRequest) {
     deliverablesCount: deliverables.length,
     commonDocsCount: commonDocs.length,
     cached: false,
+    edited: !!editedProposal,
   });
 }
