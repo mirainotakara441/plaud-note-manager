@@ -7,6 +7,7 @@ import StakeholderPicker, {
   rememberStakeholder,
   type Category,
 } from "@/app/components/StakeholderPicker";
+import { composeReply, parseQuestions, stripBold } from "@/lib/parseQuestions";
 
 type Msg = { role: "user" | "assistant"; content: string };
 type Session = {
@@ -28,6 +29,9 @@ function RefineInner() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
+  // 問いごとの回答。キーは "Q1" / "Q2（再確認）" などのラベル。
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [skipped, setSkipped] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,11 +99,17 @@ function RefineInner() {
   }
 
   async function send() {
-    const msg = input.trim();
-    if (!msg || !sessionId) return;
+    if (!sessionId) return;
+    // 問いを切り出せていれば各欄の回答を1本にまとめ、崩れていれば自由入力をそのまま送る
+    const msg = questions.length > 0
+      ? composeReply(questions, answers, skipped, input)
+      : input.trim();
+    if (!msg || !canSend) return;
     setError(null);
     setSaved(null);
     setInput("");
+    setAnswers({});
+    setSkipped({});
     setMessages((prev) => [...prev, { role: "user", content: msg }]);
     setLoading(true);
     try {
@@ -117,6 +127,20 @@ function RefineInner() {
       setLoading(false);
     }
   }
+
+  // 最新の参謀メッセージだけを「問い＋入力欄」に展開する。過去のやり取りは読み物として残す。
+  const lastAssistantIndex = messages.map((m) => m.role).lastIndexOf("assistant");
+  const lastAssistant =
+    lastAssistantIndex >= 0 ? messages[lastAssistantIndex] : null;
+  const parsed = lastAssistant ? parseQuestions(lastAssistant.content) : null;
+  const questions = parsed?.questions ?? [];
+
+  // 1問でも答えるかスキップしていれば送れる。全部空のまま送っても意味がないので止める。
+  const canSend =
+    questions.length > 0
+      ? questions.some((q) => (answers[q.label] ?? "").trim() || skipped[q.label]) ||
+        !!input.trim()
+      : !!input.trim();
 
   async function saveMatured() {
     if (!sessionId) return;
@@ -214,19 +238,22 @@ function RefineInner() {
             </button>
           </div>
 
+          {/* これまでのやり取り。最新の参謀メッセージは下の「問い」欄に展開するのでここでは出さない */}
           <div className="space-y-3">
-            {messages.map((m, i) => (
-              <div
-                key={i}
-                className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
-                  m.role === "assistant"
-                    ? "border border-gray-200 bg-white text-gray-800 shadow-sm"
-                    : "ml-6 bg-indigo-600 text-white"
-                }`}
-              >
-                {m.content}
-              </div>
-            ))}
+            {messages.map((m, i) =>
+              i === lastAssistantIndex && questions.length > 0 ? null : (
+                <div
+                  key={i}
+                  className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+                    m.role === "assistant"
+                      ? "border border-gray-200 bg-white text-gray-800 shadow-sm"
+                      : "ml-6 bg-indigo-600 text-white"
+                  }`}
+                >
+                  {m.role === "assistant" ? stripBold(m.content) : m.content}
+                </div>
+              )
+            )}
             {loading && (
               <div className="flex items-center gap-2 px-1 py-2">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
@@ -235,12 +262,74 @@ function RefineInner() {
             )}
           </div>
 
+          {/* 最新の問い：1問ずつカードにして、その下に入力欄を置く */}
+          {!loading && questions.length > 0 && (
+            <div className="space-y-3">
+              {parsed?.intro && (
+                <p className="px-1 text-sm leading-relaxed whitespace-pre-wrap text-gray-600">
+                  {parsed.intro}
+                </p>
+              )}
+              {questions.map((q) => {
+                const isSkipped = !!skipped[q.label];
+                return (
+                  <div
+                    key={q.label}
+                    className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
+                      isSkipped ? "border-gray-200 opacity-60" : "border-indigo-200"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="mt-0.5 shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">
+                        {q.label}
+                      </span>
+                      <p className="text-sm font-semibold leading-relaxed text-gray-900">
+                        {q.heading}
+                      </p>
+                    </div>
+                    {q.body && (
+                      <p className="mt-2 text-xs leading-relaxed whitespace-pre-wrap text-gray-500">
+                        {q.body}
+                      </p>
+                    )}
+                    <textarea
+                      value={answers[q.label] ?? ""}
+                      onChange={(e) =>
+                        setAnswers((prev) => ({ ...prev, [q.label]: e.target.value }))
+                      }
+                      rows={3}
+                      disabled={isSkipped}
+                      placeholder="ここに答える（箇条書き・音声入力そのままでOK）"
+                      className="mt-3 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50 disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSkipped((prev) => ({ ...prev, [q.label]: !prev[q.label] }))
+                      }
+                      className="mt-2 text-xs font-medium text-gray-500 active:opacity-70"
+                    >
+                      {isSkipped ? "↩︎ やっぱり答える" : "この問いはスキップ"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+            {questions.length > 0 && (
+              <label className="mb-1 block px-1 text-xs font-medium text-gray-500">
+                補足（任意・問い以外に伝えたいこと）
+              </label>
+            )}
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              rows={3}
-              placeholder="質問に答える"
+              rows={questions.length > 0 ? 2 : 3}
+              placeholder={
+                questions.length > 0 ? "例: 8月頭に西山さんと会う予定あり" : "質問に答える"
+              }
               disabled={loading}
               className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
             />
@@ -248,10 +337,10 @@ function RefineInner() {
               <button
                 type="button"
                 onClick={send}
-                disabled={loading || !input.trim()}
+                disabled={loading || !canSend}
                 className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition active:bg-indigo-700 disabled:opacity-40"
               >
-                送信
+                {questions.length > 0 ? "回答を送る" : "送信"}
               </button>
               <button
                 type="button"
