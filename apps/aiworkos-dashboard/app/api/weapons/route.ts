@@ -140,8 +140,8 @@ const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス
 - 与えられた「決定した施策」「共通資料」「この団体向けの成果物」「会議履歴」に書かれた事実のみに基づくこと。
 - 資料に無い数字・人名・経緯・約束事を憶測で創作してはならない。情報が足りない部分は、踏み込んだ断定を避ける。
 - 共通資料にあるサービスの価値訴求・実績数値は積極的に使う。ただし数値は資料どおりに正確に引くこと。
-- 【数値の食い違い】導入実績・団体数・カバー率など「全社共通の事実」が資料によって異なる場合は、必ず日付の新しい資料の数値を採用すること。事業が伸びているため、古い資料には過去時点の数値が残っている。
-- 【団体別優先の範囲】「この団体向けの成果物・会議履歴を優先する」のは、その団体固有の事情（経緯・キーパーソン・懸念・約束事）に限る。全社共通の実績数値には適用しない。古い会議録に載っている実績数値を最新のものより優先してはならない。
+- 【実績数値は「最新実績サマリ」が絶対の正】導入実績・自治体数・事業者数・人口カバー率を語るときは、冒頭に与えられる「最新実績サマリ」の数値だけを使うこと。他の資料（会議録・過去の提案書・年度振り返り等）に別の数値があっても、それは作成当時の値であり最新ではない。資料の日付が新しくても同じ（古い数値を含む資料が新しい日付で登録されていることがある）。サマリ以外の実績数値を引用してはならない。
+- 【団体別優先の範囲】「この団体向けの成果物・会議履歴を優先する」のは、その団体固有の事情（経緯・キーパーソン・懸念・約束事）に限る。全社共通の実績数値には適用しない。
 - 会議履歴に出てくる相手の懸念・反論は、想定問答に必ず反映すること。実際に言われたことが最も価値がある。
 - 想定ストーリーの talk は、要約ではなく「実際に話す言葉」で書くこと。吉井さんがそのまま口に出せる粒度にする。
 - 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
@@ -165,6 +165,24 @@ async function searchMemory(
   } catch {
     return [];
   }
+}
+
+// 実績数値の「正」を1枚に持たせた記録。類似度の順位に頼ると取りこぼす
+// （通常のクエリでは共通資料120件中14位。ここは12件しか取らないので圏外に落ちる）。
+// 専用クエリで取ってプロンプト先頭に固定する。実体は source_id="metrics:共通:最新実績サマリ"。
+const METRICS_QUERY = "最新実績サマリ 自治体トライアル 参加事業者 人口カバー率 団体数";
+
+async function fetchLatestMetrics(
+  supabaseUrl: string,
+  anonKey: string
+): Promise<MemoResult | null> {
+  const rows = await searchMemory(supabaseUrl, anonKey, {
+    query: METRICS_QUERY,
+    source_type: "成果物",
+    organization: COMMON_ORG,
+    match_count: 5,
+  });
+  return rows.find((r) => (r.metadata?.["資料名"] as string) === "最新実績サマリ") ?? null;
 }
 
 async function fetchMeetings(
@@ -329,7 +347,7 @@ export async function POST(req: NextRequest) {
 
   // 土台を集める。壁打ちの熟成メモも成果物なのでここに含まれる。
   // 60秒上限に収めるため、件数は控えめにして類似度上位だけを使う。
-  const [deliverables, commonDocs, meetings] = await Promise.all([
+  const [deliverables, commonDocs, meetings, metrics] = await Promise.all([
     searchMemory(supabaseUrl, anonKey, {
       query: `${organization} ${actions.join(" ")}`,
       source_type: "成果物",
@@ -343,6 +361,7 @@ export async function POST(req: NextRequest) {
       match_count: 12,
     }),
     fetchMeetings(supabaseUrl, anonKey, organization),
+    fetchLatestMetrics(supabaseUrl, anonKey),
   ]);
 
   const meetingsText =
@@ -352,8 +371,16 @@ export async function POST(req: NextRequest) {
           .join("\n")
       : "（会議履歴なし）";
 
-  const userPrompt = `対象: ${organization}
+  // 実績数値の唯一の正。他の資料に別の数値があっても、こちらを使わせる。
+  const metricsText = metrics
+    ? `
+==== 最新実績サマリ（実績数値はこれだけを使うこと）====
+${metrics.content}
+`
+    : "";
 
+  const userPrompt = `対象: ${organization}
+${metricsText}
 ==== 決定した施策（これでいくと決めた打ち手）====
 ${actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}
 ${note ? `\n【吉井さんからの補足】\n${note}` : ""}

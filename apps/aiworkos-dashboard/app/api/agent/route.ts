@@ -44,8 +44,8 @@ const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス
 厳守事項:
 - 必ず与えられた「会議履歴」「過去成果物（過去にこの団体向けに作った提案書・資料）」「関連メモ」に書かれた事実のみに基づいて分析すること。
 - 過去成果物がある場合は、それを今回の提案の土台（ベース）として最大限活用し、会議履歴の最新状況で更新・発展させること。過去に整理済みの論点・打ち手・骨子は引き継ぎ、変化があった点だけ差し替える。
-- 【数値の食い違い】導入実績・団体数・カバー率など「全社共通の事実」が資料によって異なる場合は、必ず日付の新しい資料の数値を採用すること。事業が伸びているため、古い資料には過去時点の数値が残っている。
-- 【団体別優先の範囲】「この団体向けの記述を優先する」のは、その団体固有の事情（経緯・キーパーソン・懸念・約束事）に限る。全社共通の実績数値には適用しない。古い会議録に載っている実績数値を最新のものより優先してはならない。
+- 【実績数値は「最新実績サマリ」が絶対の正】導入実績・自治体数・事業者数・人口カバー率を書くときは、冒頭に与えられる「最新実績サマリ」の数値だけを使うこと。他の資料（会議録・過去の提案書・年度振り返り等）に別の数値があっても、それは作成当時の値であり最新ではない。資料の日付が新しくても同じ（古い数値を含む資料が新しい日付で登録されていることがある）。サマリ以外の実績数値を引用してはならない。
+- 【団体別優先の範囲】「この団体向けの記述を優先する」のは、その団体固有の事情（経緯・キーパーソン・懸念・約束事）に限る。全社共通の実績数値には適用しない。
 - 資料に無い数字・人名・経緯・約束事などを憶測で創作してはならない。情報が不足している場合は、その旨を前提として扱う。
 - 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
 - 出力は必ず指定された JSON スキーマに従って構造化して返すこと。issues・actions・materialOutline は必ず中身を埋め、空配列で返してはならない。まず過去成果物と会議履歴を読み込んで論点と打ち手を分析し、その分析結果を各フィールドに反映すること。`;
@@ -142,6 +142,42 @@ async function fetchRelatedMemos(
 // 特定団体に紐づかない横断資料（初回提案資料・セミナー資料・戦略など）を入れておく
 // 擬似団体名。どの団体の提案でも共通の土台として参照する。
 const COMMON_ORG = "共通";
+
+// 実績数値（自治体数・事業者数・人口カバー率）の「正」を1枚に持たせた記録。
+// 数値は事業の成長で増え続けるため、各資料には作成当時の値が残る。日付順では
+// 解決できない（古い数値を含む資料が新しい日付で登録されることがある）ので、
+// この1枚を常に読ませて正とする。
+//
+// 類似度の順位に頼ると取りこぼす（通常のクエリでは共通資料120件中14位で、
+// match_count を絞ると圏外に落ちる）。専用クエリで取ってプロンプト先頭に固定する。
+// 実体は memory_chunks の source_id="metrics:共通:最新実績サマリ"（更新はそこへ上書き）。
+// metadata.資料名 が "最新実績サマリ" のものを拾う。
+const METRICS_QUERY = "最新実績サマリ 自治体トライアル 参加事業者 人口カバー率 団体数";
+
+async function fetchLatestMetrics(
+  supabaseUrl: string,
+  anonKey: string
+): Promise<MemoResult | null> {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: METRICS_QUERY,
+        source_type: "成果物",
+        organization: COMMON_ORG,
+        match_count: 5,
+      }),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const rows: MemoResult[] = Array.isArray(data?.results) ? data.results : [];
+    return rows.find((r) => (r.metadata?.["資料名"] as string) === "最新実績サマリ") ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // 過去成果物（source_type:成果物）を organization で絞って取得。提案のベースとして使う。
 // organization フィルタで RPC が対象団体の行のみを返す。
@@ -302,7 +338,8 @@ function buildUserPrompt(
   memos: MemoResult[],
   deliverables: MemoResult[],
   commonDocs: MemoResult[],
-  editedProposal: Proposal | null
+  editedProposal: Proposal | null,
+  metrics: MemoResult | null
 ): string {
   const meetingsText =
     meetings.length > 0
@@ -341,8 +378,16 @@ ${formatEdited(editedProposal)}
 `
     : "";
 
+  // 実績数値の唯一の正。他の資料に別の数値があっても、こちらを使わせる。
+  const metricsText = metrics
+    ? `
+==== 最新実績サマリ（実績数値はこれだけを使うこと）====
+${metrics.content}
+`
+    : "";
+
   return `対象自治体: ${organization}
-${editedText}
+${metricsText}${editedText}
 以下は、法人請求オンラインサービスの【共通資料】（特定の団体に限らない、サービス標準の提案の型・セミナー資料・事業戦略）の抜粋です。提案の「型」「サービスの価値訴求」「全社戦略との整合」はここに従ってください。
 ==== 共通資料 ====
 ${commonText}
@@ -387,7 +432,8 @@ async function generateProposal(
   memos: MemoResult[],
   deliverables: MemoResult[],
   commonDocs: MemoResult[],
-  editedProposal: Proposal | null
+  editedProposal: Proposal | null,
+  metrics: MemoResult | null
 ): Promise<Proposal> {
   const message = await client.messages.create({
     model: MODEL,
@@ -412,7 +458,8 @@ async function generateProposal(
           memos,
           deliverables,
           commonDocs,
-          editedProposal
+          editedProposal,
+          metrics
         ),
       },
     ],
@@ -561,11 +608,12 @@ export async function POST(req: NextRequest) {
   //   - この団体向け: 取りこぼしを避けるため多め（40）に取る。
   //   - 共通資料: 全団体分の横断資料（100件超）が対象なので、類似度上位のみに絞って
   //     プロンプトの肥大を防ぐ。
-  const [deliverables, commonDocs] = await Promise.all([
+  const [deliverables, commonDocs, metrics] = await Promise.all([
     fetchDeliverables(supabaseUrl, anonKey, organization, organization, 40),
     organization === COMMON_ORG
       ? Promise.resolve<MemoResult[]>([])
       : fetchDeliverables(supabaseUrl, anonKey, organization, COMMON_ORG, 20),
+    fetchLatestMetrics(supabaseUrl, anonKey),
   ]);
 
   // a-3. 永続キャッシュ確認。会議・成果物が変わっておらず force でなければ Claude を呼ばず即返す。
@@ -605,7 +653,8 @@ export async function POST(req: NextRequest) {
       memos,
       deliverables,
       commonDocs,
-      editedProposal
+      editedProposal,
+      metrics
     );
     if (!proposal.summary && proposal.actions.length === 0) {
       throw new Error("empty_proposal");
