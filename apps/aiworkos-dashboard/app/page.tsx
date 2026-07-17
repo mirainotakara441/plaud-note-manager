@@ -32,6 +32,13 @@ const FEATURES: Feature[] = [
     accent: "bg-teal-100 text-teal-700",
   },
   {
+    href: "/weapons",
+    icon: "⚔️",
+    title: "武器を出す",
+    desc: "決めた打ち手を想定ストーリー・想定問答・スライド構成案にする",
+    accent: "bg-amber-100 text-amber-700",
+  },
+  {
     href: "/deliverables",
     icon: "📎",
     title: "成果物を登録",

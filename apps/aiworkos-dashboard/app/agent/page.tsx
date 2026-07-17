@@ -271,9 +271,20 @@ export default function AgentPage() {
                     共通資料 {result.commonDocsCount}件を参照
                   </span>
                 )}
+                {/* 打ち手を引き継いで「施策案の決定 → 武器を出す」へ */}
+                <Link
+                  href={`/weapons?org=${encodeURIComponent(
+                    result.organization
+                  )}&actions=${encodeURIComponent(
+                    JSON.stringify(result.proposal.actions.map((a) => a.title))
+                  )}`}
+                  className="ml-auto rounded-lg border border-amber-200 px-3 py-1.5 text-sm font-medium text-amber-700 transition active:bg-amber-50"
+                >
+                  武器にする →
+                </Link>
                 <Link
                   href={`/refine?org=${encodeURIComponent(result.organization)}`}
-                  className="ml-auto rounded-lg border border-teal-200 px-3 py-1.5 text-sm font-medium text-teal-700 transition active:bg-teal-50"
+                  className="rounded-lg border border-teal-200 px-3 py-1.5 text-sm font-medium text-teal-700 transition active:bg-teal-50"
                 >
                   壁打ちする →
                 </Link>

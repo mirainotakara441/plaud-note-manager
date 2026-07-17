@@ -4,7 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 // 実行はワーカー(クラウドエージェント/Claude)が queued を拾って行い status を更新する（A2）。
 // web app は anon キーで PostgREST 経由に insert/select する（RLSで anon に許可済み）。
 
-const KINDS = ["eight", "plaud"] as const;
+// slides: /weapons で作ったスライド構成案の .pptx 清書。本物テンプレートと slide-architect が
+// 吉井さんの Mac にしかないため、Vercel では実行できず eight/plaud と同じ起票方式に乗せる。
+const KINDS = ["eight", "plaud", "slides"] as const;
 type Kind = (typeof KINDS)[number];
 
 function rest(supabaseUrl: string) {
