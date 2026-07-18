@@ -45,6 +45,13 @@ const FEATURES: Feature[] = [
     desc: "提案書・実習書・スライド・メモを取り込み、提案の土台にする",
     accent: "bg-purple-100 text-purple-700",
   },
+  {
+    href: "/status",
+    icon: "📊",
+    title: "連携ダッシュボード",
+    desc: "Supabaseの蓄積・取込ジョブ・壁打ち・ニュース収集の状況を監視",
+    accent: "bg-rose-100 text-rose-700",
+  },
 ];
 
 export default function Home() {
