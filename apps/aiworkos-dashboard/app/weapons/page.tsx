@@ -28,7 +28,10 @@ function WeaponsInner() {
   const searchParams = useSearchParams();
   const presetOrg = searchParams.get("org") ?? "";
 
-  const [organizations, setOrganizations] = useState<string[]>([]);
+  // /api/organizations は {name, count} のオブジェクト配列を返す。
+  // 以前は string[] と誤解し <option>{o}</option> でオブジェクトを直接レンダーしてクラッシュしていた
+  // （Objects are not valid as a React child → ページ全体が「This page couldn't load」）。
+  const [organizations, setOrganizations] = useState<{ name: string; count: number }[]>([]);
   const [organization, setOrganization] = useState(presetOrg);
   // /agent から引き継いだ打ち手の候補
   const [candidates, setCandidates] = useState<string[]>([]);
@@ -57,17 +60,22 @@ function WeaponsInner() {
       .catch(() => {});
   }, []);
 
-  // /agent から渡された打ち手を候補に載せる
+  // /agent から渡された打ち手を候補に載せる。
+  // 依存は searchParams オブジェクトではなく取り出した文字列にする。searchParams は毎レンダー
+  // 新しい参照になるため、これを依存にすると setCandidates → 再レンダー → 再実行の無限ループに
+  // なり、モバイルの WebView がクラッシュする（「This page couldn't load」）。
+  const actionsParam = searchParams.get("actions");
   useEffect(() => {
-    const raw = searchParams.get("actions");
-    if (!raw) return;
+    if (!actionsParam) return;
     try {
-      const list = JSON.parse(raw);
-      if (Array.isArray(list)) setCandidates(list.filter((x) => typeof x === "string"));
+      const list = JSON.parse(actionsParam);
+      if (Array.isArray(list)) {
+        setCandidates(list.filter((x): x is string => typeof x === "string"));
+      }
     } catch {
       // 引き継ぎに失敗しても手入力で進められる
     }
-  }, [searchParams]);
+  }, [actionsParam]);
 
   const selectedActions = useCallback(() => {
     const picked = candidates.filter((c) => chosen[c]);
@@ -168,8 +176,8 @@ function WeaponsInner() {
           >
             <option value="">対象を選んでください</option>
             {organizations.map((o) => (
-              <option key={o} value={o}>
-                {o}
+              <option key={o.name} value={o.name}>
+                {o.name}（{o.count}）
               </option>
             ))}
           </select>
