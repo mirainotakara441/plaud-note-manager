@@ -1,0 +1,50 @@
+name: Supabase Backup
+
+# AIワークOSのSupabase(public スキーマ)を週1でpg_dumpし、gzip圧縮してartifactに保存する。
+# 無料プランは自動バックアップが無いため、これが唯一の復旧手段になる。
+# 接続文字列は GitHub Secrets の SUPABASE_DB_URL に入れる（Session pooler・5432 を使うこと）。
+
+on:
+  schedule:
+    - cron: "0 18 * * 1" # 毎週月曜 18:00 UTC（＝火曜 03:00 JST）
+  workflow_dispatch: {} # 手動でも実行できる
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: PostgreSQL 17 クライアントを入れる（サーバがPG17なのでpg_dumpも17が要る）
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+
+      - name: pg_dump（public スキーマ）
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret が未設定です。リポジトリの Settings → Secrets で登録してください。"
+            exit 1
+          fi
+          STAMP=$(date -u +%Y%m%d-%H%M)
+          OUT="supabase-public-${STAMP}.sql"
+          /usr/lib/postgresql/17/bin/pg_dump "$DB_URL" \
+            --schema=public --no-owner --no-privileges \
+            --file="$OUT"
+          # 空ダンプ（接続失敗等）を検知して落とす
+          if [ ! -s "$OUT" ] || [ "$(wc -l < "$OUT")" -lt 10 ]; then
+            echo "::error::ダンプが空です。接続文字列(Session pooler/5432か)を確認してください。"
+            exit 1
+          fi
+          gzip "$OUT"
+          ls -lh "${OUT}.gz"
+          echo "ARTIFACT=${OUT}.gz" >> "$GITHUB_ENV"
+
+      - name: artifact に保存（90日保持）
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup-${{ github.run_id }}
+          path: "*.sql.gz"
+          retention-days: 90
