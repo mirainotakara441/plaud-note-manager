@@ -4,7 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 // ── 型定義 ────────────────────────────────────────────────
-type ByType = { type: string; count: number; last: string | null };
+type ByType = {
+  type: string;
+  count: number;
+  last: string | null;
+  d1: number; // 直近24時間の増加
+  d7: number; // 直近7日の増加
+};
 type ByOrg = { org: string; count: number };
 type Daily = { d: string; count: number };
 type JobSummary = { status: string; count: number };
@@ -47,6 +53,7 @@ type Stats = {
   generated_at: string;
   memory_total: number;
   memory_last24h: number;
+  memory_last7d: number;
   db_size_mb: number;
   memory_by_type: ByType[];
   memory_by_org: ByOrg[];
@@ -56,6 +63,7 @@ type Stats = {
   services: Service[];
   refine_sessions: number;
   refine_messages: number;
+  refine_last7d: number;
   refine_recent: RefineRecent[];
   proposals: Proposal[];
   learning_total: number;
@@ -199,7 +207,7 @@ export default function StatusPage() {
               連携ダッシュボード
             </h1>
             <p className="mt-1 text-sm text-gray-500">
-              Supabaseの蓄積状況・取込・壁打ちを一目で確認
+              記憶がどれだけ育ったか・連携が動いているかを一目で確認
             </p>
           </div>
           <button
@@ -262,8 +270,24 @@ export default function StatusPage() {
             <ServicesPanel services={stats.services} />
           </Section>
 
-          {/* 記憶の蓄積 */}
-          <Section title="記憶の蓄積" hint={`合計 ${stats.memory_total} 件`}>
+          {/* 記憶の成長 */}
+          <Section title="記憶の成長" hint={`合計 ${stats.memory_total} 件`}>
+            {/* 今日/今週どれだけ脳が育ったか */}
+            <div className="mb-3 flex gap-2">
+              <div className="flex-1 rounded-xl bg-indigo-50 p-3 text-center">
+                <p className="text-2xl font-bold text-indigo-700">
+                  +{stats.memory_last24h}
+                </p>
+                <p className="mt-0.5 text-xs font-medium text-indigo-500">今日ふえた</p>
+              </div>
+              <div className="flex-1 rounded-xl bg-indigo-50 p-3 text-center">
+                <p className="text-2xl font-bold text-indigo-700">
+                  +{stats.memory_last7d}
+                </p>
+                <p className="mt-0.5 text-xs font-medium text-indigo-500">今週ふえた</p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               {stats.memory_by_type.map((t) => (
                 <div
@@ -282,8 +306,27 @@ export default function StatusPage() {
                       {t.count}
                     </span>
                   </div>
-                  <p className="mt-2 text-xs text-gray-400">
-                    最終追加 {fmtDate(t.last)}（{agoLabel(t.last)}）
+                  {/* 成長の差分（増えていれば緑で強調） */}
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <span
+                      className={`font-semibold ${
+                        t.d1 > 0 ? "text-emerald-600" : "text-gray-300"
+                      }`}
+                    >
+                      {t.d1 > 0 ? `+${t.d1}` : "±0"}
+                      <span className="ml-0.5 font-normal text-gray-400">今日</span>
+                    </span>
+                    <span
+                      className={`font-semibold ${
+                        t.d7 > 0 ? "text-emerald-600" : "text-gray-300"
+                      }`}
+                    >
+                      {t.d7 > 0 ? `+${t.d7}` : "±0"}
+                      <span className="ml-0.5 font-normal text-gray-400">今週</span>
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    最終 {fmtDate(t.last)}（{agoLabel(t.last)}）
                   </p>
                 </div>
               ))}
@@ -303,7 +346,7 @@ export default function StatusPage() {
           {/* 壁打ち */}
           <Section
             title="壁打ち"
-            hint={`${stats.refine_sessions} セッション / ${stats.refine_messages} 発言`}
+            hint={`${stats.refine_sessions}件${stats.refine_last7d > 0 ? `（今週 +${stats.refine_last7d}）` : ""} / ${stats.refine_messages} 発言`}
           >
             {stats.refine_recent.length === 0 ? (
               <p className="text-sm text-gray-400">まだ壁打ちの記録はありません。</p>
