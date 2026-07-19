@@ -1,0 +1,33 @@
+import { NextRequest, NextResponse } from "next/server";
+
+// 一行日記(Supabase memory_chunks)の「やってみよう」を daily_actions へ取り込む。
+// 抽出・重複防止・INSERT は Postgres 関数 import_diary_actions(lookback_days) が一括で行う
+// （Notionトークン不要。既に取り込み済みの日記=source_id はスキップするので何度押しても安全）。
+
+export const dynamic = "force-dynamic";
+
+export async function POST(req: NextRequest) {
+  const url = process.env.SUPABASE_URL;
+  const anon = process.env.SUPABASE_ANON_KEY;
+  if (!url || !anon) {
+    return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
+  }
+  const body = await req.json().catch(() => ({}));
+  const lookback = Number.isFinite(body?.lookback_days) ? body.lookback_days : 30;
+
+  const res = await fetch(`${url}/rest/v1/rpc/import_diary_actions`, {
+    method: "POST",
+    headers: {
+      apikey: anon,
+      Authorization: `Bearer ${anon}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ lookback_days: lookback }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    return NextResponse.json({ error: `取込失敗 ${res.status}: ${t}` }, { status: 502 });
+  }
+  const added = await res.json(); // 関数は int を返す
+  return NextResponse.json({ added: typeof added === "number" ? added : 0, lookback });
+}

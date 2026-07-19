@@ -50,6 +50,10 @@ export default function ActionsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
 
+  // 日記からの取込
+  const [syncing, setSyncing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -100,6 +104,31 @@ export default function ActionsPage() {
     if (!res.ok) load();
   }
 
+  async function syncDiary() {
+    if (syncing) return;
+    setSyncing(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/actions/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lookback_days: 30 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "取込に失敗しました");
+      setNotice(
+        data.added > 0
+          ? `日記から ${data.added} 件を取り込みました`
+          : "新しく取り込む日記はありませんでした"
+      );
+      if (data.added > 0) await load();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "取込に失敗しました");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function addItem() {
     const text = addText.trim();
     if (!text || adding) return;
@@ -146,10 +175,25 @@ export default function ActionsPage() {
       </div>
 
       <header className="mb-5">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">日々のToDo</h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">日々のToDo</h1>
+          <button
+            type="button"
+            onClick={syncDiary}
+            disabled={syncing}
+            className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition active:bg-emerald-100 disabled:opacity-50"
+          >
+            {syncing ? "取込中…" : "📓 日記から取込"}
+          </button>
+        </div>
         <p className="mt-1 text-sm text-gray-500">
           一行日記の「やってみよう」「本日のポイント」を積み上げ。チェックで消し込み、あとから編集も。
         </p>
+        {notice && (
+          <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {notice}
+          </p>
+        )}
       </header>
 
       {/* 追加フォーム */}
