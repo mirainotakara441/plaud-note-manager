@@ -190,6 +190,13 @@ export default function AgentPage() {
     };
   }, []);
 
+  // ダッシュボードの「提案 →」等から ?org= で来たとき、団体を先に選んでおく。
+  // useSearchParams は Suspense 必須なので、マウント時に location から読む軽量方式。
+  useEffect(() => {
+    const o = new URLSearchParams(window.location.search).get("org");
+    if (o) setSelected(o);
+  }, []);
+
   const runAgent = useCallback(
     async (force = false) => {
     if (!selected || loading) return;
