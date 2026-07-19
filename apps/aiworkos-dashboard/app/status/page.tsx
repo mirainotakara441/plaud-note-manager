@@ -404,7 +404,7 @@ export default function StatusPage() {
 
           {/* 次に攻める団体 */}
           <Section title="次に攻める団体" hint="記憶はあるが提案がまだ">
-            <OrgPanel orgs={stats.org_status} />
+            <OrgPanel orgs={stats.org_status} onAdded={() => load(true)} />
           </Section>
 
           {/* 日次アクティビティ */}
@@ -670,11 +670,102 @@ function JobsPanel({
 }
 
 // ── 次に攻める団体パネル ──────────────────────────────────
-function OrgPanel({ orgs }: { orgs: OrgStatus[] }) {
-  if (orgs.length === 0) {
-    return <p className="text-sm text-gray-400">会議記憶のある団体はまだありません。</p>;
+const ADD_CATEGORIES = ["自治体", "事業者", "銀行", "議員"] as const;
+
+function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState<string>("自治体");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function add() {
+    const n = name.trim();
+    if (!n || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/stakeholders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category, name: n }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => null);
+        setErr((d && d.error) || "追加に失敗しました");
+      } else {
+        setName("");
+        setShowAdd(false);
+        onAdded(); // 一覧を再取得して新団体を反映
+      }
+    } catch {
+      setErr("通信エラーが発生しました");
+    } finally {
+      setBusy(false);
+    }
   }
+
   return (
+    <div>
+      {/* 提案団体を追加 */}
+      {showAdd ? (
+        <div className="mb-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3">
+          <div className="flex gap-2">
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="shrink-0 rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm text-gray-900"
+            >
+              {ADD_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") add();
+              }}
+              placeholder="団体名（例: 千葉市）"
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-indigo-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={add}
+              disabled={busy || !name.trim()}
+              className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white active:bg-indigo-700 disabled:opacity-40"
+            >
+              {busy ? "追加中" : "追加"}
+            </button>
+          </div>
+          {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+          <button
+            type="button"
+            onClick={() => {
+              setShowAdd(false);
+              setErr(null);
+            }}
+            className="mt-2 text-xs text-gray-500 active:opacity-70"
+          >
+            閉じる
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowAdd(true)}
+          className="mb-3 w-full rounded-xl border border-dashed border-indigo-300 py-2 text-sm font-medium text-indigo-600 active:bg-indigo-50"
+        >
+          ＋ 提案団体を追加
+        </button>
+      )}
+
+      {orgs.length === 0 ? (
+        <p className="text-sm text-gray-400">団体はまだありません。上の「追加」から登録できます。</p>
+      ) : (
     <ul className="space-y-2">
       {orgs.map((o) => {
         const stale = (() => {
@@ -737,6 +828,8 @@ function OrgPanel({ orgs }: { orgs: OrgStatus[] }) {
         );
       })}
     </ul>
+      )}
+    </div>
   );
 }
 
