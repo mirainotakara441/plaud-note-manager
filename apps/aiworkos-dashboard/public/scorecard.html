@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AIワークOS 設計図 vs 現在地 スコアカード</title>
+<style>
+  :root {
+    --ground: #F5F7F2;
+    --panel: #FFFFFF;
+    --panel-2: #FBFCFA;
+    --ink: #17201A;
+    --ink-soft: #45514A;
+    --ink-faint: #71807656;
+    --hair: #E4E9E1;
+    --hair-strong: #D2DACE;
+    --brand: #1C6B4C;
+    --brand-bright: #2E9269;
+    --brand-ghost: #1c6b4c14;
+    --done: #1C6B4C;
+    --done-ghost: #1c6b4c1a;
+    --wip: #B0761E;
+    --wip-ghost: #b0761e1f;
+    --todo: #5C6B7E;
+    --todo-ghost: #5c6b7e1a;
+    --grid: #1c6b4c12;
+    --shadow: 0 1px 2px #1720200a, 0 8px 24px -12px #17202014;
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    --jp: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "YuGothic", Meiryo, system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0F140F; --panel: #191F19; --panel-2: #141A14; --ink: #E9EFE9;
+      --ink-soft: #A2AEA5; --ink-faint: #7a887e4a; --hair: #263026; --hair-strong: #33402F;
+      --brand: #45B487; --brand-bright: #57C89A; --brand-ghost: #45b48718;
+      --done: #45B487; --done-ghost: #45b48721; --wip: #D69B41; --wip-ghost: #d69b4124;
+      --todo: #8A9AAE; --todo-ghost: #8a9aae1f; --grid: #45b48712;
+      --shadow: 0 1px 2px #0000004d, 0 10px 30px -14px #00000066;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #F5F7F2; --panel: #FFFFFF; --panel-2: #FBFCFA; --ink: #17201A;
+    --ink-soft: #45514A; --hair: #E4E9E1; --hair-strong: #D2DACE;
+    --brand: #1C6B4C; --brand-bright: #2E9269; --brand-ghost: #1c6b4c14;
+    --done: #1C6B4C; --done-ghost: #1c6b4c1a; --wip: #B0761E; --wip-ghost: #b0761e1f;
+    --todo: #5C6B7E; --todo-ghost: #5c6b7e1a; --grid: #1c6b4c12;
+    --shadow: 0 1px 2px #1720200a, 0 8px 24px -12px #17202014;
+  }
+  :root[data-theme="dark"] {
+    --ground: #0F140F; --panel: #191F19; --panel-2: #141A14; --ink: #E9EFE9;
+    --ink-soft: #A2AEA5; --hair: #263026; --hair-strong: #33402F;
+    --brand: #45B487; --brand-bright: #57C89A; --brand-ghost: #45b48718;
+    --done: #45B487; --done-ghost: #45b48721; --wip: #D69B41; --wip-ghost: #d69b4124;
+    --todo: #8A9AAE; --todo-ghost: #8a9aae1f; --grid: #45b48712;
+    --shadow: 0 1px 2px #0000004d, 0 10px 30px -14px #00000066;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .wrap { font-family: var(--jp); background: var(--ground); color: var(--ink); min-height: 100vh; -webkit-font-smoothing: antialiased; line-height: 1.6; }
+  .page { max-width: 1000px; margin: 0 auto; padding: clamp(18px, 4vw, 44px) clamp(16px, 4vw, 40px) 64px; }
+
+  .backlink { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12.5px; color: var(--brand); text-decoration: none; margin-bottom: 16px; border: 1px solid var(--hair-strong); border-radius: 999px; padding: 6px 13px; background: var(--panel); }
+  .backlink:hover { background: var(--brand-ghost); }
+
+  .head {
+    position: relative; border: 1px solid var(--hair); border-radius: 16px;
+    background: linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 26px 26px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 26px 26px, var(--panel);
+    padding: clamp(22px, 3.6vw, 40px); overflow: hidden; box-shadow: var(--shadow);
+  }
+  .head::after { content: "v1.1"; position: absolute; top: 18px; right: 22px; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; color: var(--brand); opacity: .7; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--brand); margin: 0 0 14px; display: flex; align-items: center; gap: 9px; }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand-bright); box-shadow: 0 0 0 4px var(--brand-ghost); }
+  h1 { font-size: clamp(26px, 4.6vw, 42px); line-height: 1.14; letter-spacing: -.02em; margin: 0 0 10px; text-wrap: balance; font-weight: 800; }
+  .lede { font-size: clamp(15px, 1.7vw, 17px); color: var(--ink-soft); margin: 0; max-width: 62ch; }
+  .lede b { color: var(--ink); font-weight: 700; }
+
+  .timeline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 22px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); }
+  .timeline .chip { border: 1px solid var(--hair-strong); border-radius: 999px; padding: 5px 11px; background: var(--panel-2); }
+  .timeline .chip b { color: var(--ink); }
+  .timeline .arrow { color: var(--brand); font-weight: 700; }
+
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+  .kpi { border: 1px solid var(--hair); border-radius: 13px; background: var(--panel); padding: 16px 17px; box-shadow: var(--shadow); }
+  .kpi .n { font-family: var(--mono); font-size: clamp(24px, 3.4vw, 32px); font-weight: 700; letter-spacing: -.02em; color: var(--brand); font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .kpi .n small { font-size: .5em; color: var(--ink-soft); font-weight: 600; margin-left: 3px; letter-spacing: 0; }
+  .kpi .l { font-size: 12.5px; color: var(--ink-soft); margin-top: 5px; }
+
+  section { margin-top: 40px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 16px; padding-bottom: 11px; border-bottom: 1.5px solid var(--hair-strong); }
+  .sec-head h2 { font-size: clamp(17px, 2.3vw, 21px); font-weight: 800; margin: 0; letter-spacing: -.01em; }
+  .sec-head .num { font-family: var(--mono); font-size: 12px; color: var(--brand); letter-spacing: .1em; font-weight: 600; }
+  .sec-head .note { margin-left: auto; font-size: 12.5px; color: var(--ink-soft); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 4px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 4px 11px; border-radius: 999px; letter-spacing: .01em; white-space: nowrap; }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .pill.done { color: var(--done); background: var(--done-ghost); }
+  .pill.wip  { color: var(--wip);  background: var(--wip-ghost); }
+  .pill.todo { color: var(--todo); background: var(--todo-ghost); }
+
+  .phase { display: grid; grid-template-columns: 1fr; gap: 4px; border: 1px solid var(--hair); border-left: 4px solid var(--edge, var(--hair-strong)); border-radius: 12px; background: var(--panel); padding: 16px 18px; box-shadow: var(--shadow); }
+  .phase + .phase { margin-top: 10px; }
+  .phase.is-done { --edge: var(--done); }
+  .phase.is-wip  { --edge: var(--wip); }
+  .phase.is-todo { --edge: var(--todo); }
+  .phase .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .phase .code { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink-soft); background: var(--panel-2); border: 1px solid var(--hair); border-radius: 6px; padding: 2px 8px; }
+  .phase .name { font-weight: 800; font-size: 15.5px; }
+  .phase .when { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); }
+  .phase .badge { margin-left: auto; }
+  .phase .desc { font-size: 13.5px; color: var(--ink-soft); margin-top: 4px; }
+  .meter { height: 7px; border-radius: 999px; background: var(--hair); overflow: hidden; margin-top: 11px; }
+  .meter > span { display: block; height: 100%; border-radius: 999px; width: var(--w, 0%); background: linear-gradient(90deg, var(--edge), var(--brand-bright)); }
+  .meter.anim > span { animation: fill 1.1s cubic-bezier(.2,.7,.2,1) both; }
+  @keyframes fill { from { width: 0; } to { width: var(--w); } }
+
+  .cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .card { border: 1px solid var(--hair); border-radius: 13px; background: var(--panel); padding: 18px; box-shadow: var(--shadow); position: relative; }
+  .card .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--brand); }
+  .card h3 { font-size: 15.5px; margin: 8px 0 7px; font-weight: 800; letter-spacing: -.01em; }
+  .card p { font-size: 13px; color: var(--ink-soft); margin: 0; }
+  .card .plus { position: absolute; top: 15px; right: 16px; color: var(--brand); opacity: .55; font-weight: 700; font-family: var(--mono); }
+
+  .todos { display: flex; flex-direction: column; gap: 9px; }
+  .todo { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 13px; border: 1px solid var(--hair); border-radius: 12px; background: var(--panel); padding: 14px 16px; box-shadow: var(--shadow); }
+  .todo .box { width: 17px; height: 17px; border-radius: 5px; border: 2px solid var(--hair-strong); margin-top: 2px; flex: none; }
+  .todo.next .box { border-color: var(--wip); background: var(--wip-ghost); position: relative; }
+  .todo.next .box::after { content: ""; position: absolute; inset: 2px; border-radius: 2px; background: var(--wip); opacity: .55; }
+  .todo .body .t { font-weight: 700; font-size: 14.5px; }
+  .todo .body .d { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; }
+  .todo .when { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 7px; white-space: nowrap; letter-spacing: .02em; }
+  .w-now  { color: var(--wip);  background: var(--wip-ghost); }
+  .w-soon { color: var(--brand); background: var(--brand-ghost); }
+  .w-mid  { color: var(--todo); background: var(--todo-ghost); }
+  .w-hold { color: var(--ink-soft); background: var(--panel-2); border: 1px solid var(--hair); }
+
+  .grouplbl { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); margin: 20px 0 9px; display: flex; align-items: center; gap: 10px; }
+  .grouplbl::after { content: ""; flex: 1; height: 1px; background: var(--hair); }
+  .grouplbl:first-of-type { margin-top: 4px; }
+
+  .foot { margin-top: 40px; border: 1px solid var(--hair-strong); border-radius: 14px; background: var(--brand-ghost); padding: 20px 22px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .foot .mk { font-size: 26px; line-height: 1; }
+  .foot .txt { flex: 1; min-width: 220px; }
+  .foot .txt .k { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--brand); }
+  .foot .txt .v { font-weight: 800; font-size: 16px; margin-top: 3px; }
+  .foot .txt .s { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .stamp { text-align: center; margin-top: 30px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint); letter-spacing: .04em; }
+
+  @media (max-width: 720px) {
+    .kpis { grid-template-columns: 1fr; }
+    .cards3 { grid-template-columns: 1fr; }
+    .todo { grid-template-columns: auto 1fr; }
+    .todo .when { grid-column: 2; justify-self: start; margin-top: 4px; }
+    .sec-head .note { width: 100%; margin: 4px 0 0; order: 3; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .meter.anim > span { animation: none; width: var(--w); }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<div class="page">
+
+  <a class="backlink" href="/">← AIワークOS ホームへ</a>
+
+  <header class="head">
+    <p class="eyebrow"><span class="dot"></span>AI WORK OS &nbsp;/&nbsp; 設計図 × 現在地</p>
+    <h1>骨格は生きてる。<br>そして予定より2〜3ヶ月、前に出てる。</h1>
+    <p class="lede">2026-07-07に描いた<b>設計書 v1.1（全15章・2DB構成）</b>と、<b>12日後の実装</b>を突き合わせた進捗スコアカード。9月予定のRAG、10月予定のエージェントが、もう本番で動いている。</p>
+    <div class="timeline">
+      <span class="chip">設計書 <b>2026-07-07</b></span>
+      <span class="arrow">→</span>
+      <span class="chip">現在地 <b>2026-07-19</b></span>
+      <span class="arrow">＝</span>
+      <span class="chip">わずか <b>12日</b></span>
+    </div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="n">425<small>件</small></div>
+      <div class="l">Supabase 長期記憶（memory_chunks）<br>日記127 / 会議53 / 学び9 / 成果物ほか</div>
+    </div>
+    <div class="kpi">
+      <div class="n">7<small>ページ</small></div>
+      <div class="l">本番稼働の独自ダッシュボード<br>検索・提案・壁打ち・武器・成果物・監視・ホーム</div>
+    </div>
+    <div class="kpi">
+      <div class="n">2〜3<small>ヶ月</small></div>
+      <div class="l">ロードマップ前倒し幅<br>P3=9月予定 / P4=10月予定を先取り</div>
+    </div>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <span class="num">01</span>
+      <h2>フェーズ進捗</h2>
+      <span class="note">設計書 第13・15章のロードマップ基準</span>
+    </div>
+    <div class="legend" style="margin-bottom:16px;">
+      <span class="pill done">済み</span>
+      <span class="pill wip">進行中</span>
+      <span class="pill todo">これから</span>
+    </div>
+
+    <div class="phase is-done">
+      <div class="top">
+        <span class="code">P1</span><span class="name">顧客CRM</span><span class="when">当初：7月</span>
+        <span class="badge pill done">済み</span>
+      </div>
+      <div class="desc">Notion CRM・Eight名刺取込・PLAUD会議の企業ひも付け。設計どおり完了。</div>
+      <div class="meter anim"><span style="--w:100%"></span></div>
+    </div>
+
+    <div class="phase is-done">
+      <div class="top">
+        <span class="code">P2</span><span class="name">会議DB自動化</span><span class="when">当初：8月</span>
+        <span class="badge pill done">済み</span>
+      </div>
+      <div class="desc">PLAUD→Notion 50件超。事実・示唆・課題・アクション抽出、会議横断検索まで。</div>
+      <div class="meter anim"><span style="--w:100%"></span></div>
+    </div>
+
+    <div class="phase is-wip">
+      <div class="top">
+        <span class="code">P3</span><span class="name">長期記憶RAG</span><span class="when">当初：9月 → 前倒し稼働</span>
+        <span class="badge pill wip">稼働・精度改善中</span>
+      </div>
+      <div class="desc">Supabase pgvector＋横断検索が本番稼働。残りは検索精度（ハイブリッド化・チャンク再投入）。</div>
+      <div class="meter anim"><span style="--w:88%"></span></div>
+    </div>
+
+    <div class="phase is-wip">
+      <div class="top">
+        <span class="code">P4</span><span class="name">エージェント化</span><span class="when">当初：10月〜 → 一部先取り</span>
+        <span class="badge pill wip">進行中</span>
+      </div>
+      <div class="desc">提案・壁打ち・武器生成・会議分析は本番。残る専門エージェント3種とManus統合が宿題。</div>
+      <div class="meter anim"><span style="--w:42%"></span></div>
+    </div>
+
+    <div class="phase is-wip">
+      <div class="top">
+        <span class="code">+α</span><span class="name">運用・セキュリティ層</span><span class="when">設計書に無し・後付け</span>
+        <span class="badge pill wip">W2進行中</span>
+      </div>
+      <div class="desc">CTOレビュー起点。認証・監視ダッシュボード（済）＋定期バックアップ堅牢化（W2＝あと少し）。</div>
+      <div class="meter anim"><span style="--w:70%"></span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="num">02</span>
+      <h2>設計図に無かったが、育ったもの</h2>
+      <span class="note">想定を超えて実装が先行した3領域</span>
+    </div>
+    <div class="cards3">
+      <div class="card">
+        <span class="plus">+</span>
+        <span class="tag">New UI</span>
+        <h3>独自Webダッシュボード</h3>
+        <p>設計はNotion＋Chat＋Coworkが主UI。実際にはNext.js＋Vercelの本番サイトが"第4のUI"として全機能を集約した。</p>
+      </div>
+      <div class="card">
+        <span class="plus">+</span>
+        <span class="tag">RAG拡張</span>
+        <h3>成果物RAG</h3>
+        <p>設計のSupabaseは日記・会議・PDF中心。過去の提案書・実習書を記憶に取り込み、提案のベースにする層を追加。</p>
+      </div>
+      <div class="card">
+        <span class="plus">+</span>
+        <span class="tag">Ops / Sec</span>
+        <h3>運用・セキュリティ層</h3>
+        <p>「無料枠・個人利用」前提だった設計に、認証・監視・週次バックアップという堅牢性の層を追加中。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="num">03</span>
+      <h2>これから作るもの（吉井さんの宿題）</h2>
+      <span class="note">上から着手順</span>
+    </div>
+
+    <div class="grouplbl">最優先 — 今の主戦場</div>
+    <div class="todos">
+      <div class="todo next">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">W2 バックアップ仕上げ</div>
+          <div class="d">GitHubシークレット2つ（URL・anonキー）をコマンドで登録 → テスト実行で「暗号化→復号」が緑になるのを確認。ローカル側は復旧・実証済み。</div>
+        </div>
+        <span class="when w-now">明日</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">取込ワーカーの定期実行 本格化</div>
+          <div class="d">今は30分ごと「通知だけ」。PLAUD等の無人実行をクラウドルーティン化する（Eightはブラウザ必須で無人化不可＝手動のまま）。</div>
+        </div>
+        <span class="when w-now">W2続き</span>
+      </div>
+    </div>
+
+    <div class="grouplbl">近々 — 土台を強くする</div>
+    <div class="todos">
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">W3 検索精度の底上げ</div>
+          <div class="d">ハイブリッド検索（ベクトル＋全文）／ingestを800→400字で再投入（空白地帯対策）／生成ログの記録。</div>
+        </div>
+        <span class="when w-soon">W3</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">実データ拡充</div>
+          <div class="d">Journey 2年分の過去日記を取込／札幌市・議員向けストーリー原案など未投入分をSupabaseへ。</div>
+        </div>
+        <span class="when w-soon">近々</span>
+      </div>
+    </div>
+
+    <div class="grouplbl">中期 — 「毎日見たくなる」へ</div>
+    <div class="todos">
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">W4 朝ブリーフ連動・商談準備パック</div>
+          <div class="d">CTOレビューが挙げた"毎日見たくなる"の答え。dx_newsのテーマ再設計＋月曜の週次ダイジェストと合流。</div>
+        </div>
+        <span class="when w-mid">W4</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">Phase 4 残エージェント 3種</div>
+          <div class="d">日記分析／健康管理／官民連携・新規事業。蓄積データの上に、必要度の高い順でプラグイン化。</div>
+        </div>
+        <span class="when w-mid">P4</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">Manus成果物の統合</div>
+          <div class="d">法人請求サービスのManus成果物をDrive/Notion経由で記憶層へ取り込み、検索可能にする（設計書 P4）。</div>
+        </div>
+        <span class="when w-mid">P4</span>
+      </div>
+    </div>
+
+    <div class="grouplbl">据え置き — 必要になったら</div>
+    <div class="todos">
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">画像PDFのOCR ／ 月報生成 ／ Typeless・ScanSnap連携</div>
+          <div class="d">設計書でも優先度を下げた領域。画像PDFの日本語抽出は現状も未対応。必要が出た時点で着手。</div>
+        </div>
+        <span class="when w-hold">保留</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span class="mk">🧭</span>
+    <div class="txt">
+      <div class="k">明日の一手</div>
+      <div class="v">W2バックアップの続きへ戻る</div>
+      <div class="s">あとは吉井さんがコマンドを1ブロック貼るだけの状態で止めてある。貼れば当方がテスト実行まで見届ける。</div>
+    </div>
+  </div>
+
+  <p class="stamp">AIワークOS 設計図 vs 現在地 ／ 基準：設計書 v1.1（2026-07-07）× 実装（2026-07-19）</p>
+
+</div>
+</div>
+
+<script>
+  (function () {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var meters = document.querySelectorAll('.meter.anim');
+    if (reduce || !('IntersectionObserver' in window)) { return; }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          e.target.querySelector('span').style.animationPlayState = 'running';
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.4 });
+    meters.forEach(function (m) { io.observe(m); });
+  })();
+</script>
+
+</body>
+</html>
