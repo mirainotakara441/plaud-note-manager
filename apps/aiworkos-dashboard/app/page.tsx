@@ -14,6 +14,13 @@ type Feature = {
 
 const FEATURES: Feature[] = [
   {
+    href: "/actions",
+    icon: "✅",
+    title: "日々のToDo",
+    desc: "日記の「やってみよう」「本日のポイント」を積み上げてチェック消し込み",
+    accent: "bg-emerald-100 text-emerald-700",
+  },
+  {
     href: "/search",
     icon: "🔍",
     title: "横断検索",
