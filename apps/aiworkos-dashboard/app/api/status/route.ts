@@ -44,6 +44,8 @@ async function fetchNotion() {
               sorts: [{ timestamp: "last_edited_time", direction: "descending" }],
             }),
             cache: "no-store",
+            // Notionが固まってもSupabase表示を道連れにしないよう5秒で打ち切る
+            signal: AbortSignal.timeout(5000),
           }
         );
         if (!res.ok) {

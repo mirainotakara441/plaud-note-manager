@@ -364,7 +364,7 @@ export default function SearchPage() {
               キーワードや質問を入力して検索してください。
             </p>
             <p className="mt-3 text-xs font-medium text-gray-400">
-              日記 127件・会議 53件・学び 9件・成果物 11件を横断検索
+              日記・会議・学び・成果物を横断検索
             </p>
           </div>
         )}

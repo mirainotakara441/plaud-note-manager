@@ -40,6 +40,8 @@ type Stakeholder = { category: string; count: number };
 type Stats = {
   generated_at: string;
   memory_total: number;
+  memory_last24h: number;
+  db_size_mb: number;
   memory_by_type: ByType[];
   memory_by_org: ByOrg[];
   memory_daily: Daily[];
@@ -77,12 +79,6 @@ const TYPE_STYLE: Record<string, string> = {
   日記: "bg-emerald-100 text-emerald-800",
   会議: "bg-blue-100 text-blue-800",
   学び: "bg-orange-100 text-orange-800",
-};
-const TYPE_BAR: Record<string, string> = {
-  成果物: "bg-purple-500",
-  日記: "bg-emerald-500",
-  会議: "bg-blue-500",
-  学び: "bg-orange-500",
 };
 const JOB_STATUS: Record<string, { label: string; style: string }> = {
   queued: { label: "待機中", style: "bg-gray-100 text-gray-600" },
@@ -225,7 +221,7 @@ export default function StatusPage() {
           </p>
           <p className="text-xs text-gray-500">
             {healthy
-              ? `記憶 ${stats!.memory_total} 件 ・ 取得 ${
+              ? `記憶 ${stats!.memory_total}件（24h +${stats!.memory_last24h}）・ DB ${stats!.db_size_mb}MB ・ 取得 ${
                   fetchedAt ? fmtDateTime(fetchedAt.toISOString()) : ""
                 }`
               : data?.error ?? "…"}
@@ -276,7 +272,7 @@ export default function StatusPage() {
           </Section>
 
           {/* 取込ジョブ */}
-          <Section title="取込ジョブ (Eight / PLAUD / スライド)">
+          <Section title="取込ジョブ (Eight / PLAUD / スライド)" hint="状態は直近7日">
             <JobsPanel summary={stats.jobs_summary} recent={stats.jobs_recent} />
           </Section>
 

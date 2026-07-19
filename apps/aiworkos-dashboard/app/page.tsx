@@ -99,7 +99,11 @@ export default function Home() {
       <IntegrationPanel />
 
       <p className="mt-8 text-center text-xs font-medium text-gray-400">
-        記憶: 日記 127件・会議 53件・学び 9件・成果物 11件
+        記憶の蓄積状況は{" "}
+        <Link href="/status" className="text-indigo-500 underline active:opacity-70">
+          連携ダッシュボード
+        </Link>{" "}
+        で確認
       </p>
     </main>
   );
