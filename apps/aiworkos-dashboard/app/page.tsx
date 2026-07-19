@@ -1,6 +1,13 @@
 import Link from "next/link";
 import IntegrationPanel from "@/app/components/IntegrationPanel";
 
+// 全体設計図と進捗スコアカード（Claude Artifact）。常に上部から開けるようにする。
+// ※Artifactは非公開設定のため、claude.ai にログイン中の本人のみ閲覧可。
+const BLUEPRINT_URL =
+  "https://claude.ai/code/artifact/a3ead75e-f51b-4831-8faa-5f97cdf5b57b";
+const SCORECARD_URL =
+  "https://claude.ai/code/artifact/8f707b8c-418b-43a9-b51d-b24c7c5d5ee0";
+
 type Feature = {
   href: string;
   icon: string;
@@ -67,6 +74,44 @@ export default function Home() {
           入力 → 記憶 → 提案・出力を1枚でつなぐワークスペース
         </p>
       </header>
+
+      <div className="mb-6">
+        <a
+          href={BLUEPRINT_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-4 rounded-2xl border border-emerald-300 bg-emerald-50 p-4 shadow-sm transition active:bg-emerald-100"
+        >
+          <span
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-2xl text-white"
+            aria-hidden
+          >
+            📐
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-bold text-emerald-900">
+              全体設計図 v2.0
+            </span>
+            <span className="mt-0.5 block text-sm leading-relaxed text-emerald-700">
+              システム構成と今後のロードマップ（改訂版）
+            </span>
+          </span>
+          <span className="shrink-0 text-lg text-emerald-400" aria-hidden>
+            ↗
+          </span>
+        </a>
+        <p className="mt-2 text-center text-xs font-medium text-gray-400">
+          進捗の突き合わせは{" "}
+          <a
+            href={SCORECARD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-emerald-600 underline active:opacity-70"
+          >
+            設計図 vs 現在地 スコアカード
+          </a>
+        </p>
+      </div>
 
       <div className="space-y-3">
         {FEATURES.map((f) => (
