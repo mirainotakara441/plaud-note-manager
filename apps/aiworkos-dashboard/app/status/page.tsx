@@ -36,6 +36,12 @@ type NewsTheme = {
   last_pub: string | null;
 };
 type Stakeholder = { category: string; count: number };
+type Service = {
+  service: string;
+  label: string;
+  last_ok_at: string | null;
+  note: string | null;
+};
 
 type Stats = {
   generated_at: string;
@@ -47,6 +53,7 @@ type Stats = {
   memory_daily: Daily[];
   jobs_summary: JobSummary[];
   jobs_recent: JobRecent[];
+  services: Service[];
   refine_sessions: number;
   refine_messages: number;
   refine_recent: RefineRecent[];
@@ -250,6 +257,11 @@ export default function StatusPage() {
 
       {stats && (
         <>
+          {/* サービス稼働状況 */}
+          <Section title="サービス稼働状況" hint="各連携の最終正常稼働">
+            <ServicesPanel services={stats.services} />
+          </Section>
+
           {/* 記憶の蓄積 */}
           <Section title="記憶の蓄積" hint={`合計 ${stats.memory_total} 件`}>
             <div className="grid grid-cols-2 gap-2">
@@ -509,6 +521,47 @@ function JobsPanel({
         </p>
       )}
     </>
+  );
+}
+
+// ── サービス稼働状況パネル ────────────────────────────────
+const SERVICE_ICON: Record<string, string> = {
+  plaud: "🎙️",
+  eight: "📇",
+  news: "📰",
+  notion: "📝",
+};
+
+function ServicesPanel({ services }: { services: Service[] }) {
+  if (services.length === 0) {
+    return <p className="text-sm text-gray-400">稼働情報はまだありません。</p>;
+  }
+  return (
+    <ul className="space-y-2">
+      {services.map((s) => {
+        const h = hoursSince(s.last_ok_at);
+        // 未実行=グレー / 72時間以内=緑 / それ以上=黄
+        const dot =
+          h === null ? "bg-gray-300" : h <= 72 ? "bg-emerald-500" : "bg-amber-400";
+        return (
+          <li
+            key={s.service}
+            className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
+          >
+            <span className="text-base" aria-hidden>
+              {SERVICE_ICON[s.service] ?? "🔌"}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-sm text-gray-700">
+              {s.label}
+            </span>
+            <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+            <span className="shrink-0 text-xs text-gray-500">
+              {s.last_ok_at ? `${agoLabel(s.last_ok_at)} 正常` : "未実行"}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
