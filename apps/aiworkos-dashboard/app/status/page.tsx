@@ -147,8 +147,9 @@ export default function StatusPage() {
   const [loading, setLoading] = useState(true);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // silent=true は自動更新用（ボタンの「更新中」表示を出さず裏で差し替える）
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await fetch("/api/status", { cache: "no-store" });
       const json = (await res.json()) as ApiResponse;
@@ -157,12 +158,23 @@ export default function StatusPage() {
     } catch {
       setData({ ok: false, error: "通信エラーが発生しました" });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     load();
+    // 60秒ごとに裏で自動更新。開きっぱなしでも鮮度を保つ。
+    const timer = setInterval(() => load(true), 60000);
+    // タブに戻った瞬間にも更新（スリープ復帰・アプリ切替後の古い表示を防ぐ）
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [load]);
 
   const stats = data?.stats;
@@ -185,7 +197,7 @@ export default function StatusPage() {
           </div>
           <button
             type="button"
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition active:bg-indigo-700 disabled:opacity-40"
           >
@@ -383,22 +395,41 @@ export default function StatusPage() {
 }
 
 // ── 日次バーチャート ──────────────────────────────────────
-function DailyChart({ daily }: { daily: Daily[] }) {
-  if (daily.length === 0) {
-    return <p className="text-sm text-gray-400">直近の登録はありません。</p>;
+// 直近14日を連続で並べ、登録の無い日も0本で埋める（間隔が歪まないように）。
+// 日付はRPCがUTCで集計するのでUTC基準で生成する。
+function fillDaily(daily: Daily[], days = 14): Daily[] {
+  const map = new Map(daily.map((d) => [d.d, d.count]));
+  const now = new Date();
+  const out: Daily[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const dt = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i)
+    );
+    const key = dt.toISOString().slice(0, 10);
+    out.push({ d: key, count: map.get(key) ?? 0 });
   }
-  const max = Math.max(...daily.map((d) => d.count), 1);
+  return out;
+}
+
+function DailyChart({ daily }: { daily: Daily[] }) {
+  const series = fillDaily(daily);
+  const max = Math.max(...series.map((d) => d.count), 1);
   return (
-    <div className="flex items-end gap-1.5" style={{ height: 120 }}>
-      {daily.map((d) => (
+    <div className="flex items-end gap-1" style={{ height: 120 }}>
+      {series.map((d, i) => (
         <div key={d.d} className="flex flex-1 flex-col items-center justify-end gap-1">
-          <span className="text-[10px] font-medium text-gray-500">{d.count}</span>
+          <span className="text-[9px] font-medium text-gray-500 tabular-nums">
+            {d.count > 0 ? d.count : ""}
+          </span>
           <div
-            className="w-full rounded-t bg-indigo-500"
-            style={{ height: `${Math.max(4, (d.count / max) * 88)}px` }}
+            className={`w-full rounded-t ${d.count > 0 ? "bg-indigo-500" : "bg-gray-200"}`}
+            style={{ height: `${d.count > 0 ? Math.max(4, (d.count / max) * 88) : 2}px` }}
             title={`${d.d}: ${d.count}件`}
           />
-          <span className="text-[9px] text-gray-400">{d.d.slice(5)}</span>
+          {/* ラベルは1日おき（14本で潰れないように） */}
+          <span className="h-3 text-[9px] text-gray-400">
+            {i % 2 === 0 ? d.d.slice(5) : ""}
+          </span>
         </div>
       ))}
     </div>
