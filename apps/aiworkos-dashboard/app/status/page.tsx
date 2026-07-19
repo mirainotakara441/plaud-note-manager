@@ -48,6 +48,19 @@ type Service = {
   last_ok_at: string | null;
   note: string | null;
 };
+type OrgStatus = {
+  name: string;
+  meetings: number;
+  last_meeting: string | null;
+  has_proposal: boolean;
+  has_refine: boolean;
+};
+type NewsRecent = {
+  title: string;
+  theme: string;
+  pub_date: string | null;
+  link: string;
+};
 
 type Stats = {
   generated_at: string;
@@ -61,6 +74,9 @@ type Stats = {
   jobs_summary: JobSummary[];
   jobs_recent: JobRecent[];
   services: Service[];
+  org_status: OrgStatus[];
+  news_recent: NewsRecent[];
+  proposal_last7d: number;
   refine_sessions: number;
   refine_messages: number;
   refine_last7d: number;
@@ -132,6 +148,32 @@ function agoLabel(iso: string | null | undefined): string {
   if (h < 1) return `${Math.max(1, Math.round(h * 60))}分前`;
   if (h < 24) return `${Math.round(h)}時間前`;
   return `${Math.floor(h / 24)}日前`;
+}
+
+// 要対応の異常だけを集める（平常時は空 → ストリップは出さない）
+function computeAlerts(data: ApiResponse | null, stats: Stats | undefined): string[] {
+  const alerts: string[] = [];
+  if (data && data.ok === false) {
+    alerts.push("Supabaseに接続できません");
+    return alerts;
+  }
+  if (!stats) return alerts;
+  const stuck = stats.jobs_recent.filter((j) => {
+    if (j.status === "queued" || j.status === "running") {
+      const h = hoursSince(j.updated_at);
+      return h !== null && h > 6;
+    }
+    return false;
+  });
+  if (stuck.length > 0) alerts.push(`取込ジョブ ${stuck.length}件が停滞`);
+  const staleServices = stats.services.filter((s) => {
+    const h = hoursSince(s.last_ok_at);
+    return h !== null && h > 72; // 未実行(null)は除外。稼働していたのに72h止まったものだけ
+  });
+  if (staleServices.length > 0) {
+    alerts.push(`${staleServices.map((s) => s.label).join("・")} が停滞`);
+  }
+  return alerts;
 }
 
 // ── 小物コンポーネント ────────────────────────────────────
@@ -222,6 +264,26 @@ export default function StatusPage() {
         </div>
       </header>
 
+      {/* 要対応ストリップ（異常がある時だけ出る） */}
+      {(() => {
+        const alerts = computeAlerts(data, stats);
+        if (alerts.length === 0) return null;
+        return (
+          <div className="mb-4 rounded-2xl border border-red-300 bg-red-50 p-4 shadow-sm">
+            <p className="text-sm font-bold text-red-800">
+              ⚠️ {alerts.length}件 要対応
+            </p>
+            <ul className="mt-1 space-y-0.5">
+              {alerts.map((a, i) => (
+                <li key={i} className="text-xs text-red-700">
+                  ・{a}
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })()}
+
       {/* 接続ヘルス */}
       <div
         className={`flex items-center gap-3 rounded-2xl border p-4 shadow-sm ${
@@ -288,6 +350,12 @@ export default function StatusPage() {
                 <p className="mt-0.5 text-xs font-medium text-indigo-500">今週ふえた</p>
               </div>
             </div>
+            {/* 今週の動き（記憶→提案の転換） */}
+            <p className="mb-3 text-center text-xs text-gray-500">
+              今週の動き： 提案{" "}
+              <span className="font-semibold text-gray-700">+{stats.proposal_last7d}</span> ・ 壁打ち{" "}
+              <span className="font-semibold text-gray-700">+{stats.refine_last7d}</span>
+            </p>
 
             <div className="grid grid-cols-2 gap-2">
               {stats.memory_by_type.map((t) => (
@@ -332,6 +400,11 @@ export default function StatusPage() {
                 </div>
               ))}
             </div>
+          </Section>
+
+          {/* 次に攻める団体 */}
+          <Section title="次に攻める団体" hint="記憶はあるが提案がまだ">
+            <OrgPanel orgs={stats.org_status} />
           </Section>
 
           {/* 日次アクティビティ */}
@@ -399,6 +472,34 @@ export default function StatusPage() {
                     <span className="ml-auto text-xs text-gray-400">
                       {fmtDateTime(p.updated_at)}
                     </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          {/* 直近ニュース見出し（営業ネタ） */}
+          <Section title="直近ニュース" hint="新しい順">
+            {stats.news_recent.length === 0 ? (
+              <p className="text-sm text-gray-400">ニュースはまだありません。</p>
+            ) : (
+              <ul className="space-y-2">
+                {stats.news_recent.map((n, i) => (
+                  <li key={i}>
+                    <a
+                      href={n.link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block active:opacity-70"
+                    >
+                      <span className="line-clamp-2 text-sm leading-snug text-gray-700">
+                        {n.title}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5">{n.theme}</span>
+                        {fmtDate(n.pub_date)}
+                      </span>
+                    </a>
                   </li>
                 ))}
               </ul>
@@ -565,6 +666,77 @@ function JobsPanel({
         </p>
       )}
     </>
+  );
+}
+
+// ── 次に攻める団体パネル ──────────────────────────────────
+function OrgPanel({ orgs }: { orgs: OrgStatus[] }) {
+  if (orgs.length === 0) {
+    return <p className="text-sm text-gray-400">会議記憶のある団体はまだありません。</p>;
+  }
+  return (
+    <ul className="space-y-2">
+      {orgs.map((o) => {
+        const stale = (() => {
+          const h = hoursSince(o.last_meeting);
+          return h !== null && h > 24 * 30; // 30日超で「間が空いている」
+        })();
+        return (
+          <li
+            key={o.name}
+            className={`rounded-lg border px-3 py-2 ${
+              o.has_proposal
+                ? "border-gray-100 bg-gray-50"
+                : "border-rose-200 bg-rose-50"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-800">
+                {o.name}
+              </span>
+              {o.has_proposal ? (
+                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                  提案済
+                </span>
+              ) : (
+                <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                  提案なし
+                </span>
+              )}
+              {o.has_refine && (
+                <span className="shrink-0 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700">
+                  壁打ち済
+                </span>
+              )}
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
+              <span>会議 {o.meetings}</span>
+              <span className={stale ? "text-amber-600" : ""}>
+                ・ 最終 {fmtDate(o.last_meeting)}
+                {stale ? "（間が空いています）" : ""}
+              </span>
+              {/* 提案がまだの団体は、その場で次の一手へ */}
+              {!o.has_proposal && (
+                <span className="ml-auto flex shrink-0 gap-2">
+                  <Link
+                    href={`/agent?org=${encodeURIComponent(o.name)}`}
+                    className="font-medium text-indigo-600 active:opacity-70"
+                  >
+                    提案 →
+                  </Link>
+                  <Link
+                    href={`/refine?org=${encodeURIComponent(o.name)}`}
+                    className="font-medium text-teal-600 active:opacity-70"
+                  >
+                    壁打ち →
+                  </Link>
+                </span>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
