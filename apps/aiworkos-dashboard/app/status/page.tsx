@@ -94,6 +94,7 @@ const TYPE_STYLE: Record<string, string> = {
   日記: "bg-emerald-100 text-emerald-800",
   会議: "bg-blue-100 text-blue-800",
   学び: "bg-orange-100 text-orange-800",
+  学会: "bg-rose-100 text-rose-800",
 };
 const JOB_STATUS: Record<string, { label: string; style: string }> = {
   queued: { label: "待機中", style: "bg-gray-100 text-gray-600" },

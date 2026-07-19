@@ -15,7 +15,7 @@ type SearchResult = {
   similarity: number;
 };
 
-const SOURCE_FILTERS = ["すべて", "日記", "会議", "学び", "成果物"] as const;
+const SOURCE_FILTERS = ["すべて", "日記", "会議", "学び", "成果物", "学会"] as const;
 type SourceFilter = (typeof SOURCE_FILTERS)[number];
 
 const MATCH_COUNTS = [5, 10, 20] as const;
@@ -45,6 +45,7 @@ const BADGE_STYLES: Record<string, string> = {
   会議: "bg-blue-100 text-blue-800",
   学び: "bg-orange-100 text-orange-800",
   成果物: "bg-purple-100 text-purple-800",
+  学会: "bg-rose-100 text-rose-800",
 };
 
 const TAG_KEYS = [
