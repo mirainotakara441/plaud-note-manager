@@ -1,13 +1,21 @@
 name: Supabase Backup
 
-# AIワークOSのSupabase(public スキーマ)を週1でpg_dumpし、gzip圧縮→gpg対称暗号化してartifactに保存する。
-# 無料プランは自動バックアップが無いため、これがオフサイト復旧手段になる（ローカルlaunchdと二段構え）。
+# AIワークOSのSupabaseを週1でバックアップし、gpg対称暗号化してartifactに保存する。
+# 無料プランは自動バックアップが無いため、これがオフサイト復旧手段（ローカルlaunchdと二段構え）。
+#
+# 方式: ローカルの backup.sh と同じく backup Edge Function を叩き、全テーブルをJSONで取得する。
+#   pg_dump（DBパスワード入り接続文字列が必要）をやめ、anon key で叩けるEdge Functionに統一した。
+#   → 設定が簡単（DBパスワード不要）＆ローカルと復元手順が同じ（行INSERTで戻す）。
+#
 # ★このリポジトリは PUBLIC。公開リポジトリの artifact は誰でもDL可能なので、日記・商談データを
 #   平文で置くと流出する。必ず gpg 対称暗号化してからアップロードする（復号にパスフレーズが要る）。
+#
 # 必要な GitHub Secrets（リポジトリ Settings → Secrets and variables → Actions）:
-#   - SUPABASE_DB_URL   : 接続文字列（Session pooler・5432 を使うこと）
-#   - BACKUP_PASSPHRASE : ダンプ暗号化のパスフレーズ（復元時にこれで復号する。無くすと復元不能）
-# 復元:  gpg -o backup.sql.gz -d supabase-public-XXXX.sql.gz.gpg  → gunzip → psql で流し込む。
+#   - SUPABASE_URL       : 例 https://zuadqnarsoykplkafyxv.supabase.co
+#   - SUPABASE_ANON_KEY  : anon（公開）キーのJWT。backup Edge Function の認証に使う
+#   - BACKUP_PASSPHRASE  : ダンプ暗号化のパスフレーズ（復元時にこれで復号。無くすと復元不能）
+#
+# 復元:  gpg -o backup.json.gz -d aiworkos_backup_XXXX.json.gz.gpg  → gunzip → tables.<表名> の全行をINSERT。
 
 on:
   schedule:
@@ -18,55 +26,44 @@ jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: PostgreSQL 17 クライアントを入れる（サーバがPG17なのでpg_dumpも17が要る）
-        run: |
-          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-17
-
-      - name: pg_dump（public スキーマ）→ gzip → gpg対称暗号化
+      - name: backup Edge Function を取得 → gzip → gpg対称暗号化
         env:
-          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
-          if [ -z "$DB_URL" ]; then
-            echo "::error::SUPABASE_DB_URL secret が未設定です。リポジトリの Settings → Secrets で登録してください。"
-            exit 1
-          fi
-          if [ -z "$PASSPHRASE" ]; then
-            echo "::error::BACKUP_PASSPHRASE secret が未設定です。公開リポジトリのため暗号化必須です。Settings → Secrets で登録してください。"
-            exit 1
-          fi
-          # 貼り付け時に混入しがちな前後空白・改行を除去
-          DB_URL="$(printf '%s' "$DB_URL" | tr -d '\r\n' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-          # URIの体裁を確認（パスワードは出さない）。前回はここが崩れてpg_dumpがローカル接続に落ちた。
-          case "$DB_URL" in
-            postgres://*|postgresql://*) : ;;
-            *) echo "::error::接続文字列が postgresql:// で始まっていません。SupabaseのConnect→Connection string→Session pooler の『URI』をそのまま貼ってください（psqlコマンドやパラメータ形式・角カッコ付きは不可）。"; exit 1 ;;
-          esac
-          HOSTPORT="$(printf '%s' "$DB_URL" | sed -E 's#^[a-z]+://[^@]*@##; s#/.*$##')"
-          echo "接続先ホスト: ${HOSTPORT}"
-          case "$HOSTPORT" in
-            *pooler.supabase.com:6543) echo "::error::Transaction pooler(6543)はpg_dump不可。Session pooler(5432)に変更してください。"; exit 1 ;;
-          esac
+          for v in SUPABASE_URL SUPABASE_ANON_KEY PASSPHRASE; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v secret が未設定です。リポジトリの Settings → Secrets で登録してください。"
+              exit 1
+            fi
+          done
 
           STAMP=$(date -u +%Y%m%d-%H%M)
-          OUT="supabase-public-${STAMP}.sql"
-          PGCONNECT_TIMEOUT=20 /usr/lib/postgresql/17/bin/pg_dump "$DB_URL" \
-            --schema=public --no-owner --no-privileges \
-            --file="$OUT"
-          # 空ダンプ（接続失敗等）を検知して落とす
-          if [ ! -s "$OUT" ] || [ "$(wc -l < "$OUT")" -lt 10 ]; then
-            echo "::error::ダンプが空です。接続文字列(Session pooler/5432か)を確認してください。"
+          OUT="aiworkos_backup_${STAMP}.json"
+          HTTP=$(curl -s -o "$OUT" -w "%{http_code}" -X POST "$SUPABASE_URL/functions/v1/backup" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"include_embedding":true}' --max-time 180)
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::backup Edge Function が HTTP $HTTP を返しました（URL・anon keyを確認）"
+            head -c 300 "$OUT" || true
             exit 1
           fi
+
+          # 健全性チェック: memory_chunks が1件以上あること（空バックアップを弾く）
+          COUNT=$(python3 -c "import json;print(json.load(open('$OUT'))['counts'].get('memory_chunks',0))" 2>/dev/null || echo 0)
+          if [ "$COUNT" -lt 1 ]; then
+            echo "::error::memory_chunks=0（中身が空）。取得内容を確認してください。"
+            exit 1
+          fi
+          echo "取得OK: memory_chunks=$COUNT"
+
           gzip "$OUT"
-          # ★公開リポジトリの artifact は世界中からDL可能。平文を置かず必ず暗号化する。
-          #   AES256 対称暗号化（復元は gpg --decrypt にパスフレーズを渡すだけ）。
+          # ★公開リポジトリの artifact は世界中からDL可能。平文を置かず必ず暗号化する（AES256）。
           gpg --batch --yes --pinentry-mode loopback --passphrase "$PASSPHRASE" \
             --cipher-algo AES256 --symmetric -o "${OUT}.gz.gpg" "${OUT}.gz"
-          rm -f "${OUT}.gz"   # 平文（gzip）は残さない。暗号化済みだけをアップロードする。
+          rm -f "${OUT}.gz"   # 平文は残さない。暗号化済みだけをアップロードする。
           ls -lh "${OUT}.gz.gpg"
           echo "ARTIFACT=${OUT}.gz.gpg" >> "$GITHUB_ENV"
 
@@ -75,14 +72,13 @@ jobs:
           PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           gpg --batch --yes --pinentry-mode loopback --passphrase "$PASSPHRASE" \
-            -o roundtrip.sql.gz -d "$ARTIFACT"
-          # gzip として妥当か（＝正しく復号できたか）を確認
-          gzip -t roundtrip.sql.gz && echo "OK: 復号→gzip検証に成功"
-          rm -f roundtrip.sql.gz
+            -o roundtrip.json.gz -d "$ARTIFACT"
+          gzip -t roundtrip.json.gz && echo "OK: 復号→gzip検証に成功"
+          rm -f roundtrip.json.gz
 
       - name: artifact に保存（暗号化済み・90日保持）
         uses: actions/upload-artifact@v4
         with:
           name: supabase-backup-${{ github.run_id }}
-          path: "*.sql.gz.gpg"
+          path: "*.json.gz.gpg"
           retention-days: 90
