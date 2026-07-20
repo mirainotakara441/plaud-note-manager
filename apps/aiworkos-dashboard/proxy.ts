@@ -23,6 +23,9 @@ const PUBLIC_PATHS = [
   /^\/manifest\.json$/,
   /^\/icon-\d+\.png$/,
   /^\/favicon\.ico$/,
+  // Vercel Cron が叩く日々のToDo自動処理。Cronのリクエストには合言葉cookieが無いため
+  // ここは通すが、ルート側で CRON_SECRET を照合するので無認証では実行できない。
+  /^\/api\/cron\/daily-todo$/,
 ];
 
 async function sha256Hex(text: string): Promise<string> {

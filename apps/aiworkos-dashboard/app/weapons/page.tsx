@@ -74,6 +74,13 @@ function WeaponsInner() {
     proposal: false,
   });
 
+  // 提案書の手直し。生成に使った打ち手（weaponIdの再計算に必要）と、
+  // 最後に記憶へ保存した内容のスナップショット（未保存の修正があるかの判定に使う）。
+  const [weaponActions, setWeaponActions] = useState<string[]>([]);
+  const [savedProposalSnapshot, setSavedProposalSnapshot] = useState<string>("");
+  const [savingProposal, setSavingProposal] = useState(false);
+  const [proposalNotice, setProposalNotice] = useState<string | null>(null);
+
   useEffect(() => {
     fetch("/api/organizations", { cache: "no-store" })
       .then((r) => r.json())
@@ -115,6 +122,9 @@ function WeaponsInner() {
     setLoading(true);
     setWeapon({});
     setTab(kinds[0]);
+    setWeaponActions(actions);
+    setSavedProposalSnapshot("");
+    setProposalNotice(null);
 
     // 選んだ種類だけを順番に生成する。1つ失敗しても、できたところまでは残す。
     for (const kind of kinds) {
@@ -141,6 +151,11 @@ function WeaponsInner() {
         }
         const d = await r.json();
         setWeapon((prev) => ({ ...prev, ...d.part }));
+        // 生成直後の内容をスナップショットにする（サーバー側は生成直後に既に記憶へ保存済みなので、
+        // ここではまだ何も修正されていない＝保存済み扱いにする）。
+        if (kind === "proposal" && Array.isArray(d.part?.proposal)) {
+          setSavedProposalSnapshot(JSON.stringify(d.part.proposal));
+        }
         setMeta({
           organization: d.organization,
           title: d.title,
@@ -186,11 +201,59 @@ function WeaponsInner() {
     }
   }
 
+  // 提案書の節を直接編集する（吉井さんが中身を見て、おかしいところをその場で直す）。
+  function updateProposalSection(i: number, patch: Partial<{ section: string; body: string }>) {
+    setWeapon((prev) => {
+      if (!prev.proposal) return prev;
+      return {
+        ...prev,
+        proposal: prev.proposal.map((s, idx) => (idx === i ? { ...s, ...patch } : s)),
+      };
+    });
+  }
+
+  // 修正した提案書を記憶(Supabase)へ上書き保存する。生成時と同じ weaponId で上書きされるので、
+  // 次の提案・壁打ち・他団体への横展開は「AIが最初に出した文面」ではなく「本人が直した後」を土台にする。
+  async function persistProposalEdits(): Promise<boolean> {
+    if (!meta || !weapon.proposal || weaponActions.length === 0) return false;
+    try {
+      const r = await fetch("/api/weapons/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organization: meta.organization,
+          actions: weaponActions,
+          kind: "proposal",
+          title: meta.title,
+          part: { proposal: weapon.proposal },
+        }),
+      });
+      if (!r.ok) return false;
+      setSavedProposalSnapshot(JSON.stringify(weapon.proposal));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function saveProposalEdits() {
+    setSavingProposal(true);
+    setProposalNotice(null);
+    const ok = await persistProposalEdits();
+    setProposalNotice(ok ? "修正を記憶に保存しました" : "保存に失敗しました。もう一度お試しください");
+    setSavingProposal(false);
+  }
+
   // 提案書のNotion登録も、slidesと同じ「起票→ワーカー実行」方式に乗せる
   // （このアプリのNotionトークンは無効なため、実処理はMacのワーカーが担う）。
   async function orderProposalToNotion() {
     if (!meta || !weapon.proposal) return;
     setError(null);
+    // 未保存の修正があれば、Notionへ送る前にまず記憶へ反映しておく（起票内容と記憶を一致させる）。
+    if (proposalDirty) {
+      const ok = await persistProposalEdits();
+      if (!ok) setError("修正の記憶への保存に失敗しました（起票はそのまま続けます）");
+    }
     try {
       const r = await fetch("/api/jobs", {
         method: "POST",
@@ -215,6 +278,8 @@ function WeaponsInner() {
   }
 
   const actions = selectedActions();
+  const proposalDirty =
+    !!weapon.proposal && JSON.stringify(weapon.proposal) !== savedProposalSnapshot;
 
   return (
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
@@ -439,6 +504,9 @@ function WeaponsInner() {
 
           {tab === "proposal" && weapon.proposal && (
             <div className="space-y-3">
+              <p className="text-xs text-gray-400">
+                見出し・本文は直接書き換えられます。おかしいところがあれば修正してください。
+              </p>
               <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                 {weapon.proposal.map((s, i) => (
                   <div
@@ -446,16 +514,49 @@ function WeaponsInner() {
                     className={`p-4 ${i > 0 ? "border-t border-gray-100" : ""}`}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                      <span className="shrink-0 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
                         {i + 1}
                       </span>
-                      <h3 className="text-sm font-bold text-gray-900">{s.section}</h3>
+                      <input
+                        type="text"
+                        value={s.section}
+                        onChange={(e) => updateProposalSection(i, { section: e.target.value })}
+                        className="min-w-0 flex-1 rounded-md border border-transparent px-1.5 py-1 text-sm font-bold text-gray-900 transition focus:border-amber-300 focus:bg-amber-50 focus:outline-none"
+                      />
                     </div>
-                    <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-gray-700">
-                      {s.body}
-                    </p>
+                    <textarea
+                      value={s.body}
+                      onChange={(e) => updateProposalSection(i, { body: e.target.value })}
+                      rows={4}
+                      className="mt-2 block w-full resize-y rounded-lg border border-transparent px-2 py-1.5 text-sm leading-relaxed text-gray-700 transition focus:border-amber-300 focus:bg-amber-50 focus:outline-none"
+                    />
                   </div>
                 ))}
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs leading-relaxed text-gray-500">
+                    修正すると記憶（次の提案・壁打ちの土台）が古いままになります。直したら保存してください。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={saveProposalEdits}
+                    disabled={savingProposal || !proposalDirty}
+                    className={`shrink-0 rounded-lg px-3 py-2 text-sm font-semibold transition disabled:opacity-40 ${
+                      proposalDirty
+                        ? "bg-amber-600 text-white active:bg-amber-700"
+                        : "border border-gray-200 bg-white text-gray-400"
+                    }`}
+                  >
+                    {savingProposal ? "保存中..." : proposalDirty ? "修正を保存" : "保存済み"}
+                  </button>
+                </div>
+                {proposalNotice && (
+                  <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                    {proposalNotice}
+                  </p>
+                )}
               </div>
 
               <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -469,7 +570,7 @@ function WeaponsInner() {
                 </button>
                 <p className="mt-2 text-xs leading-relaxed text-gray-500">
                   Notionへの登録はMacのClaude Codeが行います。ここでは注文を積むだけです。
-                  次にMacで「取込ジョブを処理して」と言うとNotionページが作られます。
+                  次にMacで「取込ジョブを処理して」と言うとNotionページが作られます（未保存の修正はここで自動保存されます）。
                 </p>
                 {queued.proposal && (
                   <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">

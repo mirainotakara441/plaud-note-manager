@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import NotificationOptIn from "@/app/components/NotificationOptIn";
 
 // 日々のToDo：一行日記の「やってみよう」「本日のポイント」を週単位で積み上げ、
 // チェックすると「済み」一覧へ移動して未完リストは行詰めされる。データは /api/actions（Supabase）。
@@ -316,6 +317,8 @@ export default function ActionsPage() {
           <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>
         )}
       </header>
+
+      <NotificationOptIn />
 
       {/* 追加フォーム */}
       <section className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">

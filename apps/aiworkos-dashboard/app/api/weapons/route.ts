@@ -198,7 +198,7 @@ const PART_SCHEMAS: Record<StaticKind, { [key: string]: unknown }> = {
   },
 };
 
-const PART_LABEL: Record<Kind, string> = {
+export const PART_LABEL: Record<Kind, string> = {
   proposal: "提案書（資料集）",
   story: "提案ストーリー",
   qa: "事前の壁打ち",
@@ -311,8 +311,14 @@ function windowChunks(text: string): string[] {
   return chunks;
 }
 
+// weaponId は決定した施策から決まるため、同じ施策で作り直す・保存し直すと上書きされ、増殖しない。
+// 生成直後の保存(POSTハンドラ)と、あとからの修正保存(save/route.ts)の両方でこの式を使う。
+export function weaponIdOf(organization: string, actions: string[]): string {
+  return `${organization}:${actions.join("|")}`.slice(0, 100);
+}
+
 /** 武器の1種類を、記憶に戻すための1本のテキストにする */
-function partToText(kind: Kind, part: Partial<Weapon>, actions: string[]): string {
+export function partToText(kind: Kind, part: Partial<Weapon>, actions: string[]): string {
   const head = `【決定した施策】\n${actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`;
   if (kind === "proposal") {
     return `${head}\n\n【提案書（資料集）】\n${(part.proposal ?? [])
@@ -334,7 +340,7 @@ function partToText(kind: Kind, part: Partial<Weapon>, actions: string[]): strin
     .join("\n")}`;
 }
 
-async function savePart(
+export async function savePart(
   supabaseUrl: string,
   anonKey: string,
   organization: string,
@@ -538,8 +544,7 @@ ${instruction}
     }
 
     // 作った武器を成果物として記憶へ戻す。次に /agent や /refine を開いたとき土台に入る。
-    // weaponId は決定した施策から決まるため、同じ施策で作り直すと上書きされ、増殖しない。
-    const weaponId = `${organization}:${actions.join("|")}`.slice(0, 100);
+    const weaponId = weaponIdOf(organization, actions);
     const title = `${organization} ${actions[0]}${
       actions.length > 1 ? ` ほか${actions.length - 1}件` : ""
     }｜武器`;
