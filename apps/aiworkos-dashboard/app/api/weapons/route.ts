@@ -77,7 +77,7 @@ const PART_SCHEMAS: Record<Kind, { [key: string]: unknown }> = {
             body: {
               type: "string",
               description:
-                "その節の本文。提案書に載せる丁寧なビジネス文。事実・数字は資料どおり。資料に無い節（費用など）は憶測せず『別途ご提示します』等で置く。",
+                "その節の本文。提案書に載せる丁寧なビジネス文で、3〜5文程度に簡潔にまとめる（提案書の骨子として読める分量。冗長にしない）。事実・数字は資料どおり。資料に無い節（費用など）は憶測せず『別途ご提示します』等で置く。",
             },
           },
           required: ["section", "body"],
@@ -171,7 +171,7 @@ const PART_LABEL: Record<Kind, string> = {
 const PART_INSTRUCTION: Record<Kind, string> = {
   proposal: `proposal のみを作ってください。次のひな形の節を、この順序どおりに全て埋めること: ${PROPOSAL_SECTIONS.join(
     " → "
-  )}。各節は提案書に載せる丁寧なビジネス文で書く（箇条書きの羅列でなく、読める文章。必要なら文中に箇条書きを混ぜてよい）。「背景・課題認識」「現状の整理」は会議履歴とこの団体向けの成果物から相手固有の事情を拾う。「ご提案（打ち手の核）」は決定した施策を提案の言葉に。「期待される効果」は最新実績サマリの数値だけを根拠に。「費用・ご負担」など資料に数値が無い節は憶測せず『別途ご提示します』等で置く。`,
+  )}。各節は提案書に載せる丁寧なビジネス文で、【3〜5文程度に簡潔にまとめる】（提案書の骨子として読める分量。冗長な長文にしない）。「背景・課題認識」「現状の整理」は会議履歴とこの団体向けの成果物から相手固有の事情を拾う。「ご提案（打ち手の核）」は決定した施策を提案の言葉に。「期待される効果」は最新実績サマリの数値だけを根拠に。「費用・ご負担」など資料に数値が無い節は憶測せず『別途ご提示します』等で置く。`,
   story:
     "story のみを作ってください。要約ではなく、吉井さんがそのまま口に出せる「実際に話す言葉」で書くこと。",
   qa:
@@ -452,12 +452,20 @@ ${PART_INSTRUCTION[kind]}
 
   const client = new Anthropic({ apiKey: anthropicKey });
 
+  // proposal は8節あり重い。adaptive だと thinking + 出力で Vercel 60秒を超えて
+  // タイムアウト（画面には「通信エラー」と出る）ことがあるため、思考予算を絞って時間を抑える。
+  // 各節を3〜5文に縛っている（PART_INSTRUCTION/スキーマ）ので、これで品質は保ちつつ間に合う。
+  const thinking =
+    kind === "proposal"
+      ? ({ type: "enabled", budget_tokens: 3000 } as const)
+      : ({ type: "adaptive" } as const);
+
   try {
     const message = await client.messages.create({
       model: MODEL,
       // 1種類だけ作るので 8000 で足りる。thinking 込みで60秒に収める。
       max_tokens: 8000,
-      thinking: { type: "adaptive" },
+      thinking,
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ],

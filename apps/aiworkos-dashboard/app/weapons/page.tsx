@@ -121,11 +121,21 @@ function WeaponsInner() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ organization: organization.trim(), actions, note, kind }),
         });
-        const d = await r.json();
+        // 504（時間切れ）は本文がJSONでないことがある。先にr.jsonせず、失敗を切り分ける。
         if (!r.ok) {
-          setError(`${TAB_LABEL[kind]}の生成に失敗しました: ${d?.error ?? ""}`);
+          let reason = `HTTP ${r.status}`;
+          try {
+            const d = await r.json();
+            if (d?.error) reason = d.error;
+          } catch {
+            if (r.status === 504 || r.status === 408) {
+              reason = "時間切れです。もう一度お試しください（提案書は特に時間がかかります）";
+            }
+          }
+          setError(`${TAB_LABEL[kind]}の生成に失敗しました: ${reason}`);
           break;
         }
+        const d = await r.json();
         setWeapon((prev) => ({ ...prev, ...d.part }));
         setMeta({
           organization: d.organization,
@@ -135,7 +145,9 @@ function WeaponsInner() {
           meetingsCount: d.meetingsCount,
         });
       } catch {
-        setError(`${TAB_LABEL[kind]}の生成中に通信エラーが発生しました`);
+        setError(
+          `${TAB_LABEL[kind]}の生成に時間がかかり、切り替わってしまった可能性があります。もう一度お試しください。`
+        );
         break;
       }
     }
