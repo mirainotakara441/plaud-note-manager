@@ -37,6 +37,7 @@ type Proposal = {
 };
 type NewsTheme = {
   theme: string;
+  category: string | null;
   count: number;
   last_fetch: string | null;
   last_pub: string | null;
@@ -874,36 +875,58 @@ function ServicesPanel({ services }: { services: Service[] }) {
   );
 }
 
-// ── ニュースパネル ────────────────────────────────────────
+// ── ニュースパネル（カテゴリ別グループ表示） ──────────────
+const NEWS_CATEGORY_ORDER = ["生成AI", "自治体DX", "法人OS", "ロビー活動／他"];
+
+function NewsThemeRow({ t }: { t: NewsTheme }) {
+  const h = hoursSince(t.last_fetch);
+  const stale = h !== null && h > 48;
+  return (
+    <li className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full ${stale ? "bg-amber-400" : "bg-emerald-500"}`}
+        title={stale ? "48時間以上更新なし" : "新しい"}
+      />
+      <span className="min-w-0 flex-1 truncate text-sm text-gray-700">{t.theme}</span>
+      <span className="shrink-0 text-xs font-semibold text-gray-800">{t.count}</span>
+      <span className="shrink-0 text-xs text-gray-400" title={`最終取得 ${fmtDateTime(t.last_fetch)}`}>
+        {agoLabel(t.last_fetch)}
+      </span>
+    </li>
+  );
+}
+
 function NewsPanel({ themes }: { themes: NewsTheme[] }) {
   if (themes.length === 0) {
     return <p className="text-sm text-gray-400">収集済みニュースはありません。</p>;
   }
+  // カテゴリでグループ化（定義順→未分類は最後）
+  const groups = new Map<string, NewsTheme[]>();
+  for (const t of themes) {
+    const c = t.category ?? "その他";
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c)!.push(t);
+  }
+  const cats = [
+    ...NEWS_CATEGORY_ORDER.filter((c) => groups.has(c)),
+    ...[...groups.keys()].filter((c) => !NEWS_CATEGORY_ORDER.includes(c)),
+  ];
   return (
-    <ul className="space-y-2">
-      {themes.map((t) => {
-        const h = hoursSince(t.last_fetch);
-        const stale = h !== null && h > 48;
-        return (
-          <li
-            key={t.theme}
-            className="flex items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
-          >
-            <span
-              className={`h-2 w-2 shrink-0 rounded-full ${stale ? "bg-amber-400" : "bg-emerald-500"}`}
-              title={stale ? "48時間以上更新なし" : "新しい"}
-            />
-            <span className="min-w-0 flex-1 truncate text-sm text-gray-700">
-              {t.theme}
-            </span>
-            <span className="shrink-0 text-xs font-semibold text-gray-800">{t.count}</span>
-            <span className="shrink-0 text-xs text-gray-400" title={`最終取得 ${fmtDateTime(t.last_fetch)}`}>
-              {agoLabel(t.last_fetch)}
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+    <div className="space-y-4">
+      {cats.map((c) => (
+        <div key={c}>
+          <p className="mb-1.5 text-xs font-bold text-gray-500">{c}</p>
+          <ul className="space-y-2">
+            {groups
+              .get(c)!
+              .sort((a, b) => b.count - a.count)
+              .map((t) => (
+                <NewsThemeRow key={t.theme} t={t} />
+              ))}
+          </ul>
+        </div>
+      ))}
+    </div>
   );
 }
 
