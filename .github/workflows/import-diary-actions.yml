@@ -1,0 +1,42 @@
+name: Import Diary Actions
+
+# 一行日記(Supabase memory_chunks)の「やってみよう」「本日の要点3つ」を
+# 日々のToDo(daily_actions)へ毎日自動で取り込む。手動の「日記から取込」ボタンの自動版。
+# Supabase RPC import_diary_actions を anon キーで直接叩く（Vercelアプリの認証を通らない）。
+# source_id 重複防止で何度走っても安全（新しい日記だけ入る）。
+#
+# 必要な GitHub Secrets（backupワークフローと共用・登録済み）:
+#   - SUPABASE_URL       : 例 https://zuadqnarsoykplkafyxv.supabase.co
+#   - SUPABASE_ANON_KEY  : anon（公開）キー
+
+on:
+  schedule:
+    - cron: "0 21 * * *" # 毎日 21:00 UTC（＝翌 06:00 JST）
+  workflow_dispatch: {} # 手動でも実行できる
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Supabase RPC で日記からToDoを取り込む
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::SUPABASE_URL / SUPABASE_ANON_KEY secret が未設定です。"
+            exit 1
+          fi
+          RESP=$(curl -s -w $'\n%{http_code}' -X POST \
+            "$SUPABASE_URL/rest/v1/rpc/import_diary_actions" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"lookback_days":14}' --max-time 60)
+          BODY=$(printf '%s' "$RESP" | head -n1)
+          CODE=$(printf '%s' "$RESP" | tail -n1)
+          echo "取込件数: ${BODY} (HTTP ${CODE})"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::取込に失敗しました (HTTP ${CODE})"
+            exit 1
+          fi
