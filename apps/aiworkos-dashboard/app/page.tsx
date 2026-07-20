@@ -63,6 +63,13 @@ const FEATURES: Feature[] = [
     desc: "Supabaseの蓄積・取込ジョブ・壁打ち・ニュース収集の状況を監視",
     accent: "bg-rose-100 text-rose-700",
   },
+  {
+    href: "/nippo",
+    icon: "📒",
+    title: "日報録",
+    desc: "各セッションで何をどこまで進めたかを日付ごとに記録・一覧",
+    accent: "bg-sky-100 text-sky-700",
+  },
 ];
 
 export default function Home() {
