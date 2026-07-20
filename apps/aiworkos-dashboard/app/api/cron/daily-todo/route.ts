@@ -71,7 +71,11 @@ export async function GET(req: NextRequest) {
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
   let sent = 0;
   let removed = 0;
-  if (vapidPublic && vapidPrivate) {
+  // 診断用: 送信に失敗した場合の要旨を残す（原因切り分けのため。本番安定後は削ってよい）。
+  const errors: string[] = [];
+  if (!vapidPublic || !vapidPrivate) {
+    errors.push("VAPIDキーが未設定です");
+  } else {
     webpush.setVapidDetails("mailto:mirainotakara441@gmail.com", vapidPublic, vapidPrivate);
     try {
       const subsRes = await fetch(`${c.url}/rest/v1/push_subscriptions?select=endpoint,p256dh,auth`, {
@@ -80,6 +84,7 @@ export async function GET(req: NextRequest) {
       const subs: { endpoint: string; p256dh: string; auth: string }[] = subsRes.ok
         ? await subsRes.json()
         : [];
+      if (!subsRes.ok) errors.push(`購読取得失敗 HTTP ${subsRes.status}`);
       const body =
         added > 0
           ? `日記から${added}件を取り込みました。未完は${remaining}件です`
@@ -95,6 +100,10 @@ export async function GET(req: NextRequest) {
           sent++;
         } catch (e) {
           const status = (e as { statusCode?: number })?.statusCode;
+          const body = (e as { body?: string })?.body;
+          const msg = (e as { message?: string })?.message;
+          console.error("push送信失敗", { endpoint: s.endpoint.slice(0, 60), status, body, msg });
+          errors.push(`push失敗(${status ?? "?"}): ${body || msg || String(e)}`.slice(0, 200));
           if (status === 404 || status === 410) {
             // 購読が端末側で失効している。掃除する。
             await fetch(
@@ -105,10 +114,11 @@ export async function GET(req: NextRequest) {
           }
         }
       }
-    } catch {
-      // 送信全体が失敗しても、取込・件数の結果はレスポンスとして返す
+    } catch (e) {
+      console.error("push送信処理全体でエラー", e);
+      errors.push(`全体エラー: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
-  return NextResponse.json({ added, remaining, sent, removed });
+  return NextResponse.json({ added, remaining, sent, removed, errors });
 }
