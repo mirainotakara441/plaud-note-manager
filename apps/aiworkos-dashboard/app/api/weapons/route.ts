@@ -30,21 +30,64 @@ type Meeting = {
 };
 
 export type Weapon = {
+  /** 提案書（資料集）。固定のひな形セクションに沿った提案書本体 */
+  proposal: { section: string; body: string }[];
   /** 自治体への想定ストーリー。説明の流れを場面ごとに */
   story: { scene: string; talk: string }[];
-  /** 想定問答。相手の反論・懸念と切り返し */
+  /** 想定問答（事前の壁打ち）。相手の反論・懸念と切り返し */
   qa: { question: string; answer: string }[];
   /** スライド構成案。1要素=1枚 */
   slides: { title: string; bullets: string[] }[];
 };
 
 export type Kind = keyof Weapon;
-const KINDS: Kind[] = ["story", "qa", "slides"];
+const KINDS: Kind[] = ["proposal", "story", "qa", "slides"];
+
+// 提案書（資料集）のひな形。この節構成に沿って埋める。順序も固定。
+// 費用など資料に無い節は空にせず「別途ご提示」等で置く（憶測の数値は書かない）。
+const PROPOSAL_SECTIONS = [
+  "背景・課題認識",
+  "現状の整理",
+  "ご提案（打ち手の核）",
+  "期待される効果",
+  "進め方・スケジュール",
+  "推進体制",
+  "費用・ご負担",
+  "次のアクション",
+] as const;
 
 // 3種類を1リクエストで作ると、thinking + 出力量で Vercel の60秒上限を超えて
 // FUNCTION_INVOCATION_TIMEOUT になる（実測）。種類ごとに分けて呼ぶ。
 // 画面側も、先に想定ストーリーが出て順に埋まる方が待ち時間が短く感じられる。
 const PART_SCHEMAS: Record<Kind, { [key: string]: unknown }> = {
+  proposal: {
+    type: "object",
+    properties: {
+      proposal: {
+        type: "array",
+        description:
+          "提案書（資料集）本体。決められたひな形の節を、指定の順序どおりに埋める。各節は見出しと本文。",
+        items: {
+          type: "object",
+          properties: {
+            section: {
+              type: "string",
+              description: `節の見出し。次のいずれかを順序どおりに使う: ${PROPOSAL_SECTIONS.join(" / ")}`,
+            },
+            body: {
+              type: "string",
+              description:
+                "その節の本文。提案書に載せる丁寧なビジネス文。事実・数字は資料どおり。資料に無い節（費用など）は憶測せず『別途ご提示します』等で置く。",
+            },
+          },
+          required: ["section", "body"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["proposal"],
+    additionalProperties: false,
+  },
   story: {
     type: "object",
     properties: {
@@ -119,16 +162,20 @@ const PART_SCHEMAS: Record<Kind, { [key: string]: unknown }> = {
 };
 
 const PART_LABEL: Record<Kind, string> = {
-  story: "想定ストーリー",
-  qa: "想定問答",
+  proposal: "提案書（資料集）",
+  story: "提案ストーリー",
+  qa: "事前の壁打ち",
   slides: "スライド構成案",
 };
 
 const PART_INSTRUCTION: Record<Kind, string> = {
+  proposal: `proposal のみを作ってください。次のひな形の節を、この順序どおりに全て埋めること: ${PROPOSAL_SECTIONS.join(
+    " → "
+  )}。各節は提案書に載せる丁寧なビジネス文で書く（箇条書きの羅列でなく、読める文章。必要なら文中に箇条書きを混ぜてよい）。「背景・課題認識」「現状の整理」は会議履歴とこの団体向けの成果物から相手固有の事情を拾う。「ご提案（打ち手の核）」は決定した施策を提案の言葉に。「期待される効果」は最新実績サマリの数値だけを根拠に。「費用・ご負担」など資料に数値が無い節は憶測せず『別途ご提示します』等で置く。`,
   story:
     "story のみを作ってください。要約ではなく、吉井さんがそのまま口に出せる「実際に話す言葉」で書くこと。",
   qa:
-    "qa のみを作ってください。会議履歴に実際に出てくる相手の懸念・反論を最優先で拾うこと。実際に言われたことが最も価値があります。",
+    "qa のみを作ってください。会議履歴に実際に出てくる相手の懸念・反論を最優先で拾うこと。実際に言われたことが最も価値があります。切り返しは、相手が納得できる判断基準（なぜそう言えるか）まで添えること。",
   slides:
     "slides のみを作ってください。1要素が1枚。表紙は不要で、中身のスライドだけ。この構成案はそのまま .pptx に清書されます。",
 };
@@ -233,6 +280,11 @@ function windowChunks(text: string): string[] {
 /** 武器の1種類を、記憶に戻すための1本のテキストにする */
 function partToText(kind: Kind, part: Partial<Weapon>, actions: string[]): string {
   const head = `【決定した施策】\n${actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}`;
+  if (kind === "proposal") {
+    return `${head}\n\n【提案書（資料集）】\n${(part.proposal ?? [])
+      .map((s) => `■${s.section}\n${s.body}`)
+      .join("\n\n")}`;
+  }
   if (kind === "story") {
     return `${head}\n\n【想定ストーリー】\n${(part.story ?? [])
       .map((s) => `■${s.scene}\n${s.talk}`)

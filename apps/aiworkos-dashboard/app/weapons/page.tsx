@@ -8,21 +8,31 @@ import { useSearchParams } from "next/navigation";
 // /agent から「武器にする →」で遷移すると、打ち手が引き継がれて選択肢に並ぶ。
 
 type Weapon = {
+  proposal: { section: string; body: string }[];
   story: { scene: string; talk: string }[];
   qa: { question: string; answer: string }[];
   slides: { title: string; bullets: string[] }[];
 };
 
-type Tab = "story" | "qa" | "slides";
+type Tab = "proposal" | "story" | "qa" | "slides";
 
 const TAB_LABEL: Record<Tab, string> = {
-  story: "想定ストーリー",
-  qa: "想定問答",
+  proposal: "提案書（資料集）",
+  story: "提案ストーリー",
+  qa: "事前の壁打ち",
   slides: "スライド構成案",
 };
 
-// 3種類を1リクエストで作るとVercelの60秒上限を超えるため、順番に呼んで順次埋める。
-const ORDER: Tab[] = ["story", "qa", "slides"];
+// 各武器種の一言説明（武器種ピッカー用）。
+const TAB_DESC: Record<Tab, string> = {
+  proposal: "決まったひな形の節に沿った提案書本体",
+  story: "そのまま話せる提案の流れ",
+  qa: "想定される反論と切り返し・判断基準",
+  slides: "そのままpptxにする1枚ずつの構成",
+};
+
+// 1リクエスト1種類（Vercel60秒上限のため）。選んだ武器種だけをこの順で作る。
+const ORDER: Tab[] = ["proposal", "story", "qa", "slides"];
 
 function WeaponsInner() {
   const searchParams = useSearchParams();
@@ -39,6 +49,13 @@ function WeaponsInner() {
   const [custom, setCustom] = useState("");
   const [note, setNote] = useState("");
   const [weapon, setWeapon] = useState<Partial<Weapon>>({});
+  // どの武器種を作るか。提案書・提案ストーリー・事前壁打ちを既定にし、スライドは任意。
+  const [pick, setPick] = useState<Record<Tab, boolean>>({
+    proposal: true,
+    story: true,
+    qa: true,
+    slides: false,
+  });
   const [meta, setMeta] = useState<{
     organization: string;
     title: string;
@@ -46,7 +63,7 @@ function WeaponsInner() {
     commonDocsCount: number;
     meetingsCount: number;
   } | null>(null);
-  const [tab, setTab] = useState<Tab>("story");
+  const [tab, setTab] = useState<Tab>("proposal");
   const [loading, setLoading] = useState(false);
   // いま何を作っているか。順番に埋まるので進捗が見える。
   const [building, setBuilding] = useState<Tab | null>(null);
@@ -87,14 +104,16 @@ function WeaponsInner() {
     const actions = selectedActions();
     if (!organization.trim()) return setError("対象を選んでください");
     if (actions.length === 0) return setError("武器にする打ち手を1つ以上選んでください");
+    const kinds = ORDER.filter((k) => pick[k]);
+    if (kinds.length === 0) return setError("作る武器種を1つ以上選んでください");
     setError(null);
     setQueued(false);
     setLoading(true);
     setWeapon({});
-    setTab("story");
+    setTab(kinds[0]);
 
-    // 種類ごとに順番に生成する。1つ失敗しても、できたところまでは残す。
-    for (const kind of ORDER) {
+    // 選んだ種類だけを順番に生成する。1つ失敗しても、できたところまでは残す。
+    for (const kind of kinds) {
       setBuilding(kind);
       try {
         const r = await fetch("/api/weapons", {
@@ -161,7 +180,7 @@ function WeaponsInner() {
         </Link>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">武器を出す</h1>
         <p className="mt-1 text-sm text-gray-500">
-          決めた打ち手を、現場でそのまま使える想定ストーリー・想定問答・スライド構成案にします
+          決めた打ち手を、ひな形に沿った提案書（資料集）・提案ストーリー・事前の壁打ち・スライド構成案にします
         </p>
       </header>
 
@@ -248,6 +267,43 @@ function WeaponsInner() {
           />
         </div>
 
+        <div>
+          <label className="block text-sm font-medium text-gray-600">
+            作る武器種（ひな形）
+          </label>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {ORDER.map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setPick((p) => ({ ...p, [k]: !p[k] }))}
+                disabled={loading}
+                className={`rounded-xl border px-3 py-2 text-left transition disabled:opacity-50 ${
+                  pick[k]
+                    ? "border-amber-400 bg-amber-50"
+                    : "border-gray-200 bg-white active:bg-gray-50"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${
+                      pick[k]
+                        ? "border-amber-500 bg-amber-500 text-white"
+                        : "border-gray-300 text-transparent"
+                    }`}
+                  >
+                    ✓
+                  </span>
+                  <span className="text-sm font-semibold text-gray-800">{TAB_LABEL[k]}</span>
+                </span>
+                <span className="mt-0.5 block pl-6 text-xs leading-snug text-gray-500">
+                  {TAB_DESC[k]}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <button
           type="button"
           onClick={generate}
@@ -262,7 +318,7 @@ function WeaponsInner() {
         </button>
         {loading && (
           <div className="flex justify-center gap-2">
-            {ORDER.map((k) => (
+            {ORDER.filter((k) => pick[k]).map((k) => (
               <span
                 key={k}
                 className={`h-1.5 w-12 rounded-full ${
@@ -305,9 +361,9 @@ function WeaponsInner() {
             ✅ できた武器から順に、成果物として記憶に登録しています。次の提案・壁打ちの土台になります。
           </p>
 
-          {/* 3種類の武器をタブで切り替える。まだ作れていないものは押せない。 */}
-          <div className="flex gap-2">
-            {ORDER.map((k) => {
+          {/* 作った武器種をタブで切り替える（作成中/作成済のものだけ出す）。 */}
+          <div className="flex flex-wrap gap-2">
+            {ORDER.filter((k) => weapon[k] !== undefined || building === k).map((k) => {
               const n = weapon[k]?.length;
               const ready = n !== undefined;
               return (
@@ -328,6 +384,27 @@ function WeaponsInner() {
               );
             })}
           </div>
+
+          {tab === "proposal" && weapon.proposal && (
+            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+              {weapon.proposal.map((s, i) => (
+                <div
+                  key={i}
+                  className={`p-4 ${i > 0 ? "border-t border-gray-100" : ""}`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                      {i + 1}
+                    </span>
+                    <h3 className="text-sm font-bold text-gray-900">{s.section}</h3>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-gray-700">
+                    {s.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
 
           {tab === "story" && weapon.story && (
             <div className="space-y-3">
