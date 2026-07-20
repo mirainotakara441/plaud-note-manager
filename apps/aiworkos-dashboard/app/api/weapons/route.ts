@@ -43,24 +43,40 @@ export type Weapon = {
 export type Kind = keyof Weapon;
 const KINDS: Kind[] = ["proposal", "story", "qa", "slides"];
 
-// 提案書（資料集）のひな形。この節構成に沿って埋める。順序も固定。
-// 費用など資料に無い節は空にせず「別途ご提示」等で置く（憶測の数値は書かない）。
-const PROPOSAL_SECTIONS = [
-  "背景・課題認識",
-  "現状の整理",
-  "ご提案（打ち手の核）",
-  "期待される効果",
-  "進め方・スケジュール",
-  "推進体制",
-  "費用・ご負担",
-  "次のアクション",
-] as const;
+// 提案書（資料集）のひな形は Supabase の weapon_proposal_sections に持たせ、
+// /weapons/template のUIから編集できる（節の追加・並べ替え・削除・書き方の指示）。
+// ここにあるのは DB取得に失敗した場合だけ使う既定値（表の初期投入内容と同じ）。
+export type ProposalSection = { section: string; guidance: string | null };
+const DEFAULT_PROPOSAL_SECTIONS: ProposalSection[] = [
+  { section: "背景・課題認識", guidance: "会議履歴とこの団体向けの成果物から、相手固有の事情を拾うこと" },
+  { section: "現状の整理", guidance: "会議履歴とこの団体向けの成果物から、相手固有の事情を拾うこと" },
+  { section: "ご提案（打ち手の核）", guidance: "決定した施策を提案の言葉にすること" },
+  { section: "期待される効果", guidance: "最新実績サマリの数値だけを根拠にすること" },
+  { section: "進め方・スケジュール", guidance: null },
+  { section: "推進体制", guidance: null },
+  { section: "費用・ご負担", guidance: "資料に数値が無ければ憶測せず「別途ご提示します」等で置くこと" },
+  { section: "次のアクション", guidance: null },
+];
 
-// 3種類を1リクエストで作ると、thinking + 出力量で Vercel の60秒上限を超えて
-// FUNCTION_INVOCATION_TIMEOUT になる（実測）。種類ごとに分けて呼ぶ。
-// 画面側も、先に想定ストーリーが出て順に埋まる方が待ち時間が短く感じられる。
-const PART_SCHEMAS: Record<Kind, { [key: string]: unknown }> = {
-  proposal: {
+async function fetchProposalSections(
+  supabaseUrl: string,
+  anonKey: string
+): Promise<ProposalSection[]> {
+  try {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/weapon_proposal_sections?select=section,guidance&order=position.asc`,
+      { headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` }, cache: "no-store" }
+    );
+    if (!res.ok) return DEFAULT_PROPOSAL_SECTIONS;
+    const rows = await res.json();
+    return Array.isArray(rows) && rows.length > 0 ? rows : DEFAULT_PROPOSAL_SECTIONS;
+  } catch {
+    return DEFAULT_PROPOSAL_SECTIONS;
+  }
+}
+
+function buildProposalSchema(sections: ProposalSection[]): { [key: string]: unknown } {
+  return {
     type: "object",
     properties: {
       proposal: {
@@ -72,7 +88,9 @@ const PART_SCHEMAS: Record<Kind, { [key: string]: unknown }> = {
           properties: {
             section: {
               type: "string",
-              description: `節の見出し。次のいずれかを順序どおりに使う: ${PROPOSAL_SECTIONS.join(" / ")}`,
+              description: `節の見出し。次のいずれかを順序どおりに使う: ${sections
+                .map((s) => s.section)
+                .join(" / ")}`,
             },
             body: {
               type: "string",
@@ -87,7 +105,26 @@ const PART_SCHEMAS: Record<Kind, { [key: string]: unknown }> = {
     },
     required: ["proposal"],
     additionalProperties: false,
-  },
+  };
+}
+
+function buildProposalInstruction(sections: ProposalSection[]): string {
+  const order = sections.map((s) => s.section).join(" → ");
+  const guidances = sections
+    .filter((s) => s.guidance && s.guidance.trim())
+    .map((s) => `「${s.section}」は${s.guidance}。`)
+    .join("");
+  return `proposal のみを作ってください。次のひな形の節を、この順序どおりに全て埋めること: ${order}。各節は提案書に載せる丁寧なビジネス文で、【3〜5文程度に簡潔にまとめる】（提案書の骨子として読める分量。冗長な長文にしない）。${guidances}`;
+}
+
+// proposal 以外の3種類（story/qa/slides）は静的スキーマ・指示。
+// proposal は上のDB由来のひな形からリクエストごとに組み立てる（POSTハンドラ内）。
+type StaticKind = Exclude<Kind, "proposal">;
+
+// 3種類を1リクエストで作ると、thinking + 出力量で Vercel の60秒上限を超えて
+// FUNCTION_INVOCATION_TIMEOUT になる（実測）。種類ごとに分けて呼ぶ。
+// 画面側も、先に想定ストーリーが出て順に埋まる方が待ち時間が短く感じられる。
+const PART_SCHEMAS: Record<StaticKind, { [key: string]: unknown }> = {
   story: {
     type: "object",
     properties: {
@@ -168,10 +205,7 @@ const PART_LABEL: Record<Kind, string> = {
   slides: "スライド構成案",
 };
 
-const PART_INSTRUCTION: Record<Kind, string> = {
-  proposal: `proposal のみを作ってください。次のひな形の節を、この順序どおりに全て埋めること: ${PROPOSAL_SECTIONS.join(
-    " → "
-  )}。各節は提案書に載せる丁寧なビジネス文で、【3〜5文程度に簡潔にまとめる】（提案書の骨子として読める分量。冗長な長文にしない）。「背景・課題認識」「現状の整理」は会議履歴とこの団体向けの成果物から相手固有の事情を拾う。「ご提案（打ち手の核）」は決定した施策を提案の言葉に。「期待される効果」は最新実績サマリの数値だけを根拠に。「費用・ご負担」など資料に数値が無い節は憶測せず『別途ご提示します』等で置く。`,
+const PART_INSTRUCTION: Record<StaticKind, string> = {
   story:
     "story のみを作ってください。要約ではなく、吉井さんがそのまま口に出せる「実際に話す言葉」で書くこと。",
   qa:
@@ -399,7 +433,8 @@ export async function POST(req: NextRequest) {
 
   // 土台を集める。壁打ちの熟成メモも成果物なのでここに含まれる。
   // 60秒上限に収めるため、件数は控えめにして類似度上位だけを使う。
-  const [deliverables, commonDocs, meetings, metrics] = await Promise.all([
+  // proposal のときだけ、ひな形（節構成）もここで一緒に取得する。
+  const [deliverables, commonDocs, meetings, metrics, proposalSections] = await Promise.all([
     searchMemory(supabaseUrl, anonKey, {
       query: `${organization} ${actions.join(" ")}`,
       source_type: "成果物",
@@ -414,7 +449,13 @@ export async function POST(req: NextRequest) {
     }),
     fetchMeetings(supabaseUrl, anonKey, organization),
     fetchLatestMetrics(supabaseUrl, anonKey),
+    kind === "proposal" ? fetchProposalSections(supabaseUrl, anonKey) : Promise.resolve(null),
   ]);
+
+  const schema: { [key: string]: unknown } =
+    kind === "proposal" ? buildProposalSchema(proposalSections!) : PART_SCHEMAS[kind];
+  const instruction: string =
+    kind === "proposal" ? buildProposalInstruction(proposalSections!) : PART_INSTRUCTION[kind];
 
   const meetingsText =
     meetings.length > 0
@@ -447,7 +488,7 @@ ${formatDocs(deliverables, "（この団体向けの成果物なし）")}
 ${meetingsText}
 
 上記の事実だけをもとに、決定した施策を${organization}で実行するための武器のうち【${PART_LABEL[kind]}】を作ってください。
-${PART_INSTRUCTION[kind]}
+${instruction}
 配列を空にせず、指定の JSON スキーマで返してください。`;
 
   const client = new Anthropic({ apiKey: anthropicKey });
@@ -463,7 +504,7 @@ ${PART_INSTRUCTION[kind]}
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ],
-      output_config: { format: { type: "json_schema", schema: PART_SCHEMAS[kind] } },
+      output_config: { format: { type: "json_schema", schema } },
       messages: [{ role: "user", content: userPrompt }],
     });
 

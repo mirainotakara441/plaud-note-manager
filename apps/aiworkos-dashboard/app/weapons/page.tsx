@@ -280,9 +280,17 @@ function WeaponsInner() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-600">
-            作る武器種（ひな形）
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="block text-sm font-medium text-gray-600">
+              作る武器種（ひな形）
+            </label>
+            <Link
+              href="/weapons/template"
+              className="text-xs font-medium text-amber-600 active:opacity-70"
+            >
+              提案書のひな形を編集 →
+            </Link>
+          </div>
           <div className="mt-2 grid grid-cols-2 gap-2">
             {ORDER.map((k) => (
               <button
