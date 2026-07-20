@@ -1,5 +1,6 @@
 import Link from "next/link";
 import IntegrationPanel from "@/app/components/IntegrationPanel";
+import TodoReminder from "@/app/components/TodoReminder";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
@@ -77,6 +78,8 @@ export default function Home() {
           入力 → 記憶 → 提案・出力を1枚でつなぐワークスペース
         </p>
       </header>
+
+      <TodoReminder />
 
       <div className="mb-6">
         <Link
