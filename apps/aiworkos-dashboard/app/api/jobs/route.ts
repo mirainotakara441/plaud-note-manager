@@ -6,7 +6,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 // slides: /weapons で作ったスライド構成案の .pptx 清書。本物テンプレートと slide-architect が
 // 吉井さんの Mac にしかないため、Vercel では実行できず eight/plaud と同じ起票方式に乗せる。
-const KINDS = ["eight", "plaud", "slides"] as const;
+// proposal: /weapons で作った提案書（資料集）をNotionページとして起票する。
+const KINDS = ["eight", "plaud", "slides", "proposal"] as const;
 type Kind = (typeof KINDS)[number];
 
 function rest(supabaseUrl: string) {

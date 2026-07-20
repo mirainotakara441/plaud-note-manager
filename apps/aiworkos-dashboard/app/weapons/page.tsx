@@ -68,7 +68,11 @@ function WeaponsInner() {
   // いま何を作っているか。順番に埋まるので進捗が見える。
   const [building, setBuilding] = useState<Tab | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [queued, setQueued] = useState(false);
+  // 起票（スライドのpptx清書／提案書のNotion登録）の完了状態を種類ごとに持つ
+  const [queued, setQueued] = useState<{ slides: boolean; proposal: boolean }>({
+    slides: false,
+    proposal: false,
+  });
 
   useEffect(() => {
     fetch("/api/organizations", { cache: "no-store" })
@@ -107,7 +111,7 @@ function WeaponsInner() {
     const kinds = ORDER.filter((k) => pick[k]);
     if (kinds.length === 0) return setError("作る武器種を1つ以上選んでください");
     setError(null);
-    setQueued(false);
+    setQueued({ slides: false, proposal: false });
     setLoading(true);
     setWeapon({});
     setTab(kinds[0]);
@@ -176,7 +180,35 @@ function WeaponsInner() {
         const d = await r.json();
         return setError(d?.error ?? "起票に失敗しました");
       }
-      setQueued(true);
+      setQueued((q) => ({ ...q, slides: true }));
+    } catch {
+      setError("通信エラーが発生しました");
+    }
+  }
+
+  // 提案書のNotion登録も、slidesと同じ「起票→ワーカー実行」方式に乗せる
+  // （このアプリのNotionトークンは無効なため、実処理はMacのワーカーが担う）。
+  async function orderProposalToNotion() {
+    if (!meta || !weapon.proposal) return;
+    setError(null);
+    try {
+      const r = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "proposal",
+          params: {
+            organization: meta.organization,
+            title: meta.title,
+            proposal: weapon.proposal,
+          },
+        }),
+      });
+      if (!r.ok) {
+        const d = await r.json();
+        return setError(d?.error ?? "起票に失敗しました");
+      }
+      setQueued((q) => ({ ...q, proposal: true }));
     } catch {
       setError("通信エラーが発生しました");
     }
@@ -406,23 +438,45 @@ function WeaponsInner() {
           </div>
 
           {tab === "proposal" && weapon.proposal && (
-            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-              {weapon.proposal.map((s, i) => (
-                <div
-                  key={i}
-                  className={`p-4 ${i > 0 ? "border-t border-gray-100" : ""}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
-                      {i + 1}
-                    </span>
-                    <h3 className="text-sm font-bold text-gray-900">{s.section}</h3>
+            <div className="space-y-3">
+              <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+                {weapon.proposal.map((s, i) => (
+                  <div
+                    key={i}
+                    className={`p-4 ${i > 0 ? "border-t border-gray-100" : ""}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">
+                        {i + 1}
+                      </span>
+                      <h3 className="text-sm font-bold text-gray-900">{s.section}</h3>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-gray-700">
+                      {s.body}
+                    </p>
                   </div>
-                  <p className="mt-2 text-sm leading-relaxed whitespace-pre-wrap text-gray-700">
-                    {s.body}
+                ))}
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <button
+                  type="button"
+                  onClick={orderProposalToNotion}
+                  disabled={queued.proposal}
+                  className="w-full rounded-xl bg-gray-800 px-4 py-2.5 text-base font-semibold text-white transition active:bg-gray-900 disabled:opacity-40"
+                >
+                  {queued.proposal ? "起票しました" : "この提案書をNotionへ起票（注文）"}
+                </button>
+                <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                  Notionへの登録はMacのClaude Codeが行います。ここでは注文を積むだけです。
+                  次にMacで「取込ジョブを処理して」と言うとNotionページが作られます。
+                </p>
+                {queued.proposal && (
+                  <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    ✅ 注文を積みました。ホームのジョブ一覧で状態を確認できます。
                   </p>
-                </div>
-              ))}
+                )}
+              </div>
             </div>
           )}
 
@@ -493,16 +547,16 @@ function WeaponsInner() {
                 <button
                   type="button"
                   onClick={orderPptx}
-                  disabled={queued}
+                  disabled={queued.slides}
                   className="w-full rounded-xl bg-gray-800 px-4 py-2.5 text-base font-semibold text-white transition active:bg-gray-900 disabled:opacity-40"
                 >
-                  {queued ? "注文しました" : "この構成でpptxを作る（注文）"}
+                  {queued.slides ? "注文しました" : "この構成でpptxを作る（注文）"}
                 </button>
                 <p className="mt-2 text-xs leading-relaxed text-gray-500">
                   本物のテンプレートを当てた .pptx は Mac の Claude Code が作ります。ここでは注文を積むだけです。
                   次に Mac で「取込ジョブを処理して」と言うと清書されます。
                 </p>
-                {queued && (
+                {queued.slides && (
                   <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
                     ✅ 注文を積みました。ホームのジョブ一覧で状態を確認できます。
                   </p>
