@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-// 日々のToDo：一行日記の「やってみよう」「本日のポイント」を日付ごとに積み上げ、
-// チェックで消し込み・編集・手動追加ができるページ。データは /api/actions（Supabase）。
+// 日々のToDo：一行日記の「やってみよう」「本日のポイント」を週単位で積み上げ、
+// チェックすると「済み」一覧へ移動して未完リストは行詰めされる。データは /api/actions（Supabase）。
 
 type Kind = "action" | "point";
 type Item = {
@@ -23,22 +23,50 @@ const KIND_META: Record<Kind, { label: string; icon: string; klass: string }> = 
 };
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
-function fmtDate(d: string): string {
+function pad(x: number) {
+  return String(x).padStart(2, "0");
+}
+function keyOf(dt: Date) {
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+}
+function todayStr() {
+  return keyOf(new Date());
+}
+function fmtDate(d: string) {
   const [y, m, day] = d.split("-").map(Number);
   const wd = WD[new Date(y, m - 1, day).getDay()] ?? "";
   return `${m}/${day}（${wd}）`;
 }
-function todayStr(): string {
-  const n = new Date();
-  const p = (x: number) => String(x).padStart(2, "0");
-  return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`;
+// その日が属する週の月曜日を返す
+function weekMonday(d: string): Date {
+  const [y, m, day] = d.split("-").map(Number);
+  const dt = new Date(y, m - 1, day);
+  const dow = (dt.getDay() + 6) % 7; // 月=0 … 日=6
+  dt.setDate(dt.getDate() - dow);
+  dt.setHours(0, 0, 0, 0);
+  return dt;
+}
+// 週見出しラベル（今週/先週/N週前 ＋ 範囲）
+function weekLabel(mondayKey: string): string {
+  const [y, m, d] = mondayKey.split("-").map(Number);
+  const mon = new Date(y, m - 1, d);
+  const sun = new Date(y, m - 1, d + 6);
+  const thisMon = weekMonday(todayStr());
+  const diff = Math.round((thisMon.getTime() - mon.getTime()) / (7 * 86400000));
+  const range = `${mon.getMonth() + 1}/${mon.getDate()}〜${sun.getMonth() + 1}/${sun.getDate()}`;
+  let prefix = "";
+  if (diff === 0) prefix = "今週 ";
+  else if (diff === 1) prefix = "先週 ";
+  else if (diff > 1) prefix = `${diff}週前 `;
+  else if (diff < 0) prefix = "来週 ";
+  return prefix + range;
 }
 
 export default function ActionsPage() {
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hideDone, setHideDone] = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
 
   // 追加フォーム
   const [addDate, setAddDate] = useState(todayStr());
@@ -73,22 +101,21 @@ export default function ActionsPage() {
   }, []);
 
   async function toggleDone(it: Item) {
-    // 楽観更新
     setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, done: !x.done } : x)));
     const res = await fetch("/api/actions", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: it.id, done: !it.done }),
     });
-    if (!res.ok) load(); // 失敗したらサーバ状態に戻す
+    if (!res.ok) load();
   }
 
   async function saveEdit() {
     if (!editId) return;
     const text = editText.trim();
     if (!text) return;
-    setItems((prev) => prev.map((x) => (x.id === editId ? { ...x, content: text } : x)));
     const id = editId;
+    setItems((prev) => prev.map((x) => (x.id === id ? { ...x, content: text } : x)));
     setEditId(null);
     const res = await fetch("/api/actions", {
       method: "PATCH",
@@ -102,6 +129,27 @@ export default function ActionsPage() {
     setItems((prev) => prev.filter((x) => x.id !== id));
     const res = await fetch(`/api/actions?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     if (!res.ok) load();
+  }
+
+  async function addItem() {
+    const text = addText.trim();
+    if (!text || adding) return;
+    setAdding(true);
+    try {
+      const res = await fetch("/api/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entry_date: addDate, kind: addKind, content: text }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "追加に失敗しました");
+      setItems((prev) => [data.item, ...prev]);
+      setAddText("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "追加に失敗しました");
+    } finally {
+      setAdding(false);
+    }
   }
 
   async function syncDiary() {
@@ -129,39 +177,114 @@ export default function ActionsPage() {
     }
   }
 
-  async function addItem() {
-    const text = addText.trim();
-    if (!text || adding) return;
-    setAdding(true);
-    try {
-      const res = await fetch("/api/actions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entry_date: addDate, kind: addKind, content: text }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? "追加に失敗しました");
-      setItems((prev) => [data.item, ...prev]);
-      setAddText("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "追加に失敗しました");
-    } finally {
-      setAdding(false);
+  // 未完＝週単位でグルーピング（新しい週が上）。週内は日付降順→種別。
+  const activeWeeks = useMemo(() => {
+    const active = items.filter((x) => !x.done);
+    const byWeek = new Map<string, Item[]>();
+    for (const it of active) {
+      const wk = keyOf(weekMonday(it.entry_date));
+      if (!byWeek.has(wk)) byWeek.set(wk, []);
+      byWeek.get(wk)!.push(it);
     }
+    for (const arr of byWeek.values()) {
+      arr.sort((a, b) =>
+        a.entry_date !== b.entry_date
+          ? a.entry_date < b.entry_date
+            ? 1
+            : -1
+          : a.kind < b.kind
+            ? -1
+            : a.kind > b.kind
+              ? 1
+              : 0
+      );
+    }
+    return Array.from(byWeek.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [items]);
+
+  const doneItems = useMemo(
+    () => items.filter((x) => x.done).sort((a, b) => (a.entry_date < b.entry_date ? 1 : -1)),
+    [items]
+  );
+  const remaining = items.length - doneItems.length;
+
+  function renderItem(it: Item) {
+    const meta = KIND_META[it.kind];
+    const editing = editId === it.id;
+    return (
+      <div
+        key={it.id}
+        className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm"
+      >
+        <button
+          type="button"
+          onClick={() => toggleDone(it)}
+          aria-label={it.done ? "未完に戻す" : "完了にする"}
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition ${
+            it.done
+              ? "border-emerald-600 bg-emerald-600 text-white"
+              : "border-gray-300 text-transparent active:border-emerald-400"
+          }`}
+        >
+          ✓
+        </button>
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${meta.klass}`}>
+              {meta.icon} {meta.label}
+            </span>
+            <span className="text-[11px] text-gray-400">{fmtDate(it.entry_date)}</span>
+          </div>
+          {editing ? (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={editText}
+                autoFocus
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveEdit();
+                  if (e.key === "Escape") setEditId(null);
+                }}
+                className="min-w-0 flex-1 rounded-lg border border-emerald-400 px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                onClick={saveEdit}
+                className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1 text-sm font-medium text-white"
+              >
+                保存
+              </button>
+            </div>
+          ) : (
+            <p
+              onClick={() => {
+                setEditId(it.id);
+                setEditText(it.content);
+              }}
+              className={`cursor-text text-sm leading-relaxed ${
+                it.done ? "text-gray-400 line-through" : "text-gray-800"
+              }`}
+            >
+              {it.content}
+            </p>
+          )}
+        </div>
+
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => remove(it.id)}
+            aria-label="削除"
+            className="mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-gray-300 transition active:bg-gray-100 active:text-rose-500"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    );
   }
-
-  // 日付でグルーピング（新しい順）
-  const groups = useMemo(() => {
-    const shown = hideDone ? items.filter((x) => !x.done) : items;
-    const byDate = new Map<string, Item[]>();
-    for (const it of shown) {
-      if (!byDate.has(it.entry_date)) byDate.set(it.entry_date, []);
-      byDate.get(it.entry_date)!.push(it);
-    }
-    return Array.from(byDate.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
-  }, [items, hideDone]);
-
-  const remaining = items.filter((x) => !x.done).length;
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-20 pt-[max(1.5rem,env(safe-area-inset-top))]">
@@ -187,12 +310,10 @@ export default function ActionsPage() {
           </button>
         </div>
         <p className="mt-1 text-sm text-gray-500">
-          一行日記の「やってみよう」「本日のポイント」を積み上げ。チェックで消し込み、あとから編集も。
+          「やってみよう」「本日のポイント」を週単位で積み上げ。チェックすると「済み」へ移動します。
         </p>
         {notice && (
-          <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-            {notice}
-          </p>
+          <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>
         )}
       </header>
 
@@ -242,117 +363,51 @@ export default function ActionsPage() {
         </div>
       </section>
 
-      {/* フィルタ・件数 */}
-      <div className="mb-3 flex items-center justify-between px-1">
-        <span className="text-sm text-gray-500">
-          未完 <b className="text-gray-800">{remaining}</b> 件
-        </span>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-500">
-          <input
-            type="checkbox"
-            checked={hideDone}
-            onChange={(e) => setHideDone(e.target.checked)}
-            className="h-4 w-4 accent-emerald-600"
-          />
-          完了を隠す
-        </label>
+      <div className="mb-3 px-1 text-sm text-gray-500">
+        未完 <b className="text-gray-800">{remaining}</b> 件 ・ 済み{" "}
+        <b className="text-gray-800">{doneItems.length}</b> 件
       </div>
 
       {loading && <p className="py-10 text-center text-sm text-gray-400">読み込み中…</p>}
-      {error && (
-        <p className="rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>
-      )}
-      {!loading && !error && groups.length === 0 && (
+      {error && <p className="rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
+      {!loading && !error && activeWeeks.length === 0 && (
         <p className="py-10 text-center text-sm text-gray-400">
-          まだありません。上のフォームから追加できます。
+          未完はありません。上のフォームから追加、または「日記から取込」できます。
         </p>
       )}
 
+      {/* 未完：週単位 */}
       <div className="space-y-6">
-        {groups.map(([date, its]) => (
-          <section key={date}>
-            <h2 className="mb-2 px-1 text-sm font-bold text-gray-700">{fmtDate(date)}</h2>
-            <div className="space-y-2">
-              {its.map((it) => {
-                const meta = KIND_META[it.kind];
-                const editing = editId === it.id;
-                return (
-                  <div
-                    key={it.id}
-                    className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => toggleDone(it)}
-                      aria-label={it.done ? "未完に戻す" : "完了にする"}
-                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition ${
-                        it.done
-                          ? "border-emerald-600 bg-emerald-600 text-white"
-                          : "border-gray-300 text-transparent active:border-emerald-400"
-                      }`}
-                    >
-                      ✓
-                    </button>
-
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className={`mb-1 inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold ${meta.klass}`}
-                      >
-                        {meta.icon} {meta.label}
-                      </span>
-                      {editing ? (
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={editText}
-                            autoFocus
-                            onChange={(e) => setEditText(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") saveEdit();
-                              if (e.key === "Escape") setEditId(null);
-                            }}
-                            className="min-w-0 flex-1 rounded-lg border border-emerald-400 px-2 py-1 text-sm"
-                          />
-                          <button
-                            type="button"
-                            onClick={saveEdit}
-                            className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1 text-sm font-medium text-white"
-                          >
-                            保存
-                          </button>
-                        </div>
-                      ) : (
-                        <p
-                          onClick={() => {
-                            setEditId(it.id);
-                            setEditText(it.content);
-                          }}
-                          className={`cursor-text text-sm leading-relaxed ${
-                            it.done ? "text-gray-400 line-through" : "text-gray-800"
-                          }`}
-                        >
-                          {it.content}
-                        </p>
-                      )}
-                    </div>
-
-                    {!editing && (
-                      <button
-                        type="button"
-                        onClick={() => remove(it.id)}
-                        aria-label="削除"
-                        className="mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-gray-300 transition active:bg-gray-100 active:text-rose-500"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+        {activeWeeks.map(([wk, its]) => (
+          <section key={wk}>
+            <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
+              {weekLabel(wk)}
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                {its.length}
+              </span>
+            </h2>
+            <div className="space-y-2">{its.map(renderItem)}</div>
           </section>
         ))}
       </div>
+
+      {/* 済み一覧（折りたたみ） */}
+      {doneItems.length > 0 && (
+        <section className="mt-8">
+          <button
+            type="button"
+            onClick={() => setDoneOpen((v) => !v)}
+            className="flex w-full items-center gap-2 rounded-lg px-1 py-2 text-sm font-bold text-gray-500 transition active:bg-gray-50"
+          >
+            <span>{doneOpen ? "▼" : "▶"}</span>
+            ✓ 済み
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+              {doneItems.length}
+            </span>
+          </button>
+          {doneOpen && <div className="mt-2 space-y-2 opacity-80">{doneItems.map(renderItem)}</div>}
+        </section>
+      )}
     </main>
   );
 }
