@@ -70,6 +70,13 @@ const FEATURES: Feature[] = [
     desc: "各セッションで何をどこまで進めたかを日付ごとに記録・一覧",
     accent: "bg-sky-100 text-sky-700",
   },
+  {
+    href: "/health",
+    icon: "🩺",
+    title: "健康推移",
+    desc: "体重・体脂肪率・歩数・摂取カロリー・歩行の質の日次推移を確認",
+    accent: "bg-lime-100 text-lime-700",
+  },
 ];
 
 export default function Home() {
