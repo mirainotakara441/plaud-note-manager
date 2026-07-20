@@ -71,11 +71,42 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ item: rows[0] });
 }
 
-// チェック(done)の切替、または内容の編集
+// チェック(done)の切替、または内容の編集（1件）。
+// { ids: string[], done: boolean } が来た場合は複数件の一括更新。
 export async function PATCH(req: NextRequest) {
   const c = creds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
   const body = await req.json().catch(() => null);
+
+  // 一括更新: { ids: string[], done: boolean }
+  if (Array.isArray(body?.ids)) {
+    const ids: string[] = body.ids.filter((x: unknown): x is string => typeof x === "string" && x.length > 0);
+    if (ids.length === 0) return NextResponse.json({ error: "idsが必要です" }, { status: 400 });
+    if (typeof body.done !== "boolean") {
+      return NextResponse.json({ error: "doneが必要です" }, { status: 400 });
+    }
+
+    const patch: Record<string, unknown> = {
+      done: body.done,
+      done_at: body.done ? new Date().toISOString() : null,
+      updated_at: new Date().toISOString(),
+    };
+
+    const idList = ids.map((id) => encodeURIComponent(id)).join(",");
+    const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=in.(${idList})`, {
+      method: "PATCH",
+      headers: headers(c.anon, "return=representation"),
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      return NextResponse.json({ error: `一括更新失敗 ${res.status}: ${t}` }, { status: 502 });
+    }
+    const rows = await res.json();
+    return NextResponse.json({ ok: true, count: Array.isArray(rows) ? rows.length : 0 });
+  }
+
+  // 単体更新: { id, done?, content? }
   const id: string | undefined = body?.id;
   if (!id) return NextResponse.json({ error: "idが必要です" }, { status: 400 });
 

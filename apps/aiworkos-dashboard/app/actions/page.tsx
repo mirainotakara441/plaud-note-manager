@@ -83,6 +83,9 @@ export default function ActionsPage() {
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // 一括完了
+  const [bulkBusy, setBulkBusy] = useState(false);
+
   async function load() {
     setLoading(true);
     setError(null);
@@ -124,6 +127,41 @@ export default function ActionsPage() {
       body: JSON.stringify({ id, content: text }),
     });
     if (!res.ok) load();
+  }
+
+  // 複数件をまとめて完了にする（楽観的更新→PATCH一括、失敗時はload()でロールバック）
+  async function completeMany(ids: string[]) {
+    if (ids.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    const idSet = new Set(ids);
+    setItems((prev) => prev.map((x) => (idSet.has(x.id) ? { ...x, done: true } : x)));
+    try {
+      const res = await fetch("/api/actions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, done: true }),
+      });
+      if (!res.ok) throw new Error("一括更新に失敗しました");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "一括更新に失敗しました");
+      await load();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function completeAll() {
+    const ids = items.filter((x) => !x.done).map((x) => x.id);
+    if (ids.length === 0) return;
+    if (!window.confirm(`未完${ids.length}件をすべて完了にします。よろしいですか？`)) return;
+    completeMany(ids);
+  }
+
+  function completeWeek(its: Item[]) {
+    const ids = its.map((x) => x.id);
+    if (ids.length === 0) return;
+    if (!window.confirm(`この週の未完${ids.length}件を完了にします。よろしいですか？`)) return;
+    completeMany(ids);
   }
 
   async function remove(id: string) {
@@ -301,14 +339,26 @@ export default function ActionsPage() {
       <header className="mb-5">
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">日々のToDo</h1>
-          <button
-            type="button"
-            onClick={syncDiary}
-            disabled={syncing}
-            className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition active:bg-emerald-100 disabled:opacity-50"
-          >
-            {syncing ? "取込中…" : "📓 日記から取込"}
-          </button>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              onClick={syncDiary}
+              disabled={syncing}
+              className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition active:bg-emerald-100 disabled:opacity-50"
+            >
+              {syncing ? "取込中…" : "📓 日記から取込"}
+            </button>
+            {remaining > 0 && (
+              <button
+                type="button"
+                onClick={completeAll}
+                disabled={bulkBusy}
+                className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-600 transition active:bg-gray-100 disabled:opacity-50"
+              >
+                {bulkBusy ? "処理中…" : `✓ 未完${remaining}件をすべて完了に`}
+              </button>
+            )}
+          </div>
         </div>
         <p className="mt-1 text-sm text-gray-500">
           「やってみよう」「本日のポイント」を週単位で積み上げ。チェックすると「済み」へ移動します。
@@ -388,6 +438,14 @@ export default function ActionsPage() {
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
                 {its.length}
               </span>
+              <button
+                type="button"
+                onClick={() => completeWeek(its)}
+                disabled={bulkBusy}
+                className="ml-auto shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-400 transition active:bg-gray-100 active:text-emerald-700 disabled:opacity-50"
+              >
+                この週をすべて完了
+              </button>
             </h2>
             <div className="space-y-2">{its.map(renderItem)}</div>
           </section>
