@@ -452,20 +452,14 @@ ${PART_INSTRUCTION[kind]}
 
   const client = new Anthropic({ apiKey: anthropicKey });
 
-  // proposal は8節あり重い。adaptive だと thinking + 出力で Vercel 60秒を超えて
-  // タイムアウト（画面には「通信エラー」と出る）ことがあるため、思考予算を絞って時間を抑える。
-  // 各節を3〜5文に縛っている（PART_INSTRUCTION/スキーマ）ので、これで品質は保ちつつ間に合う。
-  const thinking =
-    kind === "proposal"
-      ? ({ type: "enabled", budget_tokens: 3000 } as const)
-      : ({ type: "adaptive" } as const);
-
   try {
     const message = await client.messages.create({
       model: MODEL,
       // 1種類だけ作るので 8000 で足りる。thinking 込みで60秒に収める。
+      // ※ thinking は adaptive を使う。enabled(budget指定) は構造化出力(json_schema)と
+      //   組み合わせるとエラーになったため使わない。proposal の時間対策は各節の簡潔化で行う。
       max_tokens: 8000,
-      thinking,
+      thinking: { type: "adaptive" },
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ],
@@ -476,18 +470,30 @@ ${PART_INSTRUCTION[kind]}
     if (message.stop_reason === "refusal") {
       return NextResponse.json({ error: "生成が拒否されました" }, { status: 502 });
     }
+    if (message.stop_reason === "max_tokens") {
+      return NextResponse.json(
+        { error: `${PART_LABEL[kind]}が長すぎて途中で切れました。もう一度お試しください` },
+        { status: 502 }
+      );
+    }
     const tb = message.content.find(
       (b): b is Anthropic.TextBlock => b.type === "text"
     );
     if (!tb) {
-      return NextResponse.json({ error: "武器の生成に失敗しました" }, { status: 502 });
+      return NextResponse.json(
+        { error: `${PART_LABEL[kind]}の生成結果が空でした（stop=${message.stop_reason}）` },
+        { status: 502 }
+      );
     }
 
     let part: Partial<Weapon>;
     try {
       part = JSON.parse(tb.text) as Partial<Weapon>;
     } catch {
-      return NextResponse.json({ error: "武器の生成に失敗しました" }, { status: 502 });
+      return NextResponse.json(
+        { error: `${PART_LABEL[kind]}の結果を解釈できませんでした` },
+        { status: 502 }
+      );
     }
 
     // 作った武器を成果物として記憶へ戻す。次に /agent や /refine を開いたとき土台に入る。
@@ -528,8 +534,17 @@ ${PART_INSTRUCTION[kind]}
       return NextResponse.json({ error: "ANTHROPIC_APIキーが無効です" }, { status: 500 });
     }
     console.error("武器生成エラー:", error);
+    // 原因特定のため、実際のエラー要旨を画面に返す（本人だけの認証内アプリ）。
+    const detail =
+      (error as { error?: { message?: string }; message?: string })?.error?.message ??
+      (error as { message?: string })?.message ??
+      String(error);
     return NextResponse.json(
-      { error: "武器の生成に失敗しました。しばらくしてから再度お試しください。" },
+      {
+        error: `${PART_LABEL[kind]}の生成に失敗しました${status ? `（${status}）` : ""}: ${String(
+          detail
+        ).slice(0, 300)}`,
+      },
       { status: 502 }
     );
   }
