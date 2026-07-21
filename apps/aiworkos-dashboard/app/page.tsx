@@ -71,6 +71,13 @@ const FEATURES: Feature[] = [
     accent: "bg-sky-100 text-sky-700",
   },
   {
+    href: "/weekly-report",
+    icon: "🗂️",
+    title: "週報ダッシュボード",
+    desc: "自治体・事業者・議員・委託企業の週次活動をカテゴリー別に一枚で確認",
+    accent: "bg-cyan-100 text-cyan-700",
+  },
+  {
     href: "/health",
     icon: "🩺",
     title: "健康推移",
