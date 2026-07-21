@@ -84,3 +84,59 @@ export async function GET(request: Request) {
 
   return NextResponse.json({ week_start: week, rows, available_weeks });
 }
+
+export async function PATCH(request: Request) {
+  const c = creds();
+  if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
+
+  let body: {
+    id?: unknown;
+    summary?: unknown;
+    insight?: unknown;
+    tactic?: unknown;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
+  }
+
+  const id = typeof body.id === "string" ? body.id : "";
+  if (!id) {
+    return NextResponse.json({ error: "idが必要です" }, { status: 400 });
+  }
+
+  const update: Record<string, string | null> = {};
+  if ("summary" in body && typeof body.summary === "string") {
+    update.summary = body.summary;
+  }
+  if ("insight" in body) {
+    update.insight = typeof body.insight === "string" ? body.insight : null;
+  }
+  if ("tactic" in body) {
+    update.tactic = typeof body.tactic === "string" ? body.tactic : null;
+  }
+
+  try {
+    const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${id}`, {
+      method: "PATCH",
+      headers: {
+        ...headers(c.anon),
+        Prefer: "return=representation",
+      },
+      body: JSON.stringify(update),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      return NextResponse.json(
+        { error: `更新失敗 ${res.status}`, detail: detail.slice(0, 200) },
+        { status: 502 }
+      );
+    }
+    const rows = await res.json();
+    return NextResponse.json({ row: rows?.[0] ?? null });
+  } catch {
+    return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
+  }
+}
