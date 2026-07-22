@@ -1,20 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { serviceCreds, restHeaders } from "@/lib/supabase";
 
 // ブラウザのプッシュ購読情報を登録・解除する。/actions の通知トグルから呼ばれる。
-// 保存先は Supabase push_subscriptions（RLS anon全許可）。endpoint がユニークキーなので
-// 同じ端末から二重に押しても増殖しない（upsert）。
+// 保存先は Supabase push_subscriptions。書き込みなので service role キーを使う
+// （2026-07-25 レビュー対応）。endpoint がユニークキーなので同じ端末から二重に
+// 押しても増殖しない（upsert）。
 
 export const dynamic = "force-dynamic";
 
-function creds() {
-  const url = process.env.SUPABASE_URL;
-  const anon = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anon) return null;
-  return { url, anon };
-}
-
 export async function POST(req: NextRequest) {
-  const c = creds();
+  const c = serviceCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
 
   const body = await req.json().catch(() => null);
@@ -27,12 +22,7 @@ export async function POST(req: NextRequest) {
 
   const res = await fetch(`${c.url}/rest/v1/push_subscriptions?on_conflict=endpoint`, {
     method: "POST",
-    headers: {
-      apikey: c.anon,
-      Authorization: `Bearer ${c.anon}`,
-      "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates,return=minimal",
-    },
+    headers: restHeaders(c.key, { Prefer: "resolution=merge-duplicates,return=minimal" }),
     body: JSON.stringify({ endpoint, p256dh, auth }),
   });
   if (!res.ok) {
@@ -42,7 +32,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const c = creds();
+  const c = serviceCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
 
   const body = await req.json().catch(() => null);
@@ -51,7 +41,7 @@ export async function DELETE(req: NextRequest) {
 
   await fetch(`${c.url}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(endpoint)}`, {
     method: "DELETE",
-    headers: { apikey: c.anon, Authorization: `Bearer ${c.anon}` },
+    headers: restHeaders(c.key),
   });
   return NextResponse.json({ ok: true });
 }

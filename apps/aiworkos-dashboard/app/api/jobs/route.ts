@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
 // 取込ジョブのキュー。フロントの EIGHT/PLAUD ボタンから起票(POST)し、一覧(GET)する。
 // 実行はワーカー(クラウドエージェント/Claude)が queued を拾って行い status を更新する（A2）。
@@ -15,9 +16,8 @@ function rest(supabaseUrl: string) {
 }
 
 export async function GET() {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
+  const c = anonCreds();
+  if (!c) {
     return NextResponse.json(
       { error: "サーバー設定エラー: Supabaseの環境変数が設定されていません" },
       { status: 500 }
@@ -25,9 +25,9 @@ export async function GET() {
   }
   try {
     const res = await fetch(
-      `${rest(supabaseUrl)}?select=id,kind,status,result,error,created_at,updated_at&order=created_at.desc&limit=20`,
+      `${rest(c.url)}?select=id,kind,status,result,error,created_at,updated_at&order=created_at.desc&limit=20`,
       {
-        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+        headers: restHeaders(c.key),
         cache: "no-store",
       }
     );
@@ -40,9 +40,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
+  const c = serviceCreds();
+  if (!c) {
     return NextResponse.json(
       { error: "サーバー設定エラー: Supabaseの環境変数が設定されていません" },
       { status: 500 }
@@ -67,14 +66,9 @@ export async function POST(req: NextRequest) {
     body.params && typeof body.params === "object" ? body.params : {};
 
   try {
-    const res = await fetch(rest(supabaseUrl), {
+    const res = await fetch(rest(c.url), {
       method: "POST",
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
-        "Content-Type": "application/json",
-        Prefer: "return=representation",
-      },
+      headers: restHeaders(c.key, { Prefer: "return=representation" }),
       body: JSON.stringify({ kind, params }),
       cache: "no-store",
     });

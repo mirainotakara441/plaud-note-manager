@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
 // ステークホルダー・マスタ。カテゴリー→具体名の2段階選択に使う。
 // 新しい名前が使われたら POST で追加され、次回から選択肢に出る（マスタが育つ）。
@@ -19,16 +20,15 @@ function rest(supabaseUrl: string) {
 }
 
 export async function GET() {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
+  const c = anonCreds();
+  if (!c) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
   try {
     const res = await fetch(
-      `${rest(supabaseUrl)}?select=category,name&order=name.asc&limit=500`,
+      `${rest(c.url)}?select=category,name&order=name.asc&limit=500`,
       {
-        headers: { apikey: anonKey, Authorization: `Bearer ${anonKey}` },
+        headers: restHeaders(c.key),
         cache: "no-store",
       }
     );
@@ -48,9 +48,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
+  const c = serviceCreds();
+  if (!c) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
 
@@ -69,14 +68,9 @@ export async function POST(req: NextRequest) {
 
   try {
     // 既にあれば無視（重複登録しない）
-    const res = await fetch(rest(supabaseUrl), {
+    const res = await fetch(rest(c.url), {
       method: "POST",
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${anonKey}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=ignore-duplicates",
-      },
+      headers: restHeaders(c.key, { Prefer: "resolution=ignore-duplicates" }),
       body: JSON.stringify({ category, name }),
       cache: "no-store",
     });

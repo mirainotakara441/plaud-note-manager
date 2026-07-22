@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import webpush from "web-push";
+import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
 // 毎朝、Vercel Cronから叩かれるエンドポイント。
 //   ①一行日記から「やってみよう/本日のポイント」を自動取込（/actionsの手動ボタンと同じRPC）
@@ -13,13 +14,6 @@ import webpush from "web-push";
 
 export const dynamic = "force-dynamic";
 
-function creds() {
-  const url = process.env.SUPABASE_URL;
-  const anon = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anon) return null;
-  return { url, anon };
-}
-
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) {
@@ -29,15 +23,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
   }
 
-  const c = creds();
-  if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
+  const anon = anonCreds();
+  const service = serviceCreds();
+  if (!anon || !service) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
 
-  // ①日記からの自動取込
+  // ①日記からの自動取込（RPCは書き込みを伴うので service role）
   let added = 0;
   try {
-    const res = await fetch(`${c.url}/rest/v1/rpc/import_diary_actions`, {
+    const res = await fetch(`${service.url}/rest/v1/rpc/import_diary_actions`, {
       method: "POST",
-      headers: { apikey: c.anon, Authorization: `Bearer ${c.anon}`, "Content-Type": "application/json" },
+      headers: restHeaders(service.key),
       body: JSON.stringify({ lookback_days: 30 }),
     });
     if (res.ok) {
@@ -48,12 +43,12 @@ export async function GET(req: NextRequest) {
     // 取込に失敗しても、通知（未完件数のお知らせ）は続行する
   }
 
-  // ②未完件数（HEADリクエスト＋Prefer:count=exactで、行本体を取らずに件数だけ得る）
+  // ②未完件数（HEADリクエスト＋Prefer:count=exactで、行本体を取らずに件数だけ得る。読み取りなのでanon）
   let remaining = 0;
   try {
-    const res = await fetch(`${c.url}/rest/v1/daily_actions?select=id&done=eq.false`, {
+    const res = await fetch(`${anon.url}/rest/v1/daily_actions?select=id&done=eq.false`, {
       method: "HEAD",
-      headers: { apikey: c.anon, Authorization: `Bearer ${c.anon}`, Prefer: "count=exact" },
+      headers: restHeaders(anon.key, { Prefer: "count=exact" }),
     });
     const range = res.headers.get("content-range"); // 例: "0-9/23"
     remaining = range ? Number(range.split("/")[1] ?? 0) : 0;
@@ -78,8 +73,8 @@ export async function GET(req: NextRequest) {
   } else {
     webpush.setVapidDetails("mailto:mirainotakara441@gmail.com", vapidPublic, vapidPrivate);
     try {
-      const subsRes = await fetch(`${c.url}/rest/v1/push_subscriptions?select=endpoint,p256dh,auth`, {
-        headers: { apikey: c.anon, Authorization: `Bearer ${c.anon}` },
+      const subsRes = await fetch(`${anon.url}/rest/v1/push_subscriptions?select=endpoint,p256dh,auth`, {
+        headers: restHeaders(anon.key),
       });
       const subs: { endpoint: string; p256dh: string; auth: string }[] = subsRes.ok
         ? await subsRes.json()
@@ -105,10 +100,10 @@ export async function GET(req: NextRequest) {
           console.error("push送信失敗", { endpoint: s.endpoint.slice(0, 60), status, body, msg });
           errors.push(`push失敗(${status ?? "?"}): ${body || msg || String(e)}`.slice(0, 200));
           if (status === 404 || status === 410) {
-            // 購読が端末側で失効している。掃除する。
+            // 購読が端末側で失効している。掃除する（削除は service role）。
             await fetch(
-              `${c.url}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(s.endpoint)}`,
-              { method: "DELETE", headers: { apikey: c.anon, Authorization: `Bearer ${c.anon}` } }
+              `${service.url}/rest/v1/push_subscriptions?endpoint=eq.${encodeURIComponent(s.endpoint)}`,
+              { method: "DELETE", headers: restHeaders(service.key) }
             );
             removed++;
           }

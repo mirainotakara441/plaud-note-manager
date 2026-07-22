@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { anonCreds, serviceCreds } from "@/lib/supabase";
 
 // 壁打ち（熟成ループ）。対象の登録内容を土台に Claude が深掘り質問 → 吉井さんが回答 →
 // 内容を熟成 → 成果物として記憶層へ保存し直す。会話は refine_sessions / refine_messages に残す。
@@ -190,22 +191,23 @@ async function loadMessages(
   return Array.isArray(rows) ? (rows as Msg[]) : [];
 }
 
+// 書き込み（refine_messages / refine_sessions）なので service role キーを使う。
 async function saveMessage(
   supabaseUrl: string,
-  anonKey: string,
+  serviceKey: string,
   sessionId: string,
   role: Msg["role"],
   content: string
 ): Promise<void> {
   await fetch(restUrl(supabaseUrl, "refine_messages"), {
     method: "POST",
-    headers: restHeaders(anonKey),
+    headers: restHeaders(serviceKey),
     body: JSON.stringify({ session_id: sessionId, role, content }),
     cache: "no-store",
   });
   await fetch(`${restUrl(supabaseUrl, "refine_sessions")}?id=eq.${sessionId}`, {
     method: "PATCH",
-    headers: restHeaders(anonKey),
+    headers: restHeaders(serviceKey),
     body: JSON.stringify({ updated_at: new Date().toISOString() }),
     cache: "no-store",
   });
@@ -259,11 +261,12 @@ ${themeInstruction}
 }
 
 export async function GET(req: NextRequest) {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
+  const anon = anonCreds();
+  if (!anon) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
+  const supabaseUrl = anon.url;
+  const anonKey = anon.key;
   const sessionId = req.nextUrl.searchParams.get("sessionId");
 
   if (sessionId) {
@@ -280,12 +283,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const anon = anonCreds();
+  const service = serviceCreds();
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  if (!supabaseUrl || !anonKey) {
+  if (!anon || !service) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
+  const supabaseUrl = anon.url;
+  const anonKey = anon.key;
+  const serviceKey = service.key;
   if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
     return NextResponse.json(
       { error: "ANTHROPIC_APIキーが未設定です" },
@@ -327,7 +333,7 @@ export async function POST(req: NextRequest) {
 
       const created = await fetch(restUrl(supabaseUrl, "refine_sessions"), {
         method: "POST",
-        headers: restHeaders(anonKey, { Prefer: "return=representation" }),
+        headers: restHeaders(serviceKey, { Prefer: "return=representation" }),
         body: JSON.stringify({ organization, category, theme }),
         cache: "no-store",
       });
@@ -339,7 +345,7 @@ export async function POST(req: NextRequest) {
 
       const context = await fetchContext(supabaseUrl, anonKey, organization);
       const reply = await askClaude(client, context, [], organization, theme);
-      await saveMessage(supabaseUrl, anonKey, session.id, "assistant", reply);
+      await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
 
       return NextResponse.json({
         sessionId: session.id,
@@ -368,11 +374,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
 
-      await saveMessage(supabaseUrl, anonKey, sessionId, "user", message);
+      await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       const context = await fetchContext(supabaseUrl, anonKey, organization);
       const reply = await askClaude(client, context, history, organization, theme);
-      await saveMessage(supabaseUrl, anonKey, sessionId, "assistant", reply);
+      await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
 
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });
     }
@@ -485,7 +491,7 @@ ${transcript}
 
       await fetch(`${restUrl(supabaseUrl, "refine_sessions")}?id=eq.${sessionId}`, {
         method: "PATCH",
-        headers: restHeaders(anonKey),
+        headers: restHeaders(serviceKey),
         body: JSON.stringify({ title: parsed.title }),
         cache: "no-store",
       });

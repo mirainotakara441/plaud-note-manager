@@ -1,38 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
+import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
 // 「日々のToDo」= 一行日記の やってみよう(action) / 本日のポイント(point) を
 // 日付ごとに積み上げるテーブル daily_actions のCRUD。
-// 既存ページと同じく anonキーで Supabase PostgREST を server 側から叩く
-// （RLSは anon 全許可ポリシー。合言葉認証の内側なので anonキーはブラウザに出ない）。
+// 読み取りは anonキー、書き込みは service role キーで Supabase PostgREST を叩く
+// （2026-07-25 レビュー対応：anonの書き込みポリシーは順次廃止するため）。
 
 export const dynamic = "force-dynamic";
 
-function creds() {
-  const url = process.env.SUPABASE_URL;
-  const anon = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anon) return null;
-  return { url, anon };
-}
-
-function headers(anon: string, prefer?: string): Record<string, string> {
-  const h: Record<string, string> = {
-    apikey: anon,
-    Authorization: `Bearer ${anon}`,
-    "Content-Type": "application/json",
-  };
-  if (prefer) h.Prefer = prefer;
-  return h;
+function headers(key: string, prefer?: string): Record<string, string> {
+  return restHeaders(key, prefer ? { Prefer: prefer } : undefined);
 }
 
 const TABLE = "daily_actions";
 
 // 一覧取得（新しい日付順 → 種別 → 並び順）
 export async function GET() {
-  const c = creds();
+  const c = anonCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
   const res = await fetch(
     `${c.url}/rest/v1/${TABLE}?select=*&order=entry_date.desc,kind.asc,position.asc,created_at.asc`,
-    { headers: headers(c.anon), cache: "no-store" }
+    { headers: headers(c.key), cache: "no-store" }
   );
   if (!res.ok) {
     return NextResponse.json({ error: `取得失敗 ${res.status}` }, { status: 502 });
@@ -43,7 +31,7 @@ export async function GET() {
 
 // 手動でToDoを1件追加
 export async function POST(req: NextRequest) {
-  const c = creds();
+  const c = serviceCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
   const body = await req.json().catch(() => null);
   const entry_date: string | undefined = body?.entry_date;
@@ -60,7 +48,7 @@ export async function POST(req: NextRequest) {
   }
   const res = await fetch(`${c.url}/rest/v1/${TABLE}`, {
     method: "POST",
-    headers: headers(c.anon, "return=representation"),
+    headers: headers(c.key, "return=representation"),
     body: JSON.stringify({ entry_date, kind, content, source: "manual" }),
   });
   if (!res.ok) {
@@ -74,7 +62,7 @@ export async function POST(req: NextRequest) {
 // チェック(done)の切替、または内容の編集（1件）。
 // { ids: string[], done: boolean } が来た場合は複数件の一括更新。
 export async function PATCH(req: NextRequest) {
-  const c = creds();
+  const c = serviceCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
   const body = await req.json().catch(() => null);
 
@@ -95,7 +83,7 @@ export async function PATCH(req: NextRequest) {
     const idList = ids.map((id) => encodeURIComponent(id)).join(",");
     const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=in.(${idList})`, {
       method: "PATCH",
-      headers: headers(c.anon, "return=representation"),
+      headers: headers(c.key, "return=representation"),
       body: JSON.stringify(patch),
     });
     if (!res.ok) {
@@ -123,7 +111,7 @@ export async function PATCH(req: NextRequest) {
 
   const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
-    headers: headers(c.anon, "return=representation"),
+    headers: headers(c.key, "return=representation"),
     body: JSON.stringify(patch),
   });
   if (!res.ok) {
@@ -136,13 +124,13 @@ export async function PATCH(req: NextRequest) {
 
 // 1件削除
 export async function DELETE(req: NextRequest) {
-  const c = creds();
+  const c = serviceCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "idが必要です" }, { status: 400 });
   const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",
-    headers: headers(c.anon),
+    headers: headers(c.key),
   });
   if (!res.ok) {
     return NextResponse.json({ error: `削除失敗 ${res.status}` }, { status: 502 });

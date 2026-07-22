@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
 // 提案書（資料集）のひな形（節構成）を編集するAPI。
 // テーブル weapon_proposal_sections を丸ごと入れ替える方式にする
@@ -8,29 +9,16 @@ export const dynamic = "force-dynamic";
 
 const TABLE = "weapon_proposal_sections";
 
-function creds() {
-  const url = process.env.SUPABASE_URL;
-  const anon = process.env.SUPABASE_ANON_KEY;
-  if (!url || !anon) return null;
-  return { url, anon };
-}
-
-function headers(anon: string, prefer?: string): Record<string, string> {
-  const h: Record<string, string> = {
-    apikey: anon,
-    Authorization: `Bearer ${anon}`,
-    "Content-Type": "application/json",
-  };
-  if (prefer) h.Prefer = prefer;
-  return h;
+function headers(key: string, prefer?: string): Record<string, string> {
+  return restHeaders(key, prefer ? { Prefer: prefer } : undefined);
 }
 
 export async function GET() {
-  const c = creds();
+  const c = anonCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
   const res = await fetch(
     `${c.url}/rest/v1/${TABLE}?select=id,section,guidance&order=position.asc`,
-    { headers: headers(c.anon), cache: "no-store" }
+    { headers: headers(c.key), cache: "no-store" }
   );
   if (!res.ok) {
     return NextResponse.json({ error: `取得失敗 ${res.status}` }, { status: 502 });
@@ -41,7 +29,7 @@ export async function GET() {
 
 // ひな形を丸ごと入れ替える。body: { sections: [{ section, guidance }, ...] }（この順序で保存）
 export async function PUT(req: NextRequest) {
-  const c = creds();
+  const c = serviceCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
   const body = await req.json().catch(() => null);
   const rawSections = Array.isArray(body?.sections) ? body.sections : null;
@@ -64,7 +52,7 @@ export async function PUT(req: NextRequest) {
   // 全削除してから、渡された順序で position を振り直して入れ直す（position は常に0以上）。
   const delRes = await fetch(`${c.url}/rest/v1/${TABLE}?position=gte.0`, {
     method: "DELETE",
-    headers: headers(c.anon),
+    headers: headers(c.key),
   });
   if (!delRes.ok) {
     return NextResponse.json({ error: `更新失敗（削除） ${delRes.status}` }, { status: 502 });
@@ -79,7 +67,7 @@ export async function PUT(req: NextRequest) {
   );
   const insRes = await fetch(`${c.url}/rest/v1/${TABLE}`, {
     method: "POST",
-    headers: headers(c.anon, "return=representation"),
+    headers: headers(c.key, "return=representation"),
     body: JSON.stringify(rows),
   });
   if (!insRes.ok) {

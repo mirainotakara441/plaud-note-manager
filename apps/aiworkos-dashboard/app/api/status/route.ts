@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { serviceCreds } from "@/lib/supabase";
 
 // 監視ダッシュボード用エンドポイント。
-// Supabase側は集計RPC(dashboard_stats)を anonキーで叩き、件数・最終時刻のみ受け取る。
+// Supabase側は集計RPC(dashboard_stats)を service role キーで叩き、件数・最終時刻のみ受け取る
+// （RPC呼び出しのため2026-07-25レビュー対応でservice roleに切替）。
 // Notion側は NOTION_TOKEN が設定されていれば各DBの「最新の更新」を読み、未設定なら休眠のまま返す。
 
 export const dynamic = "force-dynamic";
@@ -86,9 +88,8 @@ function extractNotionTitle(page: Record<string, unknown>): string {
 }
 
 export async function GET() {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) {
+  const c = serviceCreds();
+  if (!c) {
     return NextResponse.json(
       { ok: false, error: "サーバー設定エラー: Supabaseの環境変数が設定されていません" },
       { status: 500 }
@@ -97,11 +98,11 @@ export async function GET() {
 
   try {
     const [supaRes, notion] = await Promise.all([
-      fetch(`${supabaseUrl}/rest/v1/rpc/dashboard_stats`, {
+      fetch(`${c.url}/rest/v1/rpc/dashboard_stats`, {
         method: "POST",
         headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${anonKey}`,
+          apikey: c.key,
+          Authorization: `Bearer ${c.key}`,
           "Content-Type": "application/json",
         },
         body: "{}",
