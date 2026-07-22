@@ -78,6 +78,13 @@ const FEATURES: Feature[] = [
     accent: "bg-cyan-100 text-cyan-700",
   },
   {
+    href: "/organizations",
+    icon: "🧭",
+    title: "団体別タイムライン",
+    desc: "団体を選ぶと会議・週報・成果物を時系列で1画面に",
+    accent: "bg-fuchsia-100 text-fuchsia-700",
+  },
+  {
     href: "/health",
     icon: "🩺",
     title: "健康推移",
