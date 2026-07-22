@@ -16,6 +16,7 @@ type Row = {
   insight: string | null;
   tactic: string | null;
   created_at: string;
+  action_done: boolean | null;
 };
 
 type Draft = {
@@ -430,7 +431,19 @@ export default function WeeklyReportPage() {
                               )}
                               {r.tactic && (
                                 <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-800">
-                                  <span className="font-medium">次：</span>
+                                  <div className="mb-1 flex items-center gap-2">
+                                    <span className="font-medium">次：</span>
+                                    {r.action_done === true && (
+                                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                        ✅ 対応済み
+                                      </span>
+                                    )}
+                                    {r.action_done === false && (
+                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                        ⏳ 未対応
+                                      </span>
+                                    )}
+                                  </div>
                                   {r.tactic}
                                 </div>
                               )}

@@ -10,6 +10,14 @@ export const dynamic = "force-dynamic";
 
 const TABLE = "weekly_reports";
 
+type WeeklyReportRow = {
+  id: string;
+  tactic: string | null;
+  [key: string]: unknown;
+};
+
+type RowWithActionDone = WeeklyReportRow & { action_done: boolean | null };
+
 function headers(key: string): Record<string, string> {
   return restHeaders(key);
 }
@@ -68,11 +76,42 @@ export async function GET(request: Request) {
     );
   }
 
-  const rows = await rowsRes.json();
+  const rows: WeeklyReportRow[] = await rowsRes.json();
   const weeksRaw: { week_start: string }[] = await weeksRes.json();
   const available_weeks = Array.from(new Set(weeksRaw.map((w) => w.week_start)));
 
-  return NextResponse.json({ week_start: week, rows, available_weeks });
+  const actionDoneById = await fetchActionDoneMap(c, rows);
+  const rowsWithActionDone: RowWithActionDone[] = rows.map((r) => ({
+    ...r,
+    action_done: r.tactic ? actionDoneById.get(r.id) ?? null : null,
+  }));
+
+  return NextResponse.json({ week_start: week, rows: rowsWithActionDone, available_weeks });
+}
+
+// tactic付きの週報行に対応する daily_actions（source='weekly_report'）の done状態を
+// まとめて1回のリクエストで取得し、weekly_reports.id -> done のMapを返す。
+// daily_actions はanonにSELECT権限がある（daily_actions anon read ポリシー、2026-07-22追加）。
+async function fetchActionDoneMap(
+  c: { url: string; key: string },
+  rows: WeeklyReportRow[]
+): Promise<Map<string, boolean>> {
+  const ids = rows.filter((r) => r.tactic).map((r) => r.id);
+  if (ids.length === 0) return new Map();
+
+  const idList = ids.map((id) => encodeURIComponent(id)).join(",");
+  const res = await fetch(
+    `${c.url}/rest/v1/daily_actions?select=source_id,done&source=eq.weekly_report&source_id=in.(${idList})`,
+    { headers: headers(c.key), cache: "no-store" }
+  );
+  if (!res.ok) return new Map();
+
+  const actions: { source_id: string; done: boolean }[] = await res.json();
+  const map = new Map<string, boolean>();
+  for (const a of actions) {
+    map.set(a.source_id, a.done);
+  }
+  return map;
 }
 
 export async function PATCH(request: Request) {
