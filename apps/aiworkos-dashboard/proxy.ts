@@ -10,8 +10,9 @@ import { NextRequest, NextResponse } from "next/server";
 //   - /api/login で合言葉が一致したら、合言葉の SHA-256 を httpOnly cookie に1年保存
 //   - cookie には合言葉そのものではなくハッシュを入れる（漏れても原文が割れない）
 //
-// ⚠️ フェイルオープン設計: APP_PASSPHRASE が未設定なら素通しにする。
-//   デプロイ直後に締め出される事故を防ぐため。環境変数を入れた瞬間から施錠される。
+// フェイルクローズ設計: APP_PASSPHRASE が未設定/空なら全ページ・全APIを閉じる
+//   （2026-07-25 アーキテクチャレビュー対応。以前はフェイルオープンで素通しにしていたが、
+//   設定漏れ・削除事故に気づけないまま無防備状態が続くリスクがあったため閉じる方に倒す）。
 //   （Mac側ワーカーや取込スクリプトは Supabase 直通なので、この認証の影響を受けない）
 
 const COOKIE_NAME = "aiworkos_auth";
@@ -37,15 +38,29 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 export async function proxy(request: NextRequest) {
-  const passphrase = process.env.APP_PASSPHRASE;
-  if (!passphrase || passphrase.trim() === "") {
-    // フェイルオープン（上記コメント参照）
+  const { pathname } = request.nextUrl;
+
+  // PUBLIC_PATHS は合言葉未設定時でも現状維持で通す。
+  // /api/cron/daily-todo はルート内で CRON_SECRET を別途照合しているため、
+  // ここを通しても無認証では実行できない。
+  if (PUBLIC_PATHS.some((re) => re.test(pathname))) {
     return NextResponse.next();
   }
 
-  const { pathname } = request.nextUrl;
-  if (PUBLIC_PATHS.some((re) => re.test(pathname))) {
-    return NextResponse.next();
+  const passphrase = process.env.APP_PASSPHRASE;
+  if (!passphrase || passphrase.trim() === "") {
+    // フェイルクローズ（上記コメント参照）。/login へ飛ばしても合言葉検証ができず
+    // 意味がないため、設定エラーであることが分かる応答をそのまま返す。
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { error: "サーバー設定エラー: 認証が構成されていません" },
+        { status: 503 }
+      );
+    }
+    return new NextResponse("サーバー設定エラー: 認証が構成されていません", {
+      status: 500,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
 
   const cookie = request.cookies.get(COOKIE_NAME)?.value;
