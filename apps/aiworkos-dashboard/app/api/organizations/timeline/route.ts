@@ -156,16 +156,43 @@ async function fetchRelatedDiaries(
   }
 }
 
+// 会議も成果物と同様にチャンク分割されている（1会議が複数のメモに分かれる）ため、
+// タイトル（チャンク番号除去）＋日付でグルーピングし、タイムライン上は1会議＝1件にまとめる。
+// 代表チャンクは位置（n/全n）の n が最小のもの（概要・参加者が入っていることが多い）。
 function meetingsToEntries(meetings: Meeting[]): TimelineEntry[] {
-  return meetings
-    .filter((m) => !!m.event_date)
-    .map((m) => ({
-      id: `meeting:${m.id}`,
-      kind: "会議" as const,
-      date: m.event_date as string,
-      title: m.title,
-      summary: m.content,
-    }));
+  const withDate = meetings.filter((m) => !!m.event_date);
+  const groups = new Map<string, Meeting[]>();
+  for (const m of withDate) {
+    const key = `${stripChunkSuffix(m.title)}__${m.event_date}`;
+    const arr = groups.get(key) ?? [];
+    arr.push(m);
+    groups.set(key, arr);
+  }
+
+  const entries: TimelineEntry[] = [];
+  for (const group of groups.values()) {
+    const withPos = group.map((m) => {
+      const meta = isRecord(m.metadata) ? m.metadata : null;
+      const posStr = meta ? asString(meta["位置"]) : null;
+      const n = posStr ? Number(posStr.split("/")[0]) : 1;
+      return { meeting: m, n: Number.isFinite(n) ? n : 1 };
+    });
+    withPos.sort((a, b) => a.n - b.n);
+    const rep = withPos[0].meeting;
+    const title = stripChunkSuffix(rep.title);
+    const summary =
+      withPos.length > 1
+        ? withPos.map((w) => w.meeting.content).join(" ")
+        : rep.content;
+    entries.push({
+      id: `meeting:${rep.id}`,
+      kind: "会議",
+      date: rep.event_date as string,
+      title,
+      summary,
+    });
+  }
+  return entries;
 }
 
 // 成果物はチャンク分割されているため、資料名（無ければタイトルからチャンク番号を
