@@ -49,15 +49,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "節を1つ以上入力してください" }, { status: 400 });
   }
 
-  // 全削除してから、渡された順序で position を振り直して入れ直す（position は常に0以上）。
-  const delRes = await fetch(`${c.url}/rest/v1/${TABLE}?position=gte.0`, {
-    method: "DELETE",
-    headers: headers(c.key),
-  });
-  if (!delRes.ok) {
-    return NextResponse.json({ error: `更新失敗（削除） ${delRes.status}` }, { status: 502 });
-  }
-
+  // 渡された順序で position を振り直す（position は常に0以上）。
   const rows = sections.map(
     (s: { section: string; guidance: string | null }, i: number) => ({
       position: i,
@@ -65,15 +57,27 @@ export async function PUT(req: NextRequest) {
       guidance: s.guidance,
     })
   );
-  const insRes = await fetch(`${c.url}/rest/v1/${TABLE}`, {
+
+  // DB関数 replace_weapon_template で削除→挿入を1トランザクションにまとめる
+  // （旧実装は個別にDELETE→INSERTしていたため、INSERT失敗時にひな形が消えるリスクがあった）。
+  const rpcRes = await fetch(`${c.url}/rest/v1/rpc/replace_weapon_template`, {
     method: "POST",
-    headers: headers(c.key, "return=representation"),
-    body: JSON.stringify(rows),
+    headers: headers(c.key),
+    body: JSON.stringify({ p_sections: rows }),
   });
-  if (!insRes.ok) {
-    const t = await insRes.text();
-    return NextResponse.json({ error: `更新失敗（保存） ${insRes.status}: ${t}` }, { status: 502 });
+  if (!rpcRes.ok) {
+    const t = await rpcRes.text();
+    return NextResponse.json({ error: `更新失敗 ${rpcRes.status}: ${t}` }, { status: 502 });
   }
-  const saved = await insRes.json();
+
+  // 保存後の内容を読み直して返す
+  const getRes = await fetch(
+    `${c.url}/rest/v1/${TABLE}?select=id,section,guidance&order=position.asc`,
+    { headers: headers(c.key), cache: "no-store" }
+  );
+  if (!getRes.ok) {
+    return NextResponse.json({ error: `保存後の取得に失敗 ${getRes.status}` }, { status: 502 });
+  }
+  const saved = await getRes.json();
   return NextResponse.json({ sections: saved });
 }
