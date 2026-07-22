@@ -16,20 +16,29 @@
 export type Creds = { url: string; key: string };
 
 function baseUrl(): string | null {
-  const url = process.env.SUPABASE_URL;
-  return url && url.trim() !== "" ? url : null;
+  const url = process.env.SUPABASE_URL?.trim();
+  return url && url !== "" ? url : null;
+}
+
+// Vercel/ダッシュボードUIでのコピペ時に末尾改行・空白が混入することがあり、
+// それを含んだ値を Authorization ヘッダーへ渡すと fetch() が
+// "Invalid character in header content" 相当の例外を投げて空の500応答になる
+// （2026-07-25 動作確認で実際に踏んだ不具合）。必ずtrimしてから使う。
+function cleanKey(raw: string | undefined): string | null {
+  const key = raw?.trim();
+  return key && key !== "" ? key : null;
 }
 
 export function anonCreds(): Creds | null {
   const url = baseUrl();
-  const key = process.env.SUPABASE_ANON_KEY;
+  const key = cleanKey(process.env.SUPABASE_ANON_KEY);
   if (!url || !key) return null;
   return { url, key };
 }
 
 export function serviceCreds(): Creds | null {
   const url = baseUrl();
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = cleanKey(process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (!url || !key) return null;
   return { url, key };
 }
