@@ -346,6 +346,12 @@ export default function HealthPage() {
       {!loading && !error && days.length === 0 && (
         <p className="py-10 text-center text-sm text-gray-400">データがありません。</p>
       )}
+
+      <div className="mt-8 text-center">
+        <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
+          ← ホーム
+        </Link>
+      </div>
     </main>
   );
 }

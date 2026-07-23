@@ -91,6 +91,12 @@ export default function WeaponTemplatePage() {
         >
           ← 武器を出す
         </Link>
+        <Link
+          href="/"
+          className="rounded-lg px-2 py-1 text-sm font-medium text-gray-500 transition active:bg-gray-100"
+        >
+          ← ホーム
+        </Link>
       </div>
 
       <header className="mb-5">
@@ -194,6 +200,12 @@ export default function WeaponTemplatePage() {
           </button>
         </>
       )}
+
+      <div className="mt-8 text-center">
+        <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
+          ← ホーム
+        </Link>
+      </div>
     </main>
   );
 }

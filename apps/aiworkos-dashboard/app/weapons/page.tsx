@@ -667,6 +667,12 @@ function WeaponsInner() {
           )}
         </section>
       )}
+
+      <div className="mt-8 text-center">
+        <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
+          ← ホーム
+        </Link>
+      </div>
     </main>
   );
 }

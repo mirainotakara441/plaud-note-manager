@@ -257,7 +257,13 @@ export default function NippoPage() {
         ))}
       </div>
 
-      <p className="mt-8 text-center text-xs leading-relaxed text-gray-400">
+      <div className="mt-8 text-center">
+        <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
+          ← ホーム
+        </Link>
+      </div>
+
+      <p className="mt-4 text-center text-xs leading-relaxed text-gray-400">
         集約・書き込みは Claude Code 側で実施（daily_work_log）。
         <br />
         このページは読み取り専用の閲覧ビューです。
