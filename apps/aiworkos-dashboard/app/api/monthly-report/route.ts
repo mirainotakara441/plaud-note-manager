@@ -374,10 +374,27 @@ async function generateDraft(
 // Notion MCPツールはこのエージェント実行環境専用でNext.js側からは使えないため、
 // Notion公式REST APIを直接叩く（status/route.ts のパターンを踏襲）。
 
-function notionToken(): string | null {
-  const token = process.env.NOTION_TOKEN;
-  if (!token || token.trim() === "" || token === "ntn_xxxxx") return null;
-  return token;
+// NOTION_TOKEN（Vercel環境変数）が未設定でも、健康ダッシュボード連携
+// （health-notion-sync）で動作確認済みの app_config.notion_health_sync_token を
+// フォールバックとして使う。新しい秘密情報を追加せずに済ませるため。
+async function notionToken(): Promise<string | null> {
+  const envToken = process.env.NOTION_TOKEN;
+  if (envToken && envToken.trim() !== "" && envToken !== "ntn_xxxxx") return envToken;
+
+  const c = serviceCreds();
+  if (!c) return null;
+  try {
+    const res = await fetch(
+      `${c.url}/rest/v1/app_config?select=value&key=eq.notion_health_sync_token`,
+      { headers: restHeaders(c.key), cache: "no-store" }
+    );
+    if (!res.ok) return null;
+    const rows: { value: string }[] = await res.json();
+    const token = rows[0]?.value;
+    return token && token.trim() !== "" ? token : null;
+  } catch {
+    return null;
+  }
 }
 
 function extractNotionPageId(url: string): string | null {
@@ -574,9 +591,9 @@ async function syncNotion(
   draft: Draft,
   existingUrl: string | null
 ): Promise<{ url: string | null; skipped?: string }> {
-  const token = notionToken();
+  const token = await notionToken();
   if (!token) {
-    return { url: existingUrl, skipped: "NOTION_TOKEN未設定のためNotion登録をスキップしました" };
+    return { url: existingUrl, skipped: "Notionトークンが未設定のためNotion登録をスキップしました" };
   }
 
   try {
