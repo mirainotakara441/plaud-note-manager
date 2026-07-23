@@ -91,6 +91,13 @@ const FEATURES: Feature[] = [
     desc: "体重・体脂肪率・歩数・摂取カロリー・歩行の質の日次推移を確認",
     accent: "bg-lime-100 text-lime-700",
   },
+  {
+    href: "/monthly-report",
+    icon: "🗓️",
+    title: "月報ドラフト自動生成",
+    desc: "暦月を選ぶと週報のKPI集計とAI月報ドラフトを生成し、サイト・Notionへ登録",
+    accent: "bg-orange-100 text-orange-700",
+  },
 ];
 
 export default function Home() {
