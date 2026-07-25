@@ -5,7 +5,13 @@ import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 // 毎朝、Vercel Cronから叩かれるエンドポイント。
 //   ①一行日記から「やってみよう/本日のポイント」を自動取込（/actionsの手動ボタンと同じRPC）
 //   ②未完のToDo件数を数える
-//   ③購読している端末へPush通知を送る（何も変化が無ければ通知しない＝無音）
+//   ③日記の途絶検知（memory_chunks(source_type=日記)のmax(event_date)が3日以上前なら通知に含める）
+//   ④購読している端末へPush通知を送る（何も変化が無ければ通知しない＝無音）
+//
+// ③は2026-07-26追加。/diary ページ＋断絶解消前は「Notion一行日記DB→Supabase」の
+// 転記が完全アドホックで、対象0件のまま①②が無言で終わり、断絶に何日も気づけなかった
+// （2026-07-20を最後に196件で止まっていたのに気づいたのは実測調査時）。
+// 未完ToDoが0件でも、日記が滞っている場合はそれ単体で通知する。
 //
 // Vercel Cronのリクエストには合言葉認証のcookieが無いため、proxy.tsでこのパスは
 // 認証をバイパスしている。代わりにここで CRON_SECRET を照合して保護する
@@ -13,6 +19,23 @@ import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 //   Authorization: Bearer $CRON_SECRET ヘッダーを付ける）。
 
 export const dynamic = "force-dynamic";
+
+const DIARY_STALE_THRESHOLD_DAYS = 3;
+
+// JST基準の「今日」を YYYY-MM-DD で返す（Vercel Cronの実行環境はUTCのため）。
+function jstTodayStr(): string {
+  const now = new Date();
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(0, 10);
+}
+
+// 日付文字列同士の差分日数（両方ともUTC正午基準で解釈し、タイムゾーンのずれで
+// 1日ぶれることを避ける）。
+function daysBetween(laterDateStr: string, earlierDateStr: string): number {
+  const later = new Date(`${laterDateStr}T00:00:00Z`).getTime();
+  const earlier = new Date(`${earlierDateStr}T00:00:00Z`).getTime();
+  return Math.round((later - earlier) / (24 * 60 * 60 * 1000));
+}
 
 export async function GET(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -58,12 +81,35 @@ export async function GET(req: NextRequest) {
     console.error("cron/daily-todo: 未完件数の取得失敗", err);
   }
 
-  // 新規取込も無く、未完も無ければ、静かに終わる（毎朝「0件です」を送って邪魔しない）
-  if (added === 0 && remaining === 0) {
-    return NextResponse.json({ added, remaining, sent: 0, removed: 0, skipped: true });
+  // ③日記の途絶検知（source_type=日記のmax(event_date)。書き込みではないが、
+  // 他の項目と同じくservice roleで統一する）
+  let diaryStaleDays: number | null = null;
+  try {
+    const res = await fetch(
+      `${service.url}/rest/v1/memory_chunks?select=event_date&source_type=eq.${encodeURIComponent(
+        "日記"
+      )}&event_date=not.is.null&order=event_date.desc&limit=1`,
+      { headers: restHeaders(service.key), cache: "no-store" }
+    );
+    if (res.ok) {
+      const rows: { event_date: string | null }[] = await res.json();
+      const latest = rows[0]?.event_date ?? null;
+      if (latest) {
+        diaryStaleDays = daysBetween(jstTodayStr(), latest);
+      }
+    }
+  } catch (err) {
+    console.error("cron/daily-todo: 日記の最終登録日取得失敗", err);
+  }
+  const diaryStale = diaryStaleDays !== null && diaryStaleDays >= DIARY_STALE_THRESHOLD_DAYS;
+
+  // 新規取込も無く、未完も無く、日記も滞っていなければ、静かに終わる
+  // （毎朝「0件です」を送って邪魔しない）
+  if (added === 0 && remaining === 0 && !diaryStale) {
+    return NextResponse.json({ added, remaining, sent: 0, removed: 0, skipped: true, diaryStaleDays });
   }
 
-  // ③Push送信
+  // ④Push送信
   const vapidPublic = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY;
   let sent = 0;
@@ -82,10 +128,17 @@ export async function GET(req: NextRequest) {
         ? await subsRes.json()
         : [];
       if (!subsRes.ok) errors.push(`購読取得失敗 HTTP ${subsRes.status}`);
-      const body =
-        added > 0
-          ? `日記から${added}件を取り込みました。未完は${remaining}件です`
-          : `未完のToDoが${remaining}件あります`;
+      let body: string;
+      if (added > 0) {
+        body = `日記から${added}件を取り込みました。未完は${remaining}件です`;
+      } else if (remaining > 0) {
+        body = `未完のToDoが${remaining}件あります`;
+      } else {
+        body = "今日は特にありません";
+      }
+      if (diaryStale) {
+        body += `。日記が${diaryStaleDays}日ぶん未登録です`;
+      }
       const payload = JSON.stringify({ title: "日々のToDo", body, url: "/actions" });
 
       for (const s of subs) {
@@ -117,5 +170,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ added, remaining, sent, removed, errors });
+  return NextResponse.json({ added, remaining, sent, removed, errors, diaryStaleDays });
 }
