@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookieValueFor, constantTimeEqual } from "@/lib/auth";
 
 // 合言葉認証（2026-07-18 CTOレビューの最重要指摘への対応）。
 // このアプリには個人の日記・実名の商談データ・課金を伴う生成APIが載っており、
@@ -7,8 +8,10 @@ import { NextRequest, NextResponse } from "next/server";
 // 仕組み:
 //   - 環境変数 APP_PASSPHRASE に合言葉を設定する（Vercel / .env.local）
 //   - 未認証のページアクセスは /login へリダイレクト、API は 401 を返す
-//   - /api/login で合言葉が一致したら、合言葉の SHA-256 を httpOnly cookie に1年保存
-//   - cookie には合言葉そのものではなくハッシュを入れる（漏れても原文が割れない）
+//   - /api/login で合言葉が一致したら、cookie値（lib/auth.ts の cookieValueFor。
+//     AUTH_COOKIE_SECRET設定時はHMAC-SHA256、未設定ならSHA-256）を httpOnly cookie に1年保存
+//   - cookie には合言葉そのものではなくハッシュ/HMACを入れる（漏れても原文が割れない）
+//   - cookie比較は constantTimeEqual（定数時間比較）で行う（タイミング攻撃対策）
 //
 // フェイルクローズ設計: APP_PASSPHRASE が未設定/空なら全ページ・全APIを閉じる
 //   （2026-07-25 アーキテクチャレビュー対応。以前はフェイルオープンで素通しにしていたが、
@@ -28,14 +31,6 @@ const PUBLIC_PATHS = [
   // ここは通すが、ルート側で CRON_SECRET を照合するので無認証では実行できない。
   /^\/api\/cron\/daily-todo$/,
 ];
-
-async function sha256Hex(text: string): Promise<string> {
-  const data = new TextEncoder().encode(text);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -63,9 +58,9 @@ export async function proxy(request: NextRequest) {
     });
   }
 
-  const cookie = request.cookies.get(COOKIE_NAME)?.value;
-  const expected = await sha256Hex(passphrase);
-  if (cookie === expected) {
+  const cookie = request.cookies.get(COOKIE_NAME)?.value ?? "";
+  const expected = await cookieValueFor(passphrase);
+  if (constantTimeEqual(cookie, expected)) {
     return NextResponse.next();
   }
 
