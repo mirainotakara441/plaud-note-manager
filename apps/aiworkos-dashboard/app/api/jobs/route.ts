@@ -34,7 +34,8 @@ export async function GET() {
     if (!res.ok) return NextResponse.json({ jobs: [] });
     const jobs = await res.json();
     return NextResponse.json({ jobs: Array.isArray(jobs) ? jobs : [] });
-  } catch {
+  } catch (err) {
+    console.error("GET /api/jobs: 取得失敗", err);
     return NextResponse.json({ jobs: [] });
   }
 }
@@ -51,7 +52,8 @@ export async function POST(req: NextRequest) {
   let body: { kind?: unknown; params?: unknown };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/jobs: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
@@ -81,7 +83,8 @@ export async function POST(req: NextRequest) {
     const rows = await res.json();
     const job = Array.isArray(rows) ? rows[0] : rows;
     return NextResponse.json({ job });
-  } catch {
+  } catch (err) {
+    console.error("POST /api/jobs: 通信エラー", err);
     return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
   }
 }

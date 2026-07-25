@@ -33,7 +33,8 @@ async function storeChunk(
     if (!res.ok) return false;
     const data = await res.json();
     return data?.status === "stored";
-  } catch {
+  } catch (err) {
+    console.error("storeChunk: store-memory呼び出し失敗", err);
     return false;
   }
 }
@@ -59,7 +60,8 @@ export async function POST(req: NextRequest) {
   };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/deliverables: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 

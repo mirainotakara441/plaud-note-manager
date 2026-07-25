@@ -39,8 +39,9 @@ export async function GET(req: NextRequest) {
       const n = await res.json();
       added = typeof n === "number" ? n : 0;
     }
-  } catch {
+  } catch (err) {
     // 取込に失敗しても、通知（未完件数のお知らせ）は続行する
+    console.error("cron/daily-todo: import_diary_actions失敗", err);
   }
 
   // ②未完件数（HEADリクエスト＋Prefer:count=exactで、行本体を取らずに件数だけ得る。読み取りなのでanon）
@@ -52,8 +53,9 @@ export async function GET(req: NextRequest) {
     });
     const range = res.headers.get("content-range"); // 例: "0-9/23"
     remaining = range ? Number(range.split("/")[1] ?? 0) : 0;
-  } catch {
+  } catch (err) {
     // 件数が取れなくても通知自体は試みる（0件表示にはしない＝下のガードで送信自体をスキップ）
+    console.error("cron/daily-todo: 未完件数の取得失敗", err);
   }
 
   // 新規取込も無く、未完も無ければ、静かに終わる（毎朝「0件です」を送って邪魔しない）

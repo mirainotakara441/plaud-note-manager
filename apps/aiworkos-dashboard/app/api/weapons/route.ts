@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { windowChunks } from "@/lib/chunks";
+import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 
 // 武器生成。/agent が出した打ち手のうち「これでいく」と決めたものを受け取り、
 // 現場で使える形（想定ストーリー・想定問答・スライド構成案）に落とす。
@@ -12,7 +14,6 @@ import Anthropic from "@anthropic-ai/sdk";
 export const maxDuration = 60;
 
 const MODEL = "claude-sonnet-5";
-const COMMON_ORG = "共通";
 
 type MemoResult = {
   id: string;
@@ -70,7 +71,8 @@ async function fetchProposalSections(
     if (!res.ok) return DEFAULT_PROPOSAL_SECTIONS;
     const rows = await res.json();
     return Array.isArray(rows) && rows.length > 0 ? rows : DEFAULT_PROPOSAL_SECTIONS;
-  } catch {
+  } catch (err) {
+    console.error("fetchProposalSections: weapon_proposal_sections取得失敗", err);
     return DEFAULT_PROPOSAL_SECTIONS;
   }
 }
@@ -243,27 +245,10 @@ async function searchMemory(
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data?.results) ? (data.results as MemoResult[]) : [];
-  } catch {
+  } catch (err) {
+    console.error("searchMemory: search-memory呼び出し失敗", err);
     return [];
   }
-}
-
-// 実績数値の「正」を1枚に持たせた記録。類似度の順位に頼ると取りこぼす
-// （通常のクエリでは共通資料120件中14位。ここは12件しか取らないので圏外に落ちる）。
-// 専用クエリで取ってプロンプト先頭に固定する。実体は source_id="metrics:共通:最新実績サマリ"。
-const METRICS_QUERY = "最新実績サマリ 自治体トライアル 参加事業者 人口カバー率 団体数";
-
-async function fetchLatestMetrics(
-  supabaseUrl: string,
-  anonKey: string
-): Promise<MemoResult | null> {
-  const rows = await searchMemory(supabaseUrl, anonKey, {
-    query: METRICS_QUERY,
-    source_type: "成果物",
-    organization: COMMON_ORG,
-    match_count: 5,
-  });
-  return rows.find((r) => (r.metadata?.["資料名"] as string) === "最新実績サマリ") ?? null;
 }
 
 async function fetchMeetings(
@@ -281,7 +266,8 @@ async function fetchMeetings(
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data?.meetings) ? (data.meetings as Meeting[]) : [];
-  } catch {
+  } catch (err) {
+    console.error("fetchMeetings: org-history呼び出し失敗", err);
     return [];
   }
 }
@@ -296,20 +282,7 @@ function formatDocs(docs: MemoResult[], empty: string): string {
 }
 
 // 武器を成果物として記憶へ戻す（壁打ちの熟成と同じ考え方。次の提案の土台になる）。
-// 埋め込み(gte-small)は日本語およそ500字で頭打ちになるため 400字に刻む。
-const CHUNK_SIZE = 400;
-const CHUNK_OVERLAP = 60;
-
-function windowChunks(text: string): string[] {
-  const body = text.trim();
-  if (!body) return [];
-  if (body.length <= CHUNK_SIZE) return [body];
-  const chunks: string[] = [];
-  for (let i = 0; i < body.length; i += CHUNK_SIZE - CHUNK_OVERLAP) {
-    chunks.push(body.slice(i, i + CHUNK_SIZE));
-  }
-  return chunks;
-}
+// 埋め込み(gte-small)は日本語およそ500字で頭打ちになるため 400字に刻む（lib/chunks.ts）。
 
 // weaponId は決定した施策から決まるため、同じ施策で作り直す・保存し直すと上書きされ、増殖しない。
 // 生成直後の保存(POSTハンドラ)と、あとからの修正保存(save/route.ts)の両方でこの式を使う。
@@ -407,7 +380,8 @@ export async function POST(req: NextRequest) {
   };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/weapons: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
@@ -454,7 +428,7 @@ export async function POST(req: NextRequest) {
       match_count: 12,
     }),
     fetchMeetings(supabaseUrl, anonKey, organization),
-    fetchLatestMetrics(supabaseUrl, anonKey),
+    fetchLatestMetrics<MemoResult>(supabaseUrl, anonKey),
     kind === "proposal" ? fetchProposalSections(supabaseUrl, anonKey) : Promise.resolve(null),
   ]);
 
@@ -536,7 +510,8 @@ ${instruction}
     let part: Partial<Weapon>;
     try {
       part = JSON.parse(tb.text) as Partial<Weapon>;
-    } catch {
+    } catch (err) {
+      console.error(`武器生成(${kind}): Claude出力のJSON解析失敗`, err);
       return NextResponse.json(
         { error: `${PART_LABEL[kind]}の結果を解釈できませんでした` },
         { status: 502 }

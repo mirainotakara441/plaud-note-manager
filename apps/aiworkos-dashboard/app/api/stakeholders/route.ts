@@ -42,7 +42,8 @@ export async function GET() {
       byCategory[r.category].push(r.name);
     }
     return NextResponse.json({ byCategory });
-  } catch {
+  } catch (err) {
+    console.error("GET /api/stakeholders: 取得失敗", err);
     return NextResponse.json({ byCategory: {} });
   }
 }
@@ -56,7 +57,8 @@ export async function POST(req: NextRequest) {
   let body: { category?: unknown; name?: unknown };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/stakeholders: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
@@ -78,7 +80,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "追加に失敗しました" }, { status: 502 });
     }
     return NextResponse.json({ added: true, category, name });
-  } catch {
+  } catch (err) {
+    console.error("POST /api/stakeholders: 通信エラー", err);
     return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
   }
 }

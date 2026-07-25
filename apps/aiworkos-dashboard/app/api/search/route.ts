@@ -22,7 +22,8 @@ export async function POST(req: NextRequest) {
   };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/search: リクエストJSON解析失敗", err);
     return NextResponse.json(
       { error: "リクエストの形式が不正です" },
       { status: 400 }

@@ -58,7 +58,8 @@ export async function POST(req: NextRequest) {
       partToText(kind, part, actions)
     );
     return NextResponse.json({ savedChunks, label: PART_LABEL[kind] });
-  } catch {
+  } catch (err) {
+    console.error("POST /api/weapons/save: savePart失敗", err);
     return NextResponse.json({ error: "記憶への保存に失敗しました" }, { status: 502 });
   }
 }

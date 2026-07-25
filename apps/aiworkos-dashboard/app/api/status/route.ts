@@ -66,7 +66,8 @@ async function fetchNotion() {
           last_edited: recent[0]?.last_edited ?? null,
           recent,
         };
-      } catch {
+      } catch (err) {
+        console.error(`GET /api/status: Notion DB(${db.key})取得失敗`, err);
         return { key: db.key, label: db.label, ok: false, error: "通信エラー" };
       }
     })

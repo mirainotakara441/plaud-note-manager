@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
+import { windowChunks } from "@/lib/chunks";
 
 // 壁打ち（熟成ループ）。対象の登録内容を土台に Claude が深掘り質問 → 吉井さんが回答 →
 // 内容を熟成 → 成果物として記憶層へ保存し直す。会話は refine_sessions / refine_messages に残す。
@@ -67,20 +68,6 @@ const SYNTHESIS_SCHEMA = {
 // 600字目以降は埋め込みに一切影響しなかった。store-memory は `title\n\ncontent` を1本の
 // 埋め込みにするため、タイトル分を差し引いて content は 400字/チャンクに刻む。
 // これを怠ると、熟成した内容の大半が検索に引っかからなくなる（保存はされるが引けない）。
-const CHUNK_SIZE = 400;
-const CHUNK_OVERLAP = 60;
-
-function windowChunks(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP): string[] {
-  const body = text.trim();
-  if (!body) return [];
-  if (body.length <= size) return [body];
-  const chunks: string[] = [];
-  for (let i = 0; i < body.length; i += size - overlap) {
-    chunks.push(body.slice(i, i + size));
-  }
-  return chunks;
-}
-
 function restUrl(supabaseUrl: string, table: string) {
   return `${supabaseUrl}/rest/v1/${table}`;
 }
@@ -125,8 +112,9 @@ async function fetchContext(
         );
       }
     }
-  } catch {
+  } catch (err) {
     // 土台が一部欠けても壁打ちは続行できる
+    console.error("fetchContext: 成果物検索失敗", err);
   }
 
   // 会議履歴（自治体など、会議がある対象のみ）
@@ -147,8 +135,9 @@ async function fetchContext(
         );
       }
     }
-  } catch {
+  } catch (err) {
     // 会議が無い対象（議員・事業者など）もあるため失敗は許容
+    console.error("fetchContext: org-history取得失敗", err);
   }
 
   // 関連メモ（日記・学び）
@@ -170,8 +159,9 @@ async function fetchContext(
         );
       }
     }
-  } catch {
+  } catch (err) {
     // 補強用
+    console.error("fetchContext: 関連メモ検索失敗", err);
   }
 
   return parts.length > 0 ? parts.join("\n\n") : "（この対象の登録内容はまだありません）";
@@ -309,7 +299,8 @@ export async function POST(req: NextRequest) {
   };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/refine: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 

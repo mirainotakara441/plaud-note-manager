@@ -126,7 +126,8 @@ export async function PATCH(request: Request) {
   };
   try {
     body = await request.json();
-  } catch {
+  } catch (err) {
+    console.error("PATCH /api/weekly-report: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
@@ -165,7 +166,8 @@ export async function PATCH(request: Request) {
     }
     const rows = await res.json();
     return NextResponse.json({ row: rows?.[0] ?? null });
-  } catch {
+  } catch (err) {
+    console.error("PATCH /api/weekly-report: 通信エラー", err);
     return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
   }
 }

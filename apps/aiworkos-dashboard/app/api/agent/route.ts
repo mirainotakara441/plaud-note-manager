@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 
 // thinking を有効化すると生成に時間がかかるため、Vercel の関数タイムアウトを引き上げる
 // （Hobby プランの上限。org-history/search-memory/Claude 生成を合算しても収まる想定）。
@@ -133,51 +134,16 @@ async function fetchRelatedMemos(
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data?.results) ? (data.results as MemoResult[]) : [];
-  } catch {
+  } catch (err) {
     // 補強用なので失敗しても致命的ではない
+    console.error("fetchRelatedMemos: search-memory呼び出し失敗", err);
     return [];
   }
 }
 
-// 特定団体に紐づかない横断資料（初回提案資料・セミナー資料・戦略など）を入れておく
-// 擬似団体名。どの団体の提案でも共通の土台として参照する。
-const COMMON_ORG = "共通";
-
-// 実績数値（自治体数・事業者数・人口カバー率）の「正」を1枚に持たせた記録。
-// 数値は事業の成長で増え続けるため、各資料には作成当時の値が残る。日付順では
-// 解決できない（古い数値を含む資料が新しい日付で登録されることがある）ので、
-// この1枚を常に読ませて正とする。
-//
-// 類似度の順位に頼ると取りこぼす（通常のクエリでは共通資料120件中14位で、
-// match_count を絞ると圏外に落ちる）。専用クエリで取ってプロンプト先頭に固定する。
-// 実体は memory_chunks の source_id="metrics:共通:最新実績サマリ"（更新はそこへ上書き）。
-// metadata.資料名 が "最新実績サマリ" のものを拾う。
-const METRICS_QUERY = "最新実績サマリ 自治体トライアル 参加事業者 人口カバー率 団体数";
-
-async function fetchLatestMetrics(
-  supabaseUrl: string,
-  anonKey: string
-): Promise<MemoResult | null> {
-  try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query: METRICS_QUERY,
-        source_type: "成果物",
-        organization: COMMON_ORG,
-        match_count: 5,
-      }),
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const rows: MemoResult[] = Array.isArray(data?.results) ? data.results : [];
-    return rows.find((r) => (r.metadata?.["資料名"] as string) === "最新実績サマリ") ?? null;
-  } catch {
-    return null;
-  }
-}
+// COMMON_ORG（特定団体に紐づかない横断資料の擬似団体名）・METRICS_QUERY・
+// fetchLatestMetrics（実績数値の「正」を1枚に持たせた記録の取得）は
+// /weapons と共通のため lib/metrics.ts に一本化（2026-07-25 P2対応）。
 
 // 過去成果物（source_type:成果物）を organization で絞って取得。提案のベースとして使う。
 // organization フィルタで RPC が対象団体の行のみを返す。
@@ -208,7 +174,8 @@ async function fetchDeliverables(
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data?.results) ? (data.results as MemoResult[]) : [];
-  } catch {
+  } catch (err) {
+    console.error("fetchDeliverables: search-memory呼び出し失敗", err);
     return [];
   }
 }
@@ -262,7 +229,8 @@ async function fetchProposalCache(
       };
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.error("fetchProposalCache: proposal-cache呼び出し失敗", err);
     return null;
   }
 }
@@ -290,8 +258,9 @@ async function saveProposalCache(
       body: JSON.stringify({ action: "set", ...payload }),
       cache: "no-store",
     });
-  } catch {
+  } catch (err) {
     // キャッシュ保存失敗は致命的でない
+    console.error("saveProposalCache: proposal-cache保存失敗", err);
   }
 }
 
@@ -480,7 +449,8 @@ async function generateProposal(
   let input: Partial<Proposal>;
   try {
     input = JSON.parse(textBlock.text) as Partial<Proposal>;
-  } catch {
+  } catch (err) {
+    console.error("提案生成: Claude出力のJSON解析失敗", err);
     throw new Error("invalid_json_output");
   }
 
@@ -518,7 +488,8 @@ export async function PUT(req: NextRequest) {
   let body: { organization?: unknown; proposal?: unknown };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("PUT /api/agent: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
@@ -547,7 +518,8 @@ export async function PUT(req: NextRequest) {
       );
     }
     return NextResponse.json({ saved: true, edited: true });
-  } catch {
+  } catch (err) {
+    console.error("PUT /api/agent: proposal-cache保存失敗", err);
     return NextResponse.json({ error: "手直しの保存に失敗しました" }, { status: 502 });
   }
 }
@@ -577,7 +549,8 @@ export async function POST(req: NextRequest) {
   let body: { organization?: unknown; force?: unknown };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/agent: リクエストJSON解析失敗", err);
     return NextResponse.json(
       { error: "リクエストの形式が不正です" },
       { status: 400 }
@@ -597,7 +570,8 @@ export async function POST(req: NextRequest) {
   let meetings: Meeting[];
   try {
     meetings = await fetchOrgHistory(supabaseUrl, anonKey, organization);
-  } catch {
+  } catch (err) {
+    console.error("POST /api/agent: 会議履歴取得失敗", err);
     return NextResponse.json(
       { error: "会議履歴の取得に失敗しました。しばらくしてから再度お試しください。" },
       { status: 502 }
@@ -613,7 +587,7 @@ export async function POST(req: NextRequest) {
     organization === COMMON_ORG
       ? Promise.resolve<MemoResult[]>([])
       : fetchDeliverables(supabaseUrl, anonKey, organization, COMMON_ORG, 20),
-    fetchLatestMetrics(supabaseUrl, anonKey),
+    fetchLatestMetrics<MemoResult>(supabaseUrl, anonKey),
   ]);
 
   // a-3. 永続キャッシュ確認。会議・成果物が変わっておらず force でなければ Claude を呼ばず即返す。
