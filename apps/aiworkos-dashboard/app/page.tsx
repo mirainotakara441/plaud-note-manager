@@ -105,18 +105,21 @@ const REVIEW_FEATURES: Feature[] = [
     accent: "bg-fuchsia-100 text-fuchsia-700",
   },
   {
-    href: "/health",
-    icon: "🩺",
-    title: "健康推移",
-    desc: "体重・体脂肪率・歩数・摂取カロリー・歩行の質の日次推移を確認",
-    accent: "bg-lime-100 text-lime-700",
-  },
-  {
     href: "/monthly-report",
     icon: "🗓️",
     title: "月報ドラフト自動生成",
     desc: "暦月を選ぶと週報のKPI集計とAI月報ドラフトを生成し、サイト・Notionへ登録",
     accent: "bg-orange-100 text-orange-700",
+  },
+];
+
+const LIFESTYLE_HEALTH_FEATURES: Feature[] = [
+  {
+    href: "/health",
+    icon: "🩺",
+    title: "健康推移",
+    desc: "体重・体脂肪率・歩数・摂取カロリー・歩行の質の日次推移を確認",
+    accent: "bg-lime-100 text-lime-700",
   },
 ];
 
@@ -261,6 +264,11 @@ export default function Home() {
         </p>
       </header>
 
+      <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
+      <FeatureGroup title="🌱 ライフスタイル・ヘルス" features={LIFESTYLE_HEALTH_FEATURES} />
+      <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
+      <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
+
       <section className="mb-6">
         <div className="mb-3 flex items-baseline justify-between">
           <p className="text-sm font-bold text-gray-900">
@@ -295,6 +303,8 @@ export default function Home() {
         )}
       </section>
 
+      <IntegrationPanel />
+
       <div className="mb-6">
         <Link
           href="/blueprint"
@@ -319,11 +329,6 @@ export default function Home() {
           </span>
         </Link>
       </div>
-
-      <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
-      <IntegrationPanel />
-      <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
-      <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
 
       <p className="mt-8 text-center text-xs font-medium text-gray-400">
         記憶の蓄積状況は{" "}
