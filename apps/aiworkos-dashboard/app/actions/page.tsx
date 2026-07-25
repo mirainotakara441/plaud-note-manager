@@ -247,19 +247,26 @@ export default function ActionsPage() {
   );
   const remaining = items.length - doneItems.length;
 
+  // 当日分の進捗（ヘッダー直下の進捗バー・達成表示に使用）
+  const todayItems = useMemo(() => items.filter((x) => x.entry_date === todayStr()), [items]);
+  const todayDoneCount = todayItems.filter((x) => x.done).length;
+  const todayTotal = todayItems.length;
+  const todayAllDone = todayTotal > 0 && todayDoneCount === todayTotal;
+  const todayPct = todayTotal > 0 ? Math.round((todayDoneCount / todayTotal) * 100) : 0;
+
   function renderItem(it: Item) {
     const meta = KIND_META[it.kind];
     const editing = editId === it.id;
     return (
       <div
         key={it.id}
-        className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm"
+        className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition-shadow duration-200"
       >
         <button
           type="button"
           onClick={() => toggleDone(it)}
           aria-label={it.done ? "未完に戻す" : "完了にする"}
-          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition ${
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all duration-200 ease-out active:scale-90 ${
             it.done
               ? "border-emerald-600 bg-emerald-600 text-white"
               : "border-gray-300 text-transparent active:border-emerald-400"
@@ -302,7 +309,7 @@ export default function ActionsPage() {
                 setEditId(it.id);
                 setEditText(it.content);
               }}
-              className={`cursor-text text-sm leading-relaxed ${
+              className={`cursor-text text-sm leading-relaxed transition-colors duration-200 ${
                 it.done ? "text-gray-400 line-through" : "text-gray-800"
               }`}
             >
@@ -337,9 +344,9 @@ export default function ActionsPage() {
       </div>
 
       <header className="mb-5">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">日々のToDo</h1>
-          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <button
               type="button"
               onClick={syncDiary}
@@ -367,6 +374,36 @@ export default function ActionsPage() {
           <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>
         )}
       </header>
+
+      {/* 当日分の進捗バー・達成表示 */}
+      <section className="mb-5">
+        {todayTotal === 0 ? (
+          <p className="rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-400 shadow-sm">
+            今日のToDoはまだありません
+          </p>
+        ) : todayAllDone ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm transition-colors duration-300">
+            <p className="text-sm font-semibold text-emerald-700">
+              ✓ 今日のやることは全部完了！
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+            <div className="mb-1.5 flex items-center justify-between text-sm">
+              <span className="font-semibold text-gray-700">今日のToDo</span>
+              <span className="text-gray-500">
+                完了 <b className="text-gray-800">{todayDoneCount}</b> / 全{todayTotal}件
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all duration-300 ease-out"
+                style={{ width: `${todayPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </section>
 
       <NotificationOptIn />
 
