@@ -50,6 +50,13 @@ const FEATURES: Feature[] = [
     accent: "bg-amber-100 text-amber-700",
   },
   {
+    href: "/slide-refine",
+    icon: "🎯",
+    title: "スライド壁打ち",
+    desc: "目的・聞き手・ゴールを深掘りし、スライド構成と簡易ビジュアルまで作る",
+    accent: "bg-pink-100 text-pink-700",
+  },
+  {
     href: "/deliverables",
     icon: "📎",
     title: "成果物を登録",
