@@ -8,7 +8,8 @@ import IntegrationPanel from "@/app/components/IntegrationPanel";
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
 //
 // ホーム上部の「今日の作戦盤」は /api/home-stats を1回叩き、当日ToDoの残数と
-// 今週の週報KPI（接点・対象団体・宿題消化）をタップ導線つきで見せる。
+// 今週の週報KPI（接点・宿題消化）、今週のClaude利用時間をタップ導線つきで見せる
+// （Claude利用時間のみリンク無し）。
 // 未完リストのプレビュー（旧TodoReminder）はここでは重複表示になるため外し、
 // コンポーネント自体は他画面での再利用のため残してある。
 
@@ -136,10 +137,10 @@ type HomeStats = {
   week: {
     week_start: string | null;
     contacts: number;
-    orgs: number;
     homework_total: number;
     homework_done: number;
   };
+  claude_hours: number;
   error?: string;
 };
 
@@ -152,7 +153,7 @@ function greeting(hour: number): string {
 }
 
 type StatCard = {
-  href: string;
+  href?: string;
   label: string;
   value: string;
   caption: string;
@@ -181,12 +182,6 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
     ? { href: "/weekly-report", label: "今週の接点", value: "—", caption: "週報データがまだありません" }
     : { href: "/weekly-report", label: "今週の接点", value: `${stats?.week.contacts ?? 0}`, caption: "件" };
 
-  const orgsCard: StatCard = weekFailed
-    ? { href: "/weekly-report", label: "対象団体数", value: "—", caption: "取得できませんでした" }
-    : noWeek
-    ? { href: "/weekly-report", label: "対象団体数", value: "—", caption: "週報データがまだありません" }
-    : { href: "/weekly-report", label: "対象団体数", value: `${stats?.week.orgs ?? 0}`, caption: "団体" };
-
   const homeworkCard: StatCard = weekFailed
     ? { href: "/weekly-report", label: "宿題消化", value: "—", caption: "取得できませんでした" }
     : noWeek
@@ -200,7 +195,14 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
         caption: "完了 / 全件",
       };
 
-  return [todoCard, contactsCard, orgsCard, homeworkCard];
+  const claudeHoursFailed =
+    fetchFailed || (!!err && (err.includes("claude_usage_daily") || err.includes("Claude利用時間")));
+
+  const claudeHoursCard: StatCard = claudeHoursFailed
+    ? { label: "今週のClaude利用時間", value: "—", caption: "取得できませんでした" }
+    : { label: "今週のClaude利用時間", value: `${stats?.claude_hours ?? 0}h`, caption: "合計" };
+
+  return [todoCard, contactsCard, homeworkCard, claudeHoursCard];
 }
 
 function FeatureGroup({ title, features }: { title: string; features: Feature[] }) {
@@ -271,11 +273,6 @@ export default function Home() {
         </p>
       </header>
 
-      <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
-      <FeatureGroup title="🌱 ライフスタイル・ヘルス" features={LIFESTYLE_HEALTH_FEATURES} />
-      <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
-      <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
-
       <section className="mb-6">
         <div className="mb-3 flex items-baseline justify-between">
           <p className="text-sm font-bold text-gray-900">
@@ -295,20 +292,36 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {cards.map((c) => (
-              <Link
-                key={c.label}
-                href={c.href}
-                className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition active:scale-95"
-              >
-                <p className="text-xs font-bold text-gray-500">{c.label}</p>
-                <p className="mt-1 text-2xl font-bold text-gray-900">{c.value}</p>
-                <p className="mt-0.5 text-xs text-gray-400">{c.caption}</p>
-              </Link>
-            ))}
+            {cards.map((c) =>
+              c.href ? (
+                <Link
+                  key={c.label}
+                  href={c.href}
+                  className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition active:scale-95"
+                >
+                  <p className="text-xs font-bold text-gray-500">{c.label}</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900">{c.value}</p>
+                  <p className="mt-0.5 text-xs text-gray-400">{c.caption}</p>
+                </Link>
+              ) : (
+                <div
+                  key={c.label}
+                  className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm"
+                >
+                  <p className="text-xs font-bold text-gray-500">{c.label}</p>
+                  <p className="mt-1 text-2xl font-bold text-gray-900">{c.value}</p>
+                  <p className="mt-0.5 text-xs text-gray-400">{c.caption}</p>
+                </div>
+              )
+            )}
           </div>
         )}
       </section>
+
+      <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
+      <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
+      <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
+      <FeatureGroup title="🌱 ライフスタイル・ヘルス" features={LIFESTYLE_HEALTH_FEATURES} />
 
       <IntegrationPanel />
 

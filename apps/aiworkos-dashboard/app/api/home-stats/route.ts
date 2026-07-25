@@ -3,7 +3,8 @@ import { anonCreds, restHeaders, type Creds } from "@/lib/supabase";
 import { toJstDateString } from "@/lib/date";
 
 // ホーム画面「今日の作戦盤」用の集計API。
-// daily_actions（当日分のToDo進捗）と weekly_reports（今週の接点・団体・宿題消化）を
+// daily_actions（当日分のToDo進捗）、weekly_reports（今週の接点・宿題消化）、
+// claude_usage_daily（今週のClaude利用時間）を
 // 読み取り専用（anonキーのみ）でまとめて返す。書き込みは一切しない。
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,6 @@ type TodoStats = { total: number; remaining: number };
 type WeekStats = {
   week_start: string | null;
   contacts: number;
-  orgs: number;
   homework_total: number;
   homework_done: number;
 };
@@ -22,11 +22,24 @@ type HomeStatsResponse = {
   today: string;
   todo: TodoStats;
   week: WeekStats;
+  claude_hours: number;
   error?: string;
 };
 
 function headers(key: string): Record<string, string> {
   return restHeaders(key);
+}
+
+// 今週（JST基準）の月曜日をYYYY-MM-DD形式で返す。
+// app/weekly-report/page.tsx の toMonday() と同じ「日曜は前週扱い」ロジックを踏襲するが、
+// こちらはサーバー側でJST日付から算出するため、UTCメソッドで計算しローカルTZの影響を避ける。
+function jstMondayOf(today: string): string {
+  const [y, m, d] = today.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const day = date.getUTCDay(); // 0=日, 1=月, ...
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setUTCDate(date.getUTCDate() + diff);
+  return date.toISOString().slice(0, 10);
 }
 
 async function fetchTodoStats(c: Creds, today: string): Promise<TodoStats> {
@@ -57,7 +70,7 @@ async function fetchWeekStats(c: Creds): Promise<WeekStats> {
   const week_start: string | null = latest?.[0]?.week_start ?? null;
 
   if (!week_start) {
-    return { week_start: null, contacts: 0, orgs: 0, homework_total: 0, homework_done: 0 };
+    return { week_start: null, contacts: 0, homework_total: 0, homework_done: 0 };
   }
 
   const rowsRes = await fetch(
@@ -72,9 +85,6 @@ async function fetchWeekStats(c: Creds): Promise<WeekStats> {
     await rowsRes.json();
 
   const contacts = rows.filter((r) => r.category !== "全体").length;
-  const orgs = new Set(
-    rows.filter((r) => r.organization).map((r) => r.organization as string)
-  ).size;
   const withTactic = rows.filter((r) => r.tactic);
   const homework_total = withTactic.length;
 
@@ -94,7 +104,21 @@ async function fetchWeekStats(c: Creds): Promise<WeekStats> {
     homework_done = withTactic.filter((r) => doneMap.get(r.id) === true).length;
   }
 
-  return { week_start, contacts, orgs, homework_total, homework_done };
+  return { week_start, contacts, homework_total, homework_done };
+}
+
+async function fetchClaudeHours(c: Creds, weekMonday: string): Promise<number> {
+  const res = await fetch(
+    `${c.url}/rest/v1/claude_usage_daily?select=hours&work_date=gte.${weekMonday}`,
+    { headers: headers(c.key), cache: "no-store" }
+  );
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`claude_usage_daily取得失敗 ${res.status}: ${detail.slice(0, 200)}`);
+  }
+  const rows: { hours: number | string }[] = await res.json();
+  const total = rows.reduce((sum, r) => sum + Number(r.hours), 0);
+  return Math.round(total * 10) / 10;
 }
 
 export async function GET() {
@@ -102,14 +126,17 @@ export async function GET() {
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
 
   const today = toJstDateString(new Date().toISOString());
+  const weekMonday = jstMondayOf(today);
 
-  const [todoSettled, weekSettled] = await Promise.allSettled([
+  const [todoSettled, weekSettled, claudeHoursSettled] = await Promise.allSettled([
     fetchTodoStats(c, today),
     fetchWeekStats(c),
+    fetchClaudeHours(c, weekMonday),
   ]);
 
   let todo: TodoStats = { total: 0, remaining: 0 };
-  let week: WeekStats = { week_start: null, contacts: 0, orgs: 0, homework_total: 0, homework_done: 0 };
+  let week: WeekStats = { week_start: null, contacts: 0, homework_total: 0, homework_done: 0 };
+  let claude_hours = 0;
   const errors: string[] = [];
 
   if (todoSettled.status === "fulfilled") {
@@ -130,7 +157,18 @@ export async function GET() {
     );
   }
 
-  const body: HomeStatsResponse = { today, todo, week };
+  if (claudeHoursSettled.status === "fulfilled") {
+    claude_hours = claudeHoursSettled.value;
+  } else {
+    console.error("GET /api/home-stats: claude_usage_daily取得エラー", claudeHoursSettled.reason);
+    errors.push(
+      claudeHoursSettled.reason instanceof Error
+        ? claudeHoursSettled.reason.message
+        : "Claude利用時間取得に失敗しました"
+    );
+  }
+
+  const body: HomeStatsResponse = { today, todo, week, claude_hours };
   if (errors.length > 0) body.error = errors.join(" / ");
 
   return NextResponse.json(body);
