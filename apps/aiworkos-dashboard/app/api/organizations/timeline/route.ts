@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { toJstDateString } from "@/lib/date";
 
 // 団体別タイムライン：会議（org-history）・成果物（memory_chunks 直叩き）・
 // 週報（weekly_reports、organization ILIKE 部分一致）を統合し、日付降順の
@@ -203,7 +204,9 @@ function deliverablesToEntries(chunks: DeliverableChunk[]): TimelineEntry[] {
   for (const c of chunks) {
     const meta = isRecord(c.metadata) ? c.metadata : null;
     const docName = (meta && asString(meta["資料名"])) ?? stripChunkSuffix(c.title);
-    const dateKey = c.event_date ?? c.created_at.slice(0, 10);
+    // created_at はUTCタイムスタンプなので、event_dateが無い場合の代替キーは
+    // JSTの日付に変換してから使う（さもないとJST 0時台〜8時台の登録が前日扱いになる）。
+    const dateKey = c.event_date ?? toJstDateString(c.created_at);
     const key = `${docName}__${dateKey}`;
     const arr = groups.get(key) ?? [];
     arr.push(c);
@@ -222,7 +225,7 @@ function deliverablesToEntries(chunks: DeliverableChunk[]): TimelineEntry[] {
     const rep = withPos[0].chunk;
     const meta = isRecord(rep.metadata) ? rep.metadata : null;
     const docName = (meta && asString(meta["資料名"])) ?? stripChunkSuffix(rep.title);
-    const date = rep.event_date ?? rep.created_at.slice(0, 10);
+    const date = rep.event_date ?? toJstDateString(rep.created_at);
     entries.push({
       id: `deliverable:${rep.id}`,
       kind: "成果物",

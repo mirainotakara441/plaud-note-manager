@@ -347,7 +347,8 @@ async function generateDraft(
   let input: Partial<Draft>;
   try {
     input = JSON.parse(textBlock.text) as Partial<Draft>;
-  } catch {
+  } catch (err) {
+    console.error("月報生成: Claude出力のJSON解析失敗", err);
     throw new Error("invalid_json_output");
   }
 
@@ -392,7 +393,8 @@ async function notionToken(): Promise<string | null> {
     const rows: { value: string }[] = await res.json();
     const token = rows[0]?.value;
     return token && token.trim() !== "" ? token : null;
-  } catch {
+  } catch (err) {
+    console.error("notionToken: app_config取得失敗", err);
     return null;
   }
 }
@@ -489,7 +491,8 @@ async function notionPageExists(token: string, pageId: string): Promise<boolean>
     if (!res.ok) return false;
     const data = await res.json();
     return data?.archived !== true;
-  } catch {
+  } catch (err) {
+    console.error("notionPageExists: Notionページ確認失敗", err);
     return false;
   }
 }
@@ -620,7 +623,13 @@ async function fetchReportRow(
     `${c.url}/rest/v1/${TABLE}?select=*&month=eq.${encodeURIComponent(month)}`,
     { headers: restHeaders(c.key), cache: "no-store" }
   );
-  if (!res.ok) return null;
+  if (!res.ok) {
+    // 取得失敗（RLS誤設定・障害等）を「その月の月報がまだ無い」と混同すると、
+    // 実際は生成済みなのに「まだ生成されていません」と誤表示してしまうため、
+    // ここでは null を返さずエラーとして呼び出し元（try/catch）に伝える。
+    const text = await res.text().catch(() => "");
+    throw new Error(`monthly_reports取得エラー ${res.status}: ${text.slice(0, 200)}`);
+  }
   const rows: DbRow[] = await res.json();
   return rows[0] ?? null;
 }
@@ -677,9 +686,14 @@ export async function GET(req: NextRequest) {
         cache: "no-store",
       }),
     ]);
-    const availableMonths: string[] = monthsRes.ok
-      ? (await monthsRes.json()).map((r: { month: string }) => r.month)
-      : [];
+    if (!monthsRes.ok) {
+      // 一覧取得の失敗を「月報の履歴が0件」と混同しないよう、こちらもエラーとして扱う。
+      const text = await monthsRes.text().catch(() => "");
+      throw new Error(`月一覧取得エラー ${monthsRes.status}: ${text.slice(0, 200)}`);
+    }
+    const availableMonths: string[] = (await monthsRes.json()).map(
+      (r: { month: string }) => r.month
+    );
 
     return NextResponse.json({
       report: row ? toMonthlyReport(row) : null,
@@ -703,7 +717,8 @@ export async function PUT(req: NextRequest) {
   };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("PUT /api/monthly-report: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
@@ -751,12 +766,15 @@ export async function PUT(req: NextRequest) {
           headers: restHeaders(c.key),
           body: JSON.stringify({ notion_url: notionUrl }),
           cache: "no-store",
-        }).catch(() => {});
+        }).catch((err) => {
+          console.error("PUT /api/monthly-report: notion_url同期保存失敗", err);
+        });
       }
     }
 
     return NextResponse.json({ saved: true, report: toMonthlyReport({ ...row, notion_url: notionUrl }) });
-  } catch {
+  } catch (err) {
+    console.error("PUT /api/monthly-report: 手直しの保存に失敗", err);
     return NextResponse.json({ error: "手直しの保存に失敗しました" }, { status: 502 });
   }
 }
@@ -782,7 +800,8 @@ export async function POST(req: NextRequest) {
   let body: { month?: unknown; force?: unknown };
   try {
     body = await req.json();
-  } catch {
+  } catch (err) {
+    console.error("POST /api/monthly-report: リクエストJSON解析失敗", err);
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
@@ -806,7 +825,13 @@ export async function POST(req: NextRequest) {
 
   // 2. signature計算 + 既存キャッシュ確認
   const signature = computeSignature(rows);
-  const existing = await fetchReportRow(anon, month);
+  let existing: DbRow | null;
+  try {
+    existing = await fetchReportRow(anon, month);
+  } catch (error) {
+    console.error("既存月報取得エラー:", error);
+    return NextResponse.json({ error: "既存月報の確認に失敗しました" }, { status: 502 });
+  }
   const existingReport = existing ? toMonthlyReport(existing) : null;
 
   if (!force && existingReport && existingReport.signature === signature) {
