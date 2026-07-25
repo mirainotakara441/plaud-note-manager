@@ -1,9 +1,16 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import IntegrationPanel from "@/app/components/IntegrationPanel";
-import TodoReminder from "@/app/components/TodoReminder";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
+//
+// ホーム上部の「今日の作戦盤」は /api/home-stats を1回叩き、当日ToDoの残数と
+// 今週の週報KPI（接点・対象団体・宿題消化）をタップ導線つきで見せる。
+// 未完リストのプレビュー（旧TodoReminder）はここでは重複表示になるため外し、
+// コンポーネント自体は他画面での再利用のため残してある。
 
 type Feature = {
   href: string;
@@ -13,14 +20,24 @@ type Feature = {
   accent: string; // アイコンチップの配色
 };
 
-const FEATURES: Feature[] = [
+const RECORD_FEATURES: Feature[] = [
   {
-    href: "/actions",
-    icon: "✅",
-    title: "日々のToDo",
-    desc: "日記の「やってみよう」「本日のポイント」を積み上げてチェック消し込み",
-    accent: "bg-emerald-100 text-emerald-700",
+    href: "/deliverables",
+    icon: "📎",
+    title: "成果物を登録",
+    desc: "提案書・実習書・スライド・メモを取り込み、提案の土台にする",
+    accent: "bg-purple-100 text-purple-700",
   },
+  {
+    href: "/refine",
+    icon: "💬",
+    title: "壁打ち",
+    desc: "登録内容をAIが深掘り質問。答えるほど熟成し記憶に還る",
+    accent: "bg-teal-100 text-teal-700",
+  },
+];
+
+const PROPOSE_FEATURES: Feature[] = [
   {
     href: "/search",
     icon: "🔍",
@@ -36,13 +53,6 @@ const FEATURES: Feature[] = [
     accent: "bg-blue-100 text-blue-700",
   },
   {
-    href: "/refine",
-    icon: "💬",
-    title: "壁打ち",
-    desc: "登録内容をAIが深掘り質問。答えるほど熟成し記憶に還る",
-    accent: "bg-teal-100 text-teal-700",
-  },
-  {
     href: "/weapons",
     icon: "⚔️",
     title: "武器を出す",
@@ -56,12 +66,15 @@ const FEATURES: Feature[] = [
     desc: "目的・聞き手・ゴールを深掘りし、スライド構成と簡易ビジュアルまで作る",
     accent: "bg-pink-100 text-pink-700",
   },
+];
+
+const REVIEW_FEATURES: Feature[] = [
   {
-    href: "/deliverables",
-    icon: "📎",
-    title: "成果物を登録",
-    desc: "提案書・実習書・スライド・メモを取り込み、提案の土台にする",
-    accent: "bg-purple-100 text-purple-700",
+    href: "/actions",
+    icon: "✅",
+    title: "日々のToDo",
+    desc: "日記の「やってみよう」「本日のポイント」を積み上げてチェック消し込み",
+    accent: "bg-emerald-100 text-emerald-700",
   },
   {
     href: "/status",
@@ -107,7 +120,134 @@ const FEATURES: Feature[] = [
   },
 ];
 
+type HomeStats = {
+  today: string;
+  todo: { total: number; remaining: number };
+  week: {
+    week_start: string | null;
+    contacts: number;
+    orgs: number;
+    homework_total: number;
+    homework_done: number;
+  };
+  error?: string;
+};
+
+const WD = ["日", "月", "火", "水", "木", "金", "土"];
+
+function greeting(hour: number): string {
+  if (hour >= 5 && hour < 10) return "おはようございます。";
+  if (hour >= 17) return "おつかれさまです。";
+  return "今日も一つずつ、進めていきましょう。";
+}
+
+type StatCard = {
+  href: string;
+  label: string;
+  value: string;
+  caption: string;
+};
+
+function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard[] {
+  const err = stats?.error;
+  const todoFailed = fetchFailed || (!!err && (err.includes("daily_actions") || err.includes("ToDo")));
+  const weekFailed = fetchFailed || (!!err && (err.includes("weekly_reports") || err.includes("週報")));
+  const noWeek = !weekFailed && !stats?.week.week_start;
+
+  const todoCard: StatCard = todoFailed
+    ? { href: "/actions", label: "今日のToDo", value: "—", caption: "取得できませんでした" }
+    : stats && stats.todo.total === 0
+    ? { href: "/actions", label: "今日のToDo", value: "0", caption: "今日のToDoはありません" }
+    : {
+        href: "/actions",
+        label: "今日のToDo",
+        value: `${stats?.todo.remaining ?? 0}/${stats?.todo.total ?? 0}`,
+        caption: "残り / 全件",
+      };
+
+  const contactsCard: StatCard = weekFailed
+    ? { href: "/weekly-report", label: "今週の接点", value: "—", caption: "取得できませんでした" }
+    : noWeek
+    ? { href: "/weekly-report", label: "今週の接点", value: "—", caption: "週報データがまだありません" }
+    : { href: "/weekly-report", label: "今週の接点", value: `${stats?.week.contacts ?? 0}`, caption: "件" };
+
+  const orgsCard: StatCard = weekFailed
+    ? { href: "/weekly-report", label: "対象団体数", value: "—", caption: "取得できませんでした" }
+    : noWeek
+    ? { href: "/weekly-report", label: "対象団体数", value: "—", caption: "週報データがまだありません" }
+    : { href: "/weekly-report", label: "対象団体数", value: `${stats?.week.orgs ?? 0}`, caption: "団体" };
+
+  const homeworkCard: StatCard = weekFailed
+    ? { href: "/weekly-report", label: "宿題消化", value: "—", caption: "取得できませんでした" }
+    : noWeek
+    ? { href: "/weekly-report", label: "宿題消化", value: "—", caption: "週報データがまだありません" }
+    : stats && stats.week.homework_total === 0
+    ? { href: "/weekly-report", label: "宿題消化", value: "—", caption: "宿題なし" }
+    : {
+        href: "/weekly-report",
+        label: "宿題消化",
+        value: `${stats?.week.homework_done ?? 0}/${stats?.week.homework_total ?? 0}`,
+        caption: "完了 / 全件",
+      };
+
+  return [todoCard, contactsCard, orgsCard, homeworkCard];
+}
+
+function FeatureGroup({ title, features }: { title: string; features: Feature[] }) {
+  return (
+    <section className="mb-6">
+      <h2 className="mb-2 text-sm font-bold text-gray-500">{title}</h2>
+      <div className="space-y-3">
+        {features.map((f) => (
+          <Link
+            key={f.href}
+            href={f.href}
+            className="flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition active:bg-gray-50"
+          >
+            <span
+              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-2xl ${f.accent}`}
+              aria-hidden
+            >
+              {f.icon}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-base font-bold text-gray-900">{f.title}</span>
+              <span className="mt-0.5 block text-sm leading-relaxed text-gray-500">{f.desc}</span>
+            </span>
+            <span className="shrink-0 text-lg text-gray-300" aria-hidden>
+              →
+            </span>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
+  const [stats, setStats] = useState<HomeStats | null>(null);
+  const [fetchFailed, setFetchFailed] = useState(false);
+  const [now] = useState(() => new Date());
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/home-stats", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
+      .then((d) => {
+        if (alive) setStats(d);
+      })
+      .catch(() => {
+        if (alive) setFetchFailed(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const loading = !stats && !fetchFailed;
+  const cards = buildStatCards(stats, fetchFailed);
+  const weekday = WD[now.getDay()];
+
   return (
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(2.5rem,env(safe-area-inset-top))]">
       <header className="mb-8 text-center">
@@ -121,7 +261,39 @@ export default function Home() {
         </p>
       </header>
 
-      <TodoReminder />
+      <section className="mb-6">
+        <div className="mb-3 flex items-baseline justify-between">
+          <p className="text-sm font-bold text-gray-900">
+            {now.getMonth() + 1}月{now.getDate()}日（{weekday}）
+          </p>
+          <p className="text-xs text-gray-400">{greeting(now.getHours())}</p>
+        </div>
+
+        {loading ? (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-[88px] animate-pulse rounded-2xl border border-gray-200 bg-gray-100"
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {cards.map((c) => (
+              <Link
+                key={c.label}
+                href={c.href}
+                className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition active:scale-95"
+              >
+                <p className="text-xs font-bold text-gray-500">{c.label}</p>
+                <p className="mt-1 text-2xl font-bold text-gray-900">{c.value}</p>
+                <p className="mt-0.5 text-xs text-gray-400">{c.caption}</p>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
 
       <div className="mb-6">
         <Link
@@ -148,35 +320,10 @@ export default function Home() {
         </Link>
       </div>
 
-      <div className="space-y-3">
-        {FEATURES.map((f) => (
-          <Link
-            key={f.href}
-            href={f.href}
-            className="flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition active:bg-gray-50"
-          >
-            <span
-              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-2xl ${f.accent}`}
-              aria-hidden
-            >
-              {f.icon}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-base font-bold text-gray-900">
-                {f.title}
-              </span>
-              <span className="mt-0.5 block text-sm leading-relaxed text-gray-500">
-                {f.desc}
-              </span>
-            </span>
-            <span className="shrink-0 text-lg text-gray-300" aria-hidden>
-              →
-            </span>
-          </Link>
-        ))}
-      </div>
-
+      <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
       <IntegrationPanel />
+      <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
+      <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
 
       <p className="mt-8 text-center text-xs font-medium text-gray-400">
         記憶の蓄積状況は{" "}
