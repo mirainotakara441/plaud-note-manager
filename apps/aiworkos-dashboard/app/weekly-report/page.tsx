@@ -241,10 +241,14 @@ export default function WeeklyReportPage() {
       rows.filter((r) => r.organization).map((r) => r.organization as string)
     );
     const withTactic = rows.filter((r) => r.tactic).length;
+    const homeworkDone = rows.filter(
+      (r) => r.tactic && r.action_done === true
+    ).length;
     return {
       contacts: contactRows.length,
       orgs: orgs.size,
       withTactic,
+      homeworkDone,
     };
   }, [rows]);
 
@@ -321,11 +325,19 @@ export default function WeeklyReportPage() {
       {!loading && !error && (
         <>
           {/* KPI */}
-          <div className="mb-5 grid grid-cols-3 gap-2">
+          <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               { l: "訪問・接点件数", v: kpi.contacts, c: "text-gray-900" },
               { l: "対象団体数", v: kpi.orgs, c: "text-gray-900" },
               { l: "次アクションあり", v: kpi.withTactic, c: "text-amber-600" },
+              {
+                l: "宿題消化",
+                v:
+                  kpi.withTactic === 0
+                    ? "宿題なし"
+                    : `${kpi.homeworkDone}/${kpi.withTactic}`,
+                c: "text-emerald-600",
+              },
             ].map((m) => (
               <div key={m.l} className="rounded-xl bg-gray-50 px-2 py-3 text-center">
                 <div className={`text-xl font-bold ${m.c}`}>{m.v}</div>

@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AIワークOS — 横断検索ダッシュボード",
+  title: "AIワークOS",
   description:
-    "日記・会議・学びのメモリを自然言語で横断検索するダッシュボード",
+    "記録を記憶に、記憶を提案に。日々の記録を自然言語で横断検索し、次の一手につなげるワークOS。",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
