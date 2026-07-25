@@ -22,6 +22,13 @@ type Feature = {
 
 const RECORD_FEATURES: Feature[] = [
   {
+    href: "/diary",
+    icon: "📓",
+    title: "一行日記を登録",
+    desc: "その日の日記を貼るだけでNotionと記憶に反映",
+    accent: "bg-violet-100 text-violet-700",
+  },
+  {
     href: "/deliverables",
     icon: "📎",
     title: "成果物を登録",
