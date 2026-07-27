@@ -10,7 +10,8 @@ import { composeReply, parseQuestions, stripBold } from "@/lib/parseQuestions";
 // スライド構成案 → 簡易ビジュアル → 成果物として記憶に登録、という一本の流れ。
 
 type Msg = { role: "user" | "assistant"; content: string };
-type Slide = { title: string; bullets: string[] };
+type Slide = { section: "結論" | "根拠" | "アクション"; title: string; bullets: string[] };
+type VisualCandidate = { diagramType: string; description: string };
 type Visual = { diagramType: string; description: string; svg: string };
 type Session = {
   id: string;
@@ -18,9 +19,27 @@ type Session = {
   organization: string | null;
   category: string | null;
   title: string | null;
+  purpose: string | null;
   updated_at: string;
 };
-type Stage = "form" | "chat" | "outline" | "visualize";
+type Stage = "form" | "chat" | "outline" | "diagrams" | "visualize";
+
+// 壁打ちの目的：StakeholderPickerと同じ「カテゴリー選択 + その他は直接入力」パターン。
+// ただしこちらは育っていくマスタが無いのでローカルのプリセットで十分（DBには保存しない）。
+const PURPOSE_PRESETS = [
+  "予算獲得・本導入決裁",
+  "新規開拓・提案",
+  "進捗報告・共有",
+  "社内稟議・承認",
+  "契約更新・アップセル",
+  "その他",
+] as const;
+
+const SECTION_BADGE_CLASS: Record<Slide["section"], string> = {
+  結論: "bg-amber-100 text-amber-700",
+  根拠: "bg-sky-100 text-sky-700",
+  アクション: "bg-emerald-100 text-emerald-700",
+};
 
 // AI生成のSVGはユーザー向けに描画される未検証の文字列なので、自前のクライアントとはいえ
 // 信用しきらずに軽く消毒する（多層防御。生成時点の縛りだけに頼らない）。
@@ -58,6 +77,8 @@ function SvgPreview({ svg }: { svg: string }) {
 function SlideRefineInner() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [theme, setTheme] = useState("");
+  const [purposeCategory, setPurposeCategory] = useState<string>(PURPOSE_PRESETS[0]);
+  const [purposeCustom, setPurposeCustom] = useState("");
   const [linkTarget, setLinkTarget] = useState(false);
   const [category, setCategory] = useState<Category>("自治体");
   const [organization, setOrganization] = useState("");
@@ -68,15 +89,25 @@ function SlideRefineInner() {
   const [input, setInput] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [skipped, setSkipped] = useState<Record<string, boolean>>({});
+  const [slideCountInput, setSlideCountInput] = useState("");
   const [slides, setSlides] = useState<Slide[]>([]);
+  const [candidates, setCandidates] = useState<VisualCandidate[][]>([]);
+  const [selected, setSelected] = useState<number[]>([]);
   const [visuals, setVisuals] = useState<Visual[]>([]);
+  const [deletedSlides, setDeletedSlides] = useState<Record<number, boolean>>({});
+  const [editingSlide, setEditingSlide] = useState<Record<number, boolean>>({});
+  const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [outlining, setOutlining] = useState(false);
-  const [visualizing, setVisualizing] = useState(false);
+  const [proposing, setProposing] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+
+  // その他が選ばれていれば自由記述、それ以外はプリセットのラベルそのものがpurpose文字列になる。
+  const purpose = purposeCategory === "その他" ? purposeCustom.trim() : purposeCategory;
 
   const loadSessions = useCallback(async () => {
     try {
@@ -98,14 +129,20 @@ function SlideRefineInner() {
     setMessages([]);
     setAnswers({});
     setSkipped({});
+    setSlideCountInput("");
     setSlides([]);
+    setCandidates([]);
+    setSelected([]);
     setVisuals([]);
+    setDeletedSlides({});
+    setEditingSlide({});
     setSaved(null);
     setError(null);
   }
 
   async function start() {
     if (!theme.trim()) return setError("このスライドで伝えたいこと・お題を入力してください");
+    if (!purpose) return setError("壁打ちの目的を入力してください");
     if (linkTarget && !organization.trim()) return setError(`${category}名を選んでください`);
     setError(null);
     setSaved(null);
@@ -117,6 +154,7 @@ function SlideRefineInner() {
         body: JSON.stringify({
           action: "start",
           theme: theme.trim(),
+          purpose,
           organization: linkTarget ? organization.trim() : undefined,
           category: linkTarget ? category : undefined,
         }),
@@ -143,6 +181,17 @@ function SlideRefineInner() {
       const d = await r.json();
       setSessionId(s.id);
       setTheme(s.theme);
+      const loadedPurpose: string | null = d?.purpose ?? s.purpose ?? null;
+      if (loadedPurpose && (PURPOSE_PRESETS as readonly string[]).includes(loadedPurpose)) {
+        setPurposeCategory(loadedPurpose);
+        setPurposeCustom("");
+      } else if (loadedPurpose) {
+        setPurposeCategory("その他");
+        setPurposeCustom(loadedPurpose);
+      } else {
+        setPurposeCategory(PURPOSE_PRESETS[0]);
+        setPurposeCustom("");
+      }
       if (s.organization) {
         setLinkTarget(true);
         setOrganization(s.organization);
@@ -153,10 +202,16 @@ function SlideRefineInner() {
       }
       setMessages(Array.isArray(d?.messages) ? d.messages : []);
       const loadedSlides: Slide[] = Array.isArray(d?.slides) ? d.slides : [];
+      const loadedCandidates: VisualCandidate[][] = Array.isArray(d?.visual_candidates)
+        ? d.visual_candidates
+        : [];
       const loadedVisuals: Visual[] = Array.isArray(d?.visuals) ? d.visuals : [];
       setSlides(loadedSlides);
+      setCandidates(loadedCandidates);
+      setSelected(loadedCandidates.map(() => 0));
       setVisuals(loadedVisuals);
       if (loadedVisuals.length > 0) setStage("visualize");
+      else if (loadedCandidates.length > 0) setStage("diagrams");
       else if (loadedSlides.length > 0) setStage("outline");
       else setStage("chat");
     } catch {
@@ -209,14 +264,18 @@ function SlideRefineInner() {
     setError(null);
     setOutlining(true);
     try {
+      const n = parseInt(slideCountInput, 10);
+      const slideCount = slideCountInput.trim() && Number.isFinite(n) && n > 0 ? n : undefined;
       const r = await fetch("/api/slide-refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "outline", sessionId }),
+        body: JSON.stringify({ action: "outline", sessionId, slideCount }),
       });
       const d = await r.json();
       if (!r.ok) return setError(d?.error ?? "構成案の生成に失敗しました");
       setSlides(Array.isArray(d.slides) ? d.slides : []);
+      setDeletedSlides({});
+      setEditingSlide({});
       setStage("outline");
     } catch {
       setError("通信エラーが発生しました");
@@ -229,41 +288,117 @@ function SlideRefineInner() {
     setSlides((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
   }
 
-  async function goVisualize() {
+  // Step A: (編集済みの可能性がある)構成案から、スライドごとに2〜3個の図解パターン候補を提案してもらう。
+  async function goProposeVisuals() {
     if (!sessionId) return;
     setError(null);
-    setVisualizing(true);
+    setProposing(true);
     try {
       const cleanedSlides = slides.map((s) => ({
+        section: s.section,
         title: s.title,
         bullets: s.bullets.map((b) => b.trim()).filter(Boolean),
       }));
       const r = await fetch("/api/slide-refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "visualize", sessionId, slides: cleanedSlides }),
+        body: JSON.stringify({ action: "propose-visuals", sessionId, slides: cleanedSlides }),
       });
       const d = await r.json();
-      if (!r.ok) return setError(d?.error ?? "図式化に失敗しました");
+      if (!r.ok) return setError(d?.error ?? "図解候補の生成に失敗しました");
       setSlides(cleanedSlides);
+      const cands: VisualCandidate[][] = Array.isArray(d.candidates) ? d.candidates : [];
+      setCandidates(cands);
+      setSelected(cands.map(() => 0));
+      setStage("diagrams");
+    } catch {
+      setError("通信エラーが発生しました");
+    } finally {
+      setProposing(false);
+    }
+  }
+
+  // Step C: 吉井さんがスライドごとに選んだ図解候補だけを、実際のSVGとして描画してもらう。
+  async function goRenderVisuals() {
+    if (!sessionId) return;
+    setError(null);
+    setRendering(true);
+    try {
+      const choices = slides.map((_, i) => {
+        const list = candidates[i] ?? [];
+        const idx = selected[i] ?? 0;
+        return list[idx] ?? list[0] ?? { diagramType: "", description: "" };
+      });
+      const r = await fetch("/api/slide-refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "render-visuals", sessionId, choices }),
+      });
+      const d = await r.json();
+      if (!r.ok) return setError(d?.error ?? "図解の生成に失敗しました");
       setVisuals(Array.isArray(d.visuals) ? d.visuals : []);
+      setDeletedSlides({});
+      setEditingSlide({});
       setStage("visualize");
     } catch {
       setError("通信エラーが発生しました");
     } finally {
-      setVisualizing(false);
+      setRendering(false);
     }
   }
 
-  async function saveFinal() {
+  // 納得いかない1枚だけ、内容とビジュアルを両方作り直す。
+  async function regenerateSlide(i: number) {
     if (!sessionId) return;
     setError(null);
-    setSaving(true);
+    setRegeneratingIndex(i);
     try {
       const r = await fetch("/api/slide-refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", sessionId }),
+        body: JSON.stringify({
+          action: "regenerate-slide",
+          sessionId,
+          slide: slides[i],
+          visual: visuals[i]
+            ? { diagramType: visuals[i].diagramType, description: visuals[i].description }
+            : undefined,
+          slides,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) return setError(d?.error ?? "作り直しに失敗しました");
+      setSlides((prev) => prev.map((s, idx) => (idx === i ? d.slide : s)));
+      setVisuals((prev) => prev.map((v, idx) => (idx === i ? d.visual : v)));
+    } catch {
+      setError("通信エラーが発生しました");
+    } finally {
+      setRegeneratingIndex(null);
+    }
+  }
+
+  function toggleDeleted(i: number) {
+    setDeletedSlides((prev) => ({ ...prev, [i]: !prev[i] }));
+  }
+
+  function toggleEditing(i: number) {
+    setEditingSlide((prev) => ({ ...prev, [i]: !prev[i] }));
+  }
+
+  const keptIndices = slides.map((_, i) => i).filter((i) => !deletedSlides[i]);
+
+  async function saveFinal() {
+    if (!sessionId) return;
+    if (keptIndices.length === 0) return setError("すべて削除されています。少なくとも1枚は残してください");
+    setError(null);
+    setSaving(true);
+    try {
+      const finalSlides = keptIndices.map((i) => slides[i]);
+      const finalVisuals = keptIndices.map((i) => visuals[i]);
+      const r = await fetch("/api/slide-refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "save", sessionId, slides: finalSlides, visuals: finalVisuals }),
       });
       const d = await r.json();
       if (!r.ok) return setError(d?.error ?? "登録に失敗しました");
@@ -305,6 +440,51 @@ function SlideRefineInner() {
             />
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-600">
+              作成するスライド枚数（任意）
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={slideCountInput}
+              onChange={(e) => setSlideCountInput(e.target.value)}
+              disabled={loading}
+              placeholder="未入力ならAIにお任せ（5〜10枚程度）"
+              className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-600">壁打ちの目的</label>
+            <select
+              value={purposeCategory}
+              onChange={(e) => {
+                setPurposeCategory(e.target.value);
+                if (e.target.value !== "その他") setPurposeCustom("");
+              }}
+              disabled={loading}
+              className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+            >
+              {PURPOSE_PRESETS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            {purposeCategory === "その他" && (
+              <input
+                type="text"
+                value={purposeCustom}
+                onChange={(e) => setPurposeCustom(e.target.value)}
+                disabled={loading}
+                placeholder="目的を入力してください"
+                className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+              />
+            )}
+          </div>
+
           <button
             type="button"
             onClick={() => setLinkTarget((v) => !v)}
@@ -343,12 +523,17 @@ function SlideRefineInner() {
         </div>
       )}
 
-      {/* ヘッダー帯（対象・お題・戻る） */}
+      {/* ヘッダー帯（対象・お題・目的・戻る） */}
       {stage !== "form" && (
-        <div className="mb-4 flex items-center gap-2">
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className="min-w-0 truncate rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
             {organization ? `${organization}（${category}）` : theme}
           </span>
+          {purpose && (
+            <span className="min-w-0 truncate rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-700">
+              {purpose}
+            </span>
+          )}
           <button
             type="button"
             onClick={resetToForm}
@@ -477,6 +662,11 @@ function SlideRefineInner() {
             {slides.map((s, i) => (
               <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-2">
+                  <span
+                    className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${SECTION_BADGE_CLASS[s.section]}`}
+                  >
+                    {s.section}
+                  </span>
                   <span className="shrink-0 rounded-md bg-purple-100 px-2 py-0.5 text-xs font-bold text-purple-700">
                     {i + 1}枚目
                   </span>
@@ -500,11 +690,77 @@ function SlideRefineInner() {
 
           <button
             type="button"
-            onClick={goVisualize}
-            disabled={visualizing || slides.length === 0}
+            onClick={goProposeVisuals}
+            disabled={proposing || slides.length === 0}
             className="w-full rounded-xl bg-purple-600 px-4 py-3 text-base font-semibold text-white transition active:bg-purple-700 disabled:opacity-40"
           >
-            {visualizing ? "図式化しています..." : "図式化する"}
+            {proposing ? "図解候補を考えています..." : "図式化する"}
+          </button>
+          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        </div>
+      )}
+
+      {/* Stage 3.5: 図解パターン候補から選ぶ（スライドごとに1個・単一選択） */}
+      {stage === "diagrams" && (
+        <div className="space-y-4">
+          <p className="text-xs text-gray-400">
+            各スライドの図解パターンを選んでください。迷ったら最初の候補のままで大丈夫です（未選択のスライドは先頭候補のまま進みます）。
+          </p>
+          <div className="space-y-4">
+            {slides.map((s, i) => (
+              <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${SECTION_BADGE_CLASS[s.section]}`}
+                  >
+                    {s.section}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-bold text-gray-900">
+                    {i + 1}枚目 {s.title}
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {(candidates[i] ?? []).map((c, ci) => {
+                    const isChosen = (selected[i] ?? 0) === ci;
+                    return (
+                      <button
+                        key={ci}
+                        type="button"
+                        onClick={() =>
+                          setSelected((prev) => prev.map((v, idx) => (idx === i ? ci : v)))
+                        }
+                        className={`flex w-full items-start gap-2 rounded-xl border px-3 py-2.5 text-left transition ${
+                          isChosen ? "border-purple-400 bg-purple-50" : "border-gray-200 bg-white active:bg-gray-50"
+                        }`}
+                      >
+                        <span
+                          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs font-bold ${
+                            isChosen ? "border-purple-500 bg-purple-500 text-white" : "border-gray-300 text-transparent"
+                          }`}
+                        >
+                          ✓
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700">
+                            {c.diagramType}
+                          </span>
+                          <span className="mt-1 block text-sm leading-relaxed text-gray-700">{c.description}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={goRenderVisuals}
+            disabled={rendering || slides.length === 0}
+            className="w-full rounded-xl bg-purple-600 px-4 py-3 text-base font-semibold text-white transition active:bg-purple-700 disabled:opacity-40"
+          >
+            {rendering ? "図解を生成しています..." : "この図解で作る"}
           </button>
           {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
         </div>
@@ -513,41 +769,172 @@ function SlideRefineInner() {
       {/* Stage 4: 簡易ビジュアルプレビュー */}
       {stage === "visualize" && (
         <div className="space-y-4">
-          <div className="space-y-3">
-            {visuals.map((v, i) => (
-              <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <span className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-600">
-                    {i + 1}枚目
-                  </span>
-                  <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">
-                    {v.diagramType}
-                  </span>
-                </div>
-                <p className="mt-2 text-sm leading-relaxed text-gray-700">{v.description}</p>
-                <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
-                  <SvgPreview svg={v.svg} />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <button
-              type="button"
-              onClick={saveFinal}
-              disabled={saving || visuals.length === 0}
-              className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white transition active:bg-emerald-700 disabled:opacity-40"
-            >
-              {saving ? "登録中..." : "確定して登録"}
-            </button>
-          </div>
-
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-          {saved && (
-            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
-              ✅「{saved}」を成果物として登録しました。次回の提案の土台になります。
+          {!saved && (
+            <p className="text-xs text-gray-400">
+              スライドごとに「編集する」「作り直す」「削除」を選べます。削除したスライドは登録対象から外れます。
             </p>
+          )}
+          <div className="space-y-3">
+            {visuals.map((v, i) => {
+              const s = slides[i];
+              const isDeleted = !!deletedSlides[i];
+              const isEditing = !!editingSlide[i];
+              const isRegenerating = regeneratingIndex === i;
+
+              if (isDeleted) {
+                return (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-4 opacity-60"
+                  >
+                    <span className="shrink-0 rounded-md bg-gray-200 px-2 py-0.5 text-xs font-bold text-gray-500">
+                      {i + 1}枚目
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-gray-500 line-through">
+                      {s?.title}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => toggleDeleted(i)}
+                      disabled={!!saved}
+                      className="shrink-0 text-xs font-medium text-indigo-600 active:opacity-70 disabled:opacity-40"
+                    >
+                      ↩︎ 元に戻す
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    {s && (
+                      <span
+                        className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${SECTION_BADGE_CLASS[s.section]}`}
+                      >
+                        {s.section}
+                      </span>
+                    )}
+                    <span className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-600">
+                      {i + 1}枚目
+                    </span>
+                    <span className="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700">
+                      {v.diagramType}
+                    </span>
+                  </div>
+
+                  {s && isEditing ? (
+                    <div className="mt-2 space-y-2">
+                      <input
+                        type="text"
+                        value={s.title}
+                        onChange={(e) => updateSlide(i, { title: e.target.value })}
+                        className="block w-full rounded-md border border-purple-300 bg-purple-50 px-2 py-1.5 text-sm font-bold text-gray-900 focus:outline-none"
+                      />
+                      <textarea
+                        value={s.bullets.join("\n")}
+                        onChange={(e) => updateSlide(i, { bullets: e.target.value.split("\n") })}
+                        rows={Math.max(3, s.bullets.length)}
+                        placeholder="要点を1行ずつ"
+                        className="block w-full resize-y rounded-md border border-purple-300 bg-purple-50 px-2 py-1.5 text-sm leading-relaxed text-gray-700 focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    s && (
+                      <div className="mt-2">
+                        <p className="text-sm font-bold text-gray-900">{s.title}</p>
+                        <ul className="mt-1 space-y-0.5">
+                          {s.bullets.map((b, bi) => (
+                            <li key={bi} className="flex gap-2 text-sm leading-relaxed text-gray-700">
+                              <span className="text-gray-300">・</span>
+                              <span>{b}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )
+                  )}
+
+                  <p className="mt-3 text-xs leading-relaxed text-gray-500">{v.description}</p>
+                  <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                    <SvgPreview svg={v.svg} />
+                  </div>
+
+                  {!saved && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleEditing(i)}
+                        disabled={isRegenerating}
+                        className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 active:bg-gray-50 disabled:opacity-40"
+                      >
+                        {isEditing ? "編集を終える" : "✏️ 編集する"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => regenerateSlide(i)}
+                        disabled={isRegenerating}
+                        className="rounded-lg border border-purple-200 px-3 py-1.5 text-xs font-medium text-purple-700 active:bg-purple-50 disabled:opacity-40"
+                      >
+                        {isRegenerating ? "作り直し中..." : "🔄 作り直す"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleDeleted(i)}
+                        disabled={isRegenerating}
+                        className="ml-auto rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 active:bg-red-50 disabled:opacity-40"
+                      >
+                        🗑 削除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {!saved ? (
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <button
+                type="button"
+                onClick={saveFinal}
+                disabled={saving || keptIndices.length === 0}
+                className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white transition active:bg-emerald-700 disabled:opacity-40"
+              >
+                {saving
+                  ? "登録中..."
+                  : `この${keptIndices.length}枚を確定して登録`}
+              </button>
+              {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-center shadow-sm">
+              <p className="text-2xl">✅</p>
+              <p className="mt-2 text-base font-bold text-emerald-900">この壁打ちは完了です</p>
+              <p className="mt-1 text-sm leading-relaxed text-emerald-800">
+                「{saved}」として成果物に登録しました。
+                {organization ? `${organization}向けの` : ""}
+                次回の提案・壁打ちの土台になります。
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-emerald-700">
+                ※ .pptx化は今回のスコープ外です。構成案とビジュアル方針の確定・保存までで、この壁打ちは終わりです。
+              </p>
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={resetToForm}
+                  className="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition active:bg-emerald-700"
+                >
+                  新しい壁打ちを始める
+                </button>
+                <Link
+                  href="/"
+                  className="flex-1 rounded-xl border border-emerald-300 bg-white px-4 py-2.5 text-center text-sm font-semibold text-emerald-700 active:bg-emerald-50"
+                >
+                  ホームに戻る
+                </Link>
+              </div>
+            </div>
           )}
         </div>
       )}

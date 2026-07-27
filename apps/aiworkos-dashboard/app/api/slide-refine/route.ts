@@ -11,16 +11,19 @@ export const maxDuration = 60;
 const MODEL = "claude-sonnet-5";
 
 type Msg = { role: "user" | "assistant"; content: string };
-type Slide = { title: string; bullets: string[] };
+type Slide = { section: "結論" | "根拠" | "アクション"; title: string; bullets: string[] };
+type VisualCandidate = { diagramType: string; description: string };
 type Visual = { diagramType: string; description: string; svg: string };
 
 const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
 これから作る1本のスライド資料について、吉井さんと「壁打ち」をして構成の土台を熟成させます。
 
-深掘りの軸（この3つを必ず埋める）:
-- 目的: このスライドが存在する理由。読んだ相手に何が変わってほしいのか。
+深掘りの軸:
+- 目的: このスライドが存在する理由。多くの場合、吉井さんが壁打ち開始時にカテゴリー選択済みなので既知の前提として扱う。指定された目的だけでは具体的な行動に移せないほど曖昧な場合（例:「新規開拓・提案」とだけあり具体性が無い場合）に限り、目的も深掘りする。
 - 聞き手: 誰が読むのか。相手は何を既に知っていて、何を気にしていて、その場でどこまで決められる立場か。
 - ゴール: このスライドが引き起こすべき、具体的な決定・行動は何か。
+
+基本方針として、目的はすでに大枠が与えられているため、質問は聞き手・ゴールを中心に組み立てること。
 
 深掘りのルール（厳守）:
 - 質問は「判断軸の発見」と「次のアクション」につながる前向きな問いにすること。
@@ -36,21 +39,46 @@ const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス
 - 画面はこの形式を頼りに問いを切り出し、1問ごとに入力欄を並べる。形式が崩れると吉井さんが答えにくくなる。
 - 聞き方を変えて問い直す場合は「**Q3（言い換え）. …**」のようにラベルに括弧書きを添える。
 
-進め方:
-- まずお題を読み、目的・聞き手・ゴールのうちまだ言語化されていないものを探す。
+進め方（重要: 2〜3往復での収束を目安にする）:
+- 目的はあらかじめ与えられていることが多いので、以前より少ない往復で済むはずである。聞き手・ゴールのうちまだ言語化されていないものを探し、2〜3往復のやり取りで十分な状態まで持っていくことを目指す。
 - 吉井さんの回答を受けたら、それを踏まえて更に深掘りするか、次の急所に移る。
-- 3つの軸が十分に埋まったと判断したら、その旨を伝え「もう構成案を作る」を促す。`;
+- 聞き手・ゴールが十分に固まったと判断したら、質問を続ける代わりに、その旨を伝えた上で「続けてもいいし、このまま構成案に進んでもいい」という趣旨を明示すること。例:「十分に固まってきました。さらに深掘りしたい点があれば続けて構いませんし、このまま「もう構成案を作る」に進んでも大丈夫です。」自然な言い回しでよいが、続行・前進のどちらも対等な選択肢として伝え、どちらかを強制しないこと。`;
 
+// 構成案・図解・作り直し・熟成まとめ用の軽量ペルソナ指示。
+// SYSTEM_PROMPT（面談用）は「**Q1. 見出し**」形式での出力を強く指示しており、
+// これをJSON schema制約の生成呼び出しにまで使い回すと、モデルがそのQ1形式の文章を
+// スライド本文として生成してしまう事故が起きる（実際に regenerate-slide で発生・確認済み）。
+// そのため面談以外のJSON生成呼び出しはすべてこちらを使う。
+const PERSONA_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
+スライド資料の内容を検討・作成する場面です。
+
+ルール:
+- 事実・数字・人名を憶測で創作しない。不明な点は一般的な想定で補うか、内容として無理に断定しない。
+- 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
+- 過度なポジティブや励ましは不要。簡潔・直接的に。
+- 出力は指定されたJSON schemaで要求されている内容そのものにすること。「**Q1.**」のような見出し記法や、面談・質問形式の文章を混ぜないこと。`;
+
+// スライド枚数指定なしの場合のデフォルトschema（5〜10枚程度、枚数は自由）。
 const OUTLINE_SCHEMA = {
   type: "object",
   properties: {
     slides: {
       type: "array",
       description:
-        "スライド構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。5〜10枚程度。",
+        "スライド構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。5〜10枚程度。" +
+        "結論→根拠→アクションの順で並んでいること。",
       items: {
         type: "object",
         properties: {
+          section: {
+            type: "string",
+            enum: ["結論", "根拠", "アクション"],
+            description:
+              "このスライドが構成上どこに位置するか。" +
+              "結論=最終的に伝えたい主張・お願いしたいこと（意思決定してほしい内容）を最初に明示する（1〜2枚）。" +
+              "根拠=その結論を裏付けるデータ・事実・比較などを積み上げる（複数枚）。" +
+              "アクション=相手に取ってほしい具体的な次の行動・意思決定事項で締める（1枚程度）。",
+          },
           title: { type: "string", description: "スライドの見出し" },
           bullets: {
             type: "array",
@@ -58,7 +86,7 @@ const OUTLINE_SCHEMA = {
             items: { type: "string" },
           },
         },
-        required: ["title", "bullets"],
+        required: ["section", "title", "bullets"],
         additionalProperties: false,
       },
     },
@@ -67,29 +95,68 @@ const OUTLINE_SCHEMA = {
   additionalProperties: false,
 };
 
-// AI生成SVGはクライアントでそのまま描画するため、生成時点である程度縛る。
-// ここでの縛りは信頼の担保ではなく品質のため。実際の安全対策はクライアント側のサニタイズで行う。
-const VISUALS_SCHEMA = {
+// 吉井さんがスライド枚数を指定した場合の schema。
+// 注: Anthropicの構造化出力は array の minItems/maxItems に 0/1 以外を指定できないため、
+// 枚数の強制はできない。schemaのdescriptionとプロンプト本文の指示で守らせる。
+function buildOutlineSchema(slideCount?: number | null) {
+  if (!slideCount || slideCount < 1) return OUTLINE_SCHEMA;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const schema = JSON.parse(JSON.stringify(OUTLINE_SCHEMA)) as any;
+  schema.properties.slides.description = `スライド構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。必ずちょうど${slideCount}枚（厳守）。結論→根拠→アクションの順で並んでいること。`;
+  return schema;
+}
+
+// SVG生成時の安全上の制約（Step A/Bでは使わず、Step C=render-visuals でのみ使う説明文）。
+const SVG_SAFETY_INSTRUCTION =
+  "単一の自己完結した <svg ...>...</svg> 文字列。viewBox=\"0 0 700 400\" 程度。" +
+  "rect/circle/line/path/polygon/text/g などの基本図形のみを使い、色・テキストはインラインで指定すること。" +
+  "<script> タグ、on から始まるイベント属性、<foreignObject>、外部参照の href/xlink:href、<image> タグは絶対に使わないこと。";
+
+// Step A: 図解パターンの候補提案（SVGはまだ作らない・軽量な呼び出し）。
+const VISUAL_CANDIDATES_SCHEMA = {
+  type: "object",
+  properties: {
+    proposals: {
+      type: "array",
+      description: "slidesと同じ順・同じ枚数。各要素がそのスライドの図解候補2〜3個。",
+      items: {
+        type: "object",
+        properties: {
+          candidates: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                diagramType: { type: "string" },
+                description: { type: "string" },
+              },
+              required: ["diagramType", "description"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["candidates"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["proposals"],
+  additionalProperties: false,
+};
+
+// Step C: 選ばれた図解パターンだけをSVGとして描画する（狭いスコープの生成）。
+const RENDER_VISUALS_SCHEMA = {
   type: "object",
   properties: {
     visuals: {
       type: "array",
-      description: "slides と同じ順・同じ枚数のビジュアル案。",
+      description: "choices と同じ順・同じ枚数の完成ビジュアル。",
       items: {
         type: "object",
         properties: {
-          diagramType: {
-            type: "string",
-            description: "図の種類（例: フロー図、比較表、ピラミッド、円グラフ風、単純な強調テキスト等）",
-          },
-          description: { type: "string", description: "この図が何を表しているかの短い説明" },
-          svg: {
-            type: "string",
-            description:
-              "単一の自己完結した <svg ...>...</svg> 文字列。viewBox=\"0 0 700 400\" 程度。" +
-              "rect/circle/line/path/polygon/text/g などの基本図形のみを使い、色・テキストはインラインで指定すること。" +
-              "<script> タグ、on から始まるイベント属性、<foreignObject>、外部参照の href/xlink:href、<image> タグは絶対に使わないこと。",
-          },
+          diagramType: { type: "string", description: "choicesで指定されたdiagramTypeをそのまま踏襲する" },
+          description: { type: "string", description: "choicesで指定されたdescriptionをそのまま踏襲する" },
+          svg: { type: "string", description: SVG_SAFETY_INSTRUCTION },
         },
         required: ["diagramType", "description", "svg"],
         additionalProperties: false,
@@ -97,6 +164,36 @@ const VISUALS_SCHEMA = {
     },
   },
   required: ["visuals"],
+  additionalProperties: false,
+};
+
+// 1枚だけの作り直し: 内容(section/title/bullets)とビジュアル(diagramType/description/svg)を
+// まとめて1回で作り直す。段階を分けると操作が重くなるため、1ボタン1呼び出しにする。
+const REGENERATE_SLIDE_SCHEMA = {
+  type: "object",
+  properties: {
+    slide: {
+      type: "object",
+      properties: {
+        section: { type: "string", enum: ["結論", "根拠", "アクション"] },
+        title: { type: "string" },
+        bullets: { type: "array", items: { type: "string" } },
+      },
+      required: ["section", "title", "bullets"],
+      additionalProperties: false,
+    },
+    visual: {
+      type: "object",
+      properties: {
+        diagramType: { type: "string" },
+        description: { type: "string" },
+        svg: { type: "string", description: SVG_SAFETY_INSTRUCTION },
+      },
+      required: ["diagramType", "description", "svg"],
+      additionalProperties: false,
+    },
+  },
+  required: ["slide", "visual"],
   additionalProperties: false,
 };
 
@@ -184,12 +281,18 @@ async function askClaude(
   theme: string,
   history: Msg[],
   organization?: string | null,
-  category?: string | null
+  category?: string | null,
+  purpose?: string | null
 ): Promise<string> {
   const linkInstruction =
     organization && organization.trim()
       ? `このスライドは特定の対象に紐付いています。対象: ${organization}（${category ?? "その他"}）。聞き手を深掘りする際はこの対象を踏まえてください。`
       : `特定の対象には紐付いていません。聞き手は汎用の想定で構いません。`;
+
+  const purposeInstruction =
+    purpose && purpose.trim()
+      ? `壁打ちの目的はすでに「${purpose}」として指定されています。目的について改めて尋ねる必要はありません。この目的だけでは具体的な行動に移せないほど曖昧な場合に限り目的も深掘りしてください。基本的には聞き手・ゴールの深掘りに重点を置いてください。`
+      : `壁打ちの目的はまだ指定されていません。目的・聞き手・ゴールの3つを深掘りしてください。`;
 
   const messages: Anthropic.MessageParam[] = [
     {
@@ -197,9 +300,11 @@ async function askClaude(
       content: `【お題】このスライドで伝えたいこと
 ${theme}
 
+${purposeInstruction}
+
 ${linkInstruction}
 
-このお題をもとに壁打ちを始めてください。目的・聞き手・ゴールのうち、まだ言語化されていないものを深掘りする質問を2〜3問投げてください。`,
+このお題をもとに壁打ちを始めてください。聞き手・ゴールを中心に、まだ言語化されていないものを深掘りする質問を2〜3問投げてください。`,
     },
   ];
   for (const m of history) {
@@ -230,17 +335,21 @@ export async function GET(req: NextRequest) {
   if (sessionId) {
     const messages = await loadMessages(supabaseUrl, anonKey, sessionId);
     const sres = await fetch(
-      `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=slides,visuals&id=eq.${sessionId}`,
+      `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=purpose,slides,visuals,visual_candidates&id=eq.${sessionId}`,
       { headers: restHeaders(anonKey), cache: "no-store" }
     );
     const srows = sres.ok ? await sres.json() : [];
+    const purpose = srows?.[0]?.purpose ?? null;
     const slides = Array.isArray(srows?.[0]?.slides) ? srows[0].slides : [];
     const visuals = Array.isArray(srows?.[0]?.visuals) ? srows[0].visuals : [];
-    return NextResponse.json({ messages, slides, visuals });
+    const visualCandidates = Array.isArray(srows?.[0]?.visual_candidates)
+      ? srows[0].visual_candidates
+      : [];
+    return NextResponse.json({ messages, purpose, slides, visuals, visual_candidates: visualCandidates });
   }
 
   const res = await fetch(
-    `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=id,theme,organization,category,title,updated_at&order=updated_at.desc&limit=20`,
+    `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=id,theme,organization,category,title,purpose,updated_at&order=updated_at.desc&limit=20`,
     { headers: restHeaders(anonKey), cache: "no-store" }
   );
   const sessions = res.ok ? await res.json() : [];
@@ -267,8 +376,15 @@ export async function POST(req: NextRequest) {
     theme?: unknown;
     organization?: unknown;
     category?: unknown;
+    purpose?: unknown;
     message?: unknown;
     slides?: unknown;
+    visuals?: unknown;
+    choices?: unknown;
+    slideCount?: unknown;
+    index?: unknown;
+    visual?: unknown;
+    slide?: unknown;
   };
   try {
     body = await req.json();
@@ -289,6 +405,8 @@ export async function POST(req: NextRequest) {
           : null;
       const category =
         typeof body.category === "string" && body.category.trim() ? body.category.trim() : null;
+      const purpose =
+        typeof body.purpose === "string" && body.purpose.trim() ? body.purpose.trim() : null;
       if (!theme) {
         return NextResponse.json({ error: "お題を入力してください" }, { status: 400 });
       }
@@ -296,7 +414,7 @@ export async function POST(req: NextRequest) {
       const created = await fetch(restUrl(supabaseUrl, "slide_refine_sessions"), {
         method: "POST",
         headers: restHeaders(serviceKey, { Prefer: "return=representation" }),
-        body: JSON.stringify({ theme, organization, category }),
+        body: JSON.stringify({ theme, organization, category, purpose }),
         cache: "no-store",
       });
       if (!created.ok) {
@@ -305,7 +423,7 @@ export async function POST(req: NextRequest) {
       const rows = await created.json();
       const session = Array.isArray(rows) ? rows[0] : rows;
 
-      const reply = await askClaude(client, theme, [], organization, category);
+      const reply = await askClaude(client, theme, [], organization, category, purpose);
       await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
 
       return NextResponse.json({
@@ -323,20 +441,21 @@ export async function POST(req: NextRequest) {
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,purpose&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
       const theme = srows?.[0]?.theme;
       const organization = srows?.[0]?.organization ?? null;
       const category = srows?.[0]?.category ?? null;
+      const purpose = srows?.[0]?.purpose ?? null;
       if (!theme) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
 
       await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
-      const reply = await askClaude(client, theme, history, organization, category);
+      const reply = await askClaude(client, theme, history, organization, category, purpose);
       await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
 
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });
@@ -348,6 +467,10 @@ export async function POST(req: NextRequest) {
       if (!sessionId) {
         return NextResponse.json({ error: "セッションIDが不正です" }, { status: 400 });
       }
+      const slideCount =
+        typeof body.slideCount === "number" && Number.isFinite(body.slideCount) && body.slideCount > 0
+          ? Math.round(body.slideCount)
+          : null;
       const sres = await fetch(
         `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
@@ -364,12 +487,16 @@ export async function POST(req: NextRequest) {
         .map((m) => `${m.role === "user" ? "吉井" : "参謀"}: ${m.content}`)
         .join("\n\n");
 
+      const slideCountInstruction = slideCount
+        ? `スライドの枚数はちょうど${slideCount}枚にしてください（結論・根拠・アクションの配分はこの${slideCount}枚に収まるよう調整すること）。`
+        : `スライド枚数の指定はありません。内容に応じて5〜10枚程度で構いません。`;
+
       const res = await client.messages.create({
         model: MODEL,
         max_tokens: 16000,
         thinking: { type: "adaptive" },
-        system: [{ type: "text", text: SYSTEM_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: OUTLINE_SCHEMA } },
+        system: [{ type: "text", text: PERSONA_PROMPT }],
+        output_config: { format: { type: "json_schema", schema: buildOutlineSchema(slideCount) } },
         messages: [
           {
             role: "user",
@@ -379,7 +506,13 @@ ${organization ? `【紐付く対象】${organization}` : ""}
 ==== 壁打ちの会話 ====
 ${transcript || "（まだ会話はありません。お題のみからスライド構成案を作ってください）"}
 
-この壁打ちの内容をもとに、スライド構成案を作ってください。指定のJSONスキーマで返してください。`,
+この壁打ちの内容をもとに、スライド構成案を作ってください。
+必ず「結論→根拠→アクション」の型で並べること。
+- 結論: 最終的に伝えたい主張・お願いしたいこと（意思決定してほしい内容）を最初に明示する。
+- 根拠: その結論を裏付けるデータ・事実・比較などを積み上げる。
+- アクション: 相手に取ってほしい具体的な次の行動・意思決定事項で締める。
+${slideCountInstruction}
+スライドは結論→根拠→アクションの順にすでに並んだ状態で返すこと（後で並べ替えない前提）。指定のJSONスキーマで返してください。`,
           },
         ],
       });
@@ -399,11 +532,75 @@ ${transcript || "（まだ会話はありません。お題のみからスライ
       return NextResponse.json({ slides: parsed.slides });
     }
 
-    // ── 図式化: (編集済みの可能性がある)構成案から、スライドごとの簡易ビジュアルを作る
-    if (action === "visualize") {
+    // ── 図解候補提案(Step A): (編集済みの可能性がある)構成案から、スライドごとに2〜3個の図解パターン候補を出す。
+    // SVGはまだ作らない（軽量・高速に保つ）。
+    if (action === "propose-visuals") {
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
       const slides = Array.isArray(body.slides) ? (body.slides as Slide[]) : null;
       if (!sessionId || !slides || slides.length === 0) {
+        return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
+      }
+
+      const sres = await fetch(
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization&id=eq.${sessionId}`,
+        { headers: restHeaders(anonKey), cache: "no-store" }
+      );
+      const srows = sres.ok ? await sres.json() : [];
+      const theme = srows?.[0]?.theme;
+      const organization = srows?.[0]?.organization ?? null;
+      if (!theme) {
+        return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
+      }
+
+      const slidesText = slides
+        .map((s, i) => `${i + 1}. [${s.section}] ${s.title}\n${s.bullets.map((b) => `- ${b}`).join("\n")}`)
+        .join("\n\n");
+
+      const res = await client.messages.create({
+        model: MODEL,
+        max_tokens: 16000,
+        thinking: { type: "adaptive" },
+        system: [{ type: "text", text: PERSONA_PROMPT }],
+        output_config: { format: { type: "json_schema", schema: VISUAL_CANDIDATES_SCHEMA } },
+        messages: [
+          {
+            role: "user",
+            content: `【お題】${theme}
+${organization ? `【紐付く対象】${organization}` : ""}
+
+==== スライド構成案 ====
+${slidesText}
+
+各スライドについて、その内容を一目で伝える図解パターンの候補を2〜3個提案してください。SVGはまだ不要です。
+インスピレーション例: 比較表・Before/After、フロー図・タイムライン、ピラミッド構造、KPI・数字強調カード。
+ただしこれらに縛られる必要はありません。そのスライドの内容に本当に合うパターンを選んでください
+（機械的に多様性を出したり、決まったリストを順番に回したりしないこと）。
+slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してください。`,
+          },
+        ],
+      });
+      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+      if (!tb) {
+        return NextResponse.json({ error: "図解候補の生成に失敗しました" }, { status: 502 });
+      }
+      const parsed = JSON.parse(tb.text) as { proposals: { candidates: VisualCandidate[] }[] };
+      const candidates = parsed.proposals.map((p) => p.candidates);
+
+      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+        method: "PATCH",
+        headers: restHeaders(serviceKey),
+        body: JSON.stringify({ slides, visual_candidates: candidates }),
+        cache: "no-store",
+      });
+
+      return NextResponse.json({ candidates });
+    }
+
+    // ── 図解描画(Step C): 吉井さんが選んだ候補（スライドごとに1個）だけをSVGとして描画する。
+    if (action === "render-visuals") {
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+      const choices = Array.isArray(body.choices) ? (body.choices as VisualCandidate[]) : null;
+      if (!sessionId || !choices || choices.length === 0) {
         return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
       }
 
@@ -417,43 +614,101 @@ ${transcript || "（まだ会話はありません。お題のみからスライ
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
 
-      const slidesText = slides
-        .map((s, i) => `${i + 1}. ${s.title}\n${s.bullets.map((b) => `- ${b}`).join("\n")}`)
-        .join("\n\n");
+      const choicesText = choices
+        .map((c, i) => `${i + 1}. [${c.diagramType}] ${c.description}`)
+        .join("\n");
 
       const res = await client.messages.create({
         model: MODEL,
         max_tokens: 16000,
         thinking: { type: "adaptive" },
-        system: [{ type: "text", text: SYSTEM_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: VISUALS_SCHEMA } },
+        system: [{ type: "text", text: PERSONA_PROMPT }],
+        output_config: { format: { type: "json_schema", schema: RENDER_VISUALS_SCHEMA } },
         messages: [
           {
             role: "user",
             content: `【お題】${theme}
 
-==== スライド構成案 ====
-${slidesText}
+==== 選ばれた図解パターン（スライドごとに1個・確定済み） ====
+${choicesText}
 
-各スライドの内容を一目で伝える簡易ビジュアルを、構成案と同じ順・同じ枚数だけ作ってください。
-文字だけのスライドでも、関係性・構造・強弱が伝わる図にしてください。指定のJSONスキーマで返してください。`,
+それぞれの図解パターンに従って、実際のSVGを描いてください。diagramTypeとdescriptionはそのまま踏襲し、svgだけ新規に作成してください。
+choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してください。`,
           },
         ],
       });
       const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
       if (!tb) {
-        return NextResponse.json({ error: "図式化に失敗しました" }, { status: 502 });
+        return NextResponse.json({ error: "図解の生成に失敗しました" }, { status: 502 });
       }
       const parsed = JSON.parse(tb.text) as { visuals: Visual[] };
 
       await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
-        body: JSON.stringify({ slides, visuals: parsed.visuals }),
+        body: JSON.stringify({ visuals: parsed.visuals }),
         cache: "no-store",
       });
 
       return NextResponse.json({ visuals: parsed.visuals });
+    }
+
+    // ── 1枚だけ作り直す: 納得いかないスライドの内容とビジュアルをまとめて再生成する。
+    if (action === "regenerate-slide") {
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+      const slide = body.slide as Slide | undefined;
+      if (!sessionId || !slide) {
+        return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
+      }
+      const currentVisual = body.visual as VisualCandidate | undefined;
+      const otherTitles = Array.isArray(body.slides)
+        ? (body.slides as Slide[]).map((s) => s.title).filter((t) => t && t !== slide.title)
+        : [];
+
+      const sres = await fetch(
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization&id=eq.${sessionId}`,
+        { headers: restHeaders(anonKey), cache: "no-store" }
+      );
+      const srows = sres.ok ? await sres.json() : [];
+      const theme = srows?.[0]?.theme;
+      const organization = srows?.[0]?.organization ?? null;
+      if (!theme) {
+        return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
+      }
+
+      const res = await client.messages.create({
+        model: MODEL,
+        max_tokens: 16000,
+        thinking: { type: "adaptive" },
+        system: [{ type: "text", text: PERSONA_PROMPT }],
+        output_config: { format: { type: "json_schema", schema: REGENERATE_SLIDE_SCHEMA } },
+        messages: [
+          {
+            role: "user",
+            content: `【お題】${theme}
+${organization ? `【紐付く対象】${organization}` : ""}
+
+==== 他のスライドの見出し（重複回避の参考。内容は変えない） ====
+${otherTitles.length > 0 ? otherTitles.map((t) => `- ${t}`).join("\n") : "（なし）"}
+
+==== 今のスライド（吉井さんが納得していない・作り直したい） ====
+セクション: ${slide.section}
+タイトル: ${slide.title}
+要点:
+${slide.bullets.map((b) => `- ${b}`).join("\n")}
+${currentVisual ? `現在の図解: [${currentVisual.diagramType}] ${currentVisual.description}` : ""}
+
+このスライド1枚だけを、同じセクション（${slide.section}）の役割を保ったまま、内容・図解ともに違う切り口で作り直してください。
+他のスライドとの重複は避け、セクションの並び順・枚数には影響を与えないこと。指定のJSONスキーマで返してください。`,
+          },
+        ],
+      });
+      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+      if (!tb) {
+        return NextResponse.json({ error: "作り直しに失敗しました" }, { status: 502 });
+      }
+      const parsed = JSON.parse(tb.text) as { slide: Slide; visual: Visual };
+      return NextResponse.json(parsed);
     }
 
     // ── 確定して登録: スライド一式を統合し、成果物として記憶層へ保存する
@@ -471,14 +726,32 @@ ${slidesText}
       const theme = row?.theme;
       const organization: string | null = row?.organization ?? null;
       const category: string = row?.category ?? "その他";
-      const slides: Slide[] = Array.isArray(row?.slides) ? row.slides : [];
-      const visuals: Visual[] = Array.isArray(row?.visuals) ? row.visuals : [];
+      // 吉井さんが最終プレビューで削除・編集した後の一覧が送られてきていれば、そちらを正とする
+      // （DBに保存済みの、削除前・編集前の一覧ではなく）。
+      const slides: Slide[] = Array.isArray(body.slides)
+        ? (body.slides as Slide[])
+        : Array.isArray(row?.slides)
+          ? row.slides
+          : [];
+      const visuals: Visual[] = Array.isArray(body.visuals)
+        ? (body.visuals as Visual[])
+        : Array.isArray(row?.visuals)
+          ? row.visuals
+          : [];
       if (!theme) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
       if (slides.length === 0) {
-        return NextResponse.json({ error: "スライド構成案がまだありません" }, { status: 400 });
+        return NextResponse.json({ error: "登録するスライドがありません（すべて削除されています）" }, { status: 400 });
       }
+
+      // 確定した一覧（削除・編集後）をセッションにも反映しておく。
+      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+        method: "PATCH",
+        headers: restHeaders(serviceKey),
+        body: JSON.stringify({ slides, visuals }),
+        cache: "no-store",
+      });
 
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       const transcript = history
@@ -495,7 +768,7 @@ ${slidesText}
         model: MODEL,
         max_tokens: 16000,
         thinking: { type: "adaptive" },
-        system: [{ type: "text", text: SYSTEM_PROMPT }],
+        system: [{ type: "text", text: PERSONA_PROMPT }],
         output_config: { format: { type: "json_schema", schema: SYNTHESIS_SCHEMA } },
         messages: [
           {
