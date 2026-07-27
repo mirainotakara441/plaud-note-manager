@@ -97,6 +97,10 @@ function SlideRefineInner() {
   const [deletedSlides, setDeletedSlides] = useState<Record<number, boolean>>({});
   const [editingSlide, setEditingSlide] = useState<Record<number, boolean>>({});
   const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
+  const [fixingSlide, setFixingSlide] = useState<Record<number, boolean>>({});
+  const [fixInstructions, setFixInstructions] = useState<Record<number, string>>({});
+  const [fixBusyIndex, setFixBusyIndex] = useState<number | null>(null);
+  const [retracting, setRetracting] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [outlining, setOutlining] = useState(false);
@@ -123,6 +127,13 @@ function SlideRefineInner() {
     loadSessions();
   }, [loadSessions]);
 
+  // ステージが切り替わるたびに前のスクロール位置が残ってしまい、短いビューポートだと
+  // 新しいステージの先頭が画面外になって「上半分が空白」に見える不具合があった。
+  // ステージ変更のたびに先頭へ戻す。
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [stage]);
+
   function resetToForm() {
     setSessionId(null);
     setStage("form");
@@ -136,6 +147,8 @@ function SlideRefineInner() {
     setVisuals([]);
     setDeletedSlides({});
     setEditingSlide({});
+    setFixingSlide({});
+    setFixInstructions({});
     setSaved(null);
     setError(null);
   }
@@ -210,6 +223,13 @@ function SlideRefineInner() {
       setCandidates(loadedCandidates);
       setSelected(loadedCandidates.map(() => 0));
       setVisuals(loadedVisuals);
+      setDeletedSlides({});
+      setEditingSlide({});
+      setFixingSlide({});
+      setFixInstructions({});
+      // 過去に「確定して登録」済みのセッションを開いた場合、完了パネルから再開する
+      // （titleは登録時にだけ付くので、これが有れば既に登録済みという判定にできる）。
+      if (loadedVisuals.length > 0 && s.title) setSaved(s.title);
       if (loadedVisuals.length > 0) setStage("visualize");
       else if (loadedCandidates.length > 0) setStage("diagrams");
       else if (loadedSlides.length > 0) setStage("outline");
@@ -324,10 +344,13 @@ function SlideRefineInner() {
     setError(null);
     setRendering(true);
     try {
-      const choices = slides.map((_, i) => {
+      // diagramType/descriptionだけでなく本文(title/bullets)も一緒に渡す。
+      // これが無いとSVG生成時にAIが文言・数値・年月を独自に埋めてしまう（事実誤りの原因）。
+      const choices = slides.map((s, i) => {
         const list = candidates[i] ?? [];
         const idx = selected[i] ?? 0;
-        return list[idx] ?? list[0] ?? { diagramType: "", description: "" };
+        const c = list[idx] ?? list[0] ?? { diagramType: "", description: "" };
+        return { ...c, slide: s };
       });
       const r = await fetch("/api/slide-refine", {
         method: "POST",
@@ -374,6 +397,65 @@ function SlideRefineInner() {
       setError("通信エラーが発生しました");
     } finally {
       setRegeneratingIndex(null);
+    }
+  }
+
+  function toggleFixing(i: number) {
+    setFixingSlide((prev) => ({ ...prev, [i]: !prev[i] }));
+  }
+
+  // 「ここを直す」: 全面作り直しではなく、指示した箇所だけの修正をベストエフォートで依頼する。
+  // 注意: SVGは毎回丸ごと再生成されるため、指示以外の箇所が完全に同一である保証はない。
+  async function fixSlide(i: number) {
+    if (!sessionId) return;
+    const instruction = (fixInstructions[i] ?? "").trim();
+    if (!instruction) return setError("修正したい内容を入力してください");
+    setError(null);
+    setFixBusyIndex(i);
+    try {
+      const r = await fetch("/api/slide-refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "fix-slide",
+          sessionId,
+          slide: slides[i],
+          visual: visuals[i],
+          instruction,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) return setError(d?.error ?? "修正に失敗しました");
+      setSlides((prev) => prev.map((s, idx) => (idx === i ? d.slide : s)));
+      setVisuals((prev) => prev.map((v, idx) => (idx === i ? d.visual : v)));
+      setFixingSlide((prev) => ({ ...prev, [i]: false }));
+      setFixInstructions((prev) => ({ ...prev, [i]: "" }));
+    } catch {
+      setError("通信エラーが発生しました");
+    } finally {
+      setFixBusyIndex(null);
+    }
+  }
+
+  // 登録済みの成果物を記憶から取り消す（誤り混入時のセーフティネット）。
+  async function retractSave() {
+    if (!sessionId) return;
+    setError(null);
+    setRetracting(true);
+    try {
+      const r = await fetch("/api/slide-refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "retract", sessionId }),
+      });
+      const d = await r.json();
+      if (!r.ok) return setError(d?.error ?? "取り消しに失敗しました");
+      setSaved(null);
+      loadSessions();
+    } catch {
+      setError("通信エラーが発生しました");
+    } finally {
+      setRetracting(false);
     }
   }
 
@@ -596,10 +678,10 @@ function SlideRefineInner() {
                     <textarea
                       value={answers[q.label] ?? ""}
                       onChange={(e) => setAnswers((prev) => ({ ...prev, [q.label]: e.target.value }))}
-                      rows={3}
+                      rows={5}
                       disabled={isSkipped}
                       placeholder="ここに答える（箇条書き・音声入力そのままでOK）"
-                      className="mt-3 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50 disabled:opacity-50"
+                      className="mt-3 block w-full resize-y rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50 disabled:opacity-50"
                     />
                     <button
                       type="button"
@@ -860,6 +942,41 @@ function SlideRefineInner() {
                     <SvgPreview svg={v.svg} />
                   </div>
 
+                  {!saved && !!fixingSlide[i] && (
+                    <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
+                      <label className="block text-xs font-medium text-purple-800">
+                        直したい内容を書いてください（それ以外はできる限り維持します）
+                      </label>
+                      <textarea
+                        value={fixInstructions[i] ?? ""}
+                        onChange={(e) =>
+                          setFixInstructions((prev) => ({ ...prev, [i]: e.target.value }))
+                        }
+                        rows={2}
+                        placeholder="例: SVG内の「郵便小為替」を「定額小為替」に直して"
+                        className="mt-2 block w-full rounded-lg border border-purple-300 bg-white px-2.5 py-2 text-sm text-gray-900 focus:outline-none"
+                      />
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => fixSlide(i)}
+                          disabled={fixBusyIndex === i}
+                          className="flex-1 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white active:bg-purple-700 disabled:opacity-40"
+                        >
+                          {fixBusyIndex === i ? "修正中..." : "この内容で直す"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleFixing(i)}
+                          disabled={fixBusyIndex === i}
+                          className="rounded-lg border border-purple-200 bg-white px-3 py-1.5 text-xs font-medium text-purple-700 disabled:opacity-40"
+                        >
+                          やめる
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {!saved && (
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
@@ -869,6 +986,14 @@ function SlideRefineInner() {
                         className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 active:bg-gray-50 disabled:opacity-40"
                       >
                         {isEditing ? "編集を終える" : "✏️ 編集する"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleFixing(i)}
+                        disabled={isRegenerating}
+                        className="rounded-lg border border-purple-200 px-3 py-1.5 text-xs font-medium text-purple-700 active:bg-purple-50 disabled:opacity-40"
+                      >
+                        🩹 ここを直す
                       </button>
                       <button
                         type="button"
@@ -934,6 +1059,15 @@ function SlideRefineInner() {
                   ホームに戻る
                 </Link>
               </div>
+              <button
+                type="button"
+                onClick={retractSave}
+                disabled={retracting}
+                className="mt-3 text-xs font-medium text-red-600 underline decoration-dotted active:opacity-70 disabled:opacity-40"
+              >
+                {retracting ? "取り消しています..." : "この登録を取り消す（記憶から削除）"}
+              </button>
+              {error && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
             </div>
           )}
         </div>

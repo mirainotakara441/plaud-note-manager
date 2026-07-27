@@ -56,7 +56,17 @@ const PERSONA_PROMPT = `あなたは、富士フイルムシステムサービ�
 - 事実・数字・人名を憶測で創作しない。不明な点は一般的な想定で補うか、内容として無理に断定しない。
 - 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
 - 過度なポジティブや励ましは不要。簡潔・直接的に。
-- 出力は指定されたJSON schemaで要求されている内容そのものにすること。「**Q1.**」のような見出し記法や、面談・質問形式の文章を混ぜないこと。`;
+- 出力は指定されたJSON schemaで要求されている内容そのものにすること。「**Q1.**」のような見出し記法や、面談・質問形式の文章を混ぜないこと。
+- 聞き手が自治体・議員・議員連盟など公的な立場の場合、特定企業の売り込みや対象への批判と受け取られる断定的な推奨表現（「〜すべき」「〜が必須」等）は避け、事実・環境変化の共有にとどめること。`;
+
+// SVG・スライド本文を生成させる際の事実グラウンディング指示。
+// render-visuals で「本文(bullets)を渡さずにSVGを描かせていたため、モデルが日付・用語を
+// 独自に埋めて事実誤りが混入する」という不具合が実際に発生した（2026-07-27 使用テストで検出）。
+// 本文を必ず渡した上で、この指示を添えることで防ぐ。
+const NO_FABRICATION_INSTRUCTION =
+  "文言・数値・年月・固有名詞は、対応するスライド本文（title/bullets）に書かれている内容だけを使うこと。" +
+  "本文に無い事実・数値・年月・注釈を新たに作らない。期間や日付の計算（「残りn年」等）を自分で行わない。" +
+  "用語は本文の表記に一字一句正確に合わせ、言い換えない（例:「定額小為替」を「郵便小為替」等に変えない）。";
 
 // スライド枚数指定なしの場合のデフォルトschema（5〜10枚程度、枚数は自由）。
 const OUTLINE_SCHEMA = {
@@ -110,7 +120,8 @@ function buildOutlineSchema(slideCount?: number | null) {
 const SVG_SAFETY_INSTRUCTION =
   "単一の自己完結した <svg ...>...</svg> 文字列。viewBox=\"0 0 700 400\" 程度。" +
   "rect/circle/line/path/polygon/text/g などの基本図形のみを使い、色・テキストはインラインで指定すること。" +
-  "<script> タグ、on から始まるイベント属性、<foreignObject>、外部参照の href/xlink:href、<image> タグは絶対に使わないこと。";
+  "<script> タグ、on から始まるイベント属性、<foreignObject>、外部参照の href/xlink:href、<image> タグは絶対に使わないこと。" +
+  NO_FABRICATION_INSTRUCTION;
 
 // Step A: 図解パターンの候補提案（SVGはまだ作らない・軽量な呼び出し）。
 const VISUAL_CANDIDATES_SCHEMA = {
@@ -385,6 +396,7 @@ export async function POST(req: NextRequest) {
     index?: unknown;
     visual?: unknown;
     slide?: unknown;
+    instruction?: unknown;
   };
   try {
     body = await req.json();
@@ -488,8 +500,13 @@ export async function POST(req: NextRequest) {
         .join("\n\n");
 
       const slideCountInstruction = slideCount
-        ? `スライドの枚数はちょうど${slideCount}枚にしてください（結論・根拠・アクションの配分はこの${slideCount}枚に収まるよう調整すること）。`
-        : `スライド枚数の指定はありません。内容に応じて5〜10枚程度で構いません。`;
+        ? slideCount === 1
+          ? `スライドは1枚だけにしてください。結論・根拠・アクションの要素を1枚に統合しますが、` +
+            `本文(bullets)に「【結論】」「【根拠】」「【アクション】」のようなラベル文字列を書き込まないこと` +
+            `（セクション分類はsectionフィールドだけで表現し、本文には現れないようにする）。` +
+            `要点(bullets)は多くても4個までにすること。`
+          : `スライドの枚数はちょうど${slideCount}枚にしてください（結論・根拠・アクションの配分はこの${slideCount}枚に収まるよう調整すること）。要点(bullets)は各スライド3〜5個を超えないこと。`
+        : `スライド枚数の指定はありません。内容に応じて5〜10枚程度で構いません。要点(bullets)は各スライド3〜5個を超えないこと。`;
 
       const res = await client.messages.create({
         model: MODEL,
@@ -599,7 +616,9 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
     // ── 図解描画(Step C): 吉井さんが選んだ候補（スライドごとに1個）だけをSVGとして描画する。
     if (action === "render-visuals") {
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
-      const choices = Array.isArray(body.choices) ? (body.choices as VisualCandidate[]) : null;
+      const choices = Array.isArray(body.choices)
+        ? (body.choices as (VisualCandidate & { slide?: Slide })[])
+        : null;
       if (!sessionId || !choices || choices.length === 0) {
         return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
       }
@@ -614,9 +633,17 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
 
+      // 重要: 図解の材料はここで渡すスライド本文だけ。diagramType/descriptionは
+      // 「どんな図か」の指示に過ぎず、文言・数値・年月の出所にはならない
+      // （本文を渡さずSVGを描かせていたことが、事実誤り混入の根本原因だった）。
       const choicesText = choices
-        .map((c, i) => `${i + 1}. [${c.diagramType}] ${c.description}`)
-        .join("\n");
+        .map((c, i) => {
+          const slideBlock = c.slide
+            ? `タイトル: ${c.slide.title}\n要点:\n${c.slide.bullets.map((b) => `- ${b}`).join("\n")}`
+            : "（本文情報なし。図解の説明文だけを頼りに、事実を創作しない範囲で描くこと）";
+          return `${i + 1}. [${c.diagramType}] ${c.description}\n--- このスライドの本文（図解の文言・数値・年月はここだけから取ること） ---\n${slideBlock}`;
+        })
+        .join("\n\n");
 
       const res = await client.messages.create({
         model: MODEL,
@@ -629,10 +656,11 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
             role: "user",
             content: `【お題】${theme}
 
-==== 選ばれた図解パターン（スライドごとに1個・確定済み） ====
+==== 選ばれた図解パターンとスライド本文（スライドごとに1個・確定済み） ====
 ${choicesText}
 
 それぞれの図解パターンに従って、実際のSVGを描いてください。diagramTypeとdescriptionはそのまま踏襲し、svgだけ新規に作成してください。
+${NO_FABRICATION_INSTRUCTION}
 choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してください。`,
           },
         ],
@@ -709,6 +737,96 @@ ${currentVisual ? `現在の図解: [${currentVisual.diagramType}] ${currentVisu
       }
       const parsed = JSON.parse(tb.text) as { slide: Slide; visual: Visual };
       return NextResponse.json(parsed);
+    }
+
+    // ── ここを直す: 全面作り直しではなく、吉井さんの自然文の指示だけを反映する。
+    // 注意: SVGは毎回丸ごと再生成されるため「指示箇所以外は一字一句同一」までは保証できない
+    // （ベストエフォート）。それ以外の変更は避けるよう強く指示するが、完全な差分適用ではない。
+    if (action === "fix-slide") {
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+      const slide = body.slide as Slide | undefined;
+      const visual = body.visual as Visual | undefined;
+      const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";
+      if (!sessionId || !slide || !visual || !instruction) {
+        return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
+      }
+
+      const sres = await fetch(
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization&id=eq.${sessionId}`,
+        { headers: restHeaders(anonKey), cache: "no-store" }
+      );
+      const srows = sres.ok ? await sres.json() : [];
+      const theme = srows?.[0]?.theme;
+      if (!theme) {
+        return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
+      }
+
+      // 注: thinking:adaptiveを付けると、現在のSVG全文を入力に含む都合上、実測で100秒超かかり
+      // Vercelの maxDuration=60 を超えて本番で失敗する恐れがあった（2026-07-27確認）。
+      // このアクションは「指示された箇所だけを直す」狭い作業なので、深い思考は不要と判断し外した。
+      const res = await client.messages.create({
+        model: MODEL,
+        max_tokens: 8000,
+        system: [{ type: "text", text: PERSONA_PROMPT }],
+        output_config: { format: { type: "json_schema", schema: REGENERATE_SLIDE_SCHEMA } },
+        messages: [
+          {
+            role: "user",
+            content: `【お題】${theme}
+${srows?.[0]?.organization ? `【紐付く対象】${srows[0].organization}` : ""}
+
+==== 今のスライド ====
+セクション: ${slide.section}
+タイトル: ${slide.title}
+要点:
+${slide.bullets.map((b) => `- ${b}`).join("\n")}
+
+==== 今のビジュアル ====
+図解の種類: ${visual.diagramType}
+説明: ${visual.description}
+現在のSVG:
+${visual.svg}
+
+==== 吉井さんからの修正指示 ====
+${instruction}
+
+この指示された箇所だけを変更してください。指示に関係ない文言・数値・レイアウト・配色・図解パターン・構図は、できる限りそのまま維持すること
+（丸ごと作り直すのではなく、指示箇所以外は「今の状態」を踏襲する）。
+${NO_FABRICATION_INSTRUCTION}
+セクション・並び順への影響は与えないこと。修正後のslideとvisual一式を、指定のJSONスキーマで返してください。`,
+          },
+        ],
+      });
+      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+      if (!tb) {
+        return NextResponse.json({ error: "修正に失敗しました" }, { status: 502 });
+      }
+      const parsed = JSON.parse(tb.text) as { slide: Slide; visual: Visual };
+      return NextResponse.json(parsed);
+    }
+
+    // ── 登録の取り消し: 記憶層(memory_chunks)に登録済みの成果物を削除する（汚染防止のセーフティネット）。
+    if (action === "retract") {
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+      if (!sessionId) {
+        return NextResponse.json({ error: "セッションIDが不正です" }, { status: 400 });
+      }
+      const purged = await fetch(`${supabaseUrl}/functions/v1/purge-memory`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ source_id_prefix: `slide-refine:${sessionId}` }),
+        cache: "no-store",
+      });
+      if (!purged.ok) {
+        return NextResponse.json({ error: "取り消しに失敗しました" }, { status: 502 });
+      }
+      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+        method: "PATCH",
+        headers: restHeaders(serviceKey),
+        body: JSON.stringify({ title: null }),
+        cache: "no-store",
+      });
+      return NextResponse.json({ retracted: true });
     }
 
     // ── 確定して登録: スライド一式を統合し、成果物として記憶層へ保存する
