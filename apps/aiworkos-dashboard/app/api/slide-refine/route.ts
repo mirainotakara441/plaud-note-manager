@@ -68,6 +68,21 @@ const NO_FABRICATION_INSTRUCTION =
   "本文に無い事実・数値・年月・注釈を新たに作らない。期間や日付の計算（「残りn年」等）を自分で行わない。" +
   "用語は本文の表記に一字一句正確に合わせ、言い換えない（例:「定額小為替」を「郵便小為替」等に変えない）。";
 
+// SVGを生成させる呼び出し（render-visuals/regenerate-slide/fix-slide）は、モデルが「今日」を
+// 知らないまま期間計算をして誤る事故が実際に起きた（例:「残り約5年」の誤り。正しくは約3年）。
+// 呼び出し時点の日付をプロンプトに明示することで、期間の言及がある場合に基準日を与える。
+function todayContext(): string {
+  const today = new Date().toISOString().slice(0, 10);
+  return `【今日の日付】${today}。期間・残り年数などに言及する場合は、本文に明記された年月とこの日付から計算した場合に限り許可する。それ以外の期間・残り年数を憶測で書かないこと。`;
+}
+
+// 壁打ちの会話から抽出した「デッキ全体で守るべき制約」（トーン・用語・避けるべき論点）を
+// 下流の各生成呼び出しに配る。無ければ空文字を返し、プロンプトには何も追加しない。
+function constraintsBlock(constraints?: string | null): string {
+  const c = constraints?.trim();
+  return c ? `\n==== 守るべき制約（壁打ちの会話から抽出） ====\n${c}\n` : "";
+}
+
 // スライド枚数指定なしの場合のデフォルトschema（5〜10枚程度、枚数は自由）。
 const OUTLINE_SCHEMA = {
   type: "object",
@@ -100,8 +115,17 @@ const OUTLINE_SCHEMA = {
         additionalProperties: false,
       },
     },
+    constraints: {
+      type: "array",
+      description:
+        "この壁打ちの会話全体から抽出した、スライド全体を通して守るべき制約。" +
+        "トーン・言い回しの制約（例:断定的な推奨表現を避ける）、用語の指定・表記統一、" +
+        "触れてはいけない・避けるべき論点など。会話に明示的な言及が無ければ空配列でよい。" +
+        "この後の図解生成・作り直し・登録の各工程に渡されるので、簡潔な一文ずつにすること。",
+      items: { type: "string" },
+    },
   },
-  required: ["slides"],
+  required: ["slides", "constraints"],
   additionalProperties: false,
 };
 
@@ -500,11 +524,11 @@ export async function POST(req: NextRequest) {
         .join("\n\n");
 
       const slideCountInstruction = slideCount
-        ? slideCount === 1
-          ? `スライドは1枚だけにしてください。結論・根拠・アクションの要素を1枚に統合しますが、` +
+        ? slideCount <= 2
+          ? `スライドは${slideCount}枚だけにしてください。結論・根拠・アクションの要素を${slideCount}枚に統合しますが、` +
             `本文(bullets)に「【結論】」「【根拠】」「【アクション】」のようなラベル文字列を書き込まないこと` +
             `（セクション分類はsectionフィールドだけで表現し、本文には現れないようにする）。` +
-            `要点(bullets)は多くても4個までにすること。`
+            `要点(bullets)は各スライド多くても4個までにすること。`
           : `スライドの枚数はちょうど${slideCount}枚にしてください（結論・根拠・アクションの配分はこの${slideCount}枚に収まるよう調整すること）。要点(bullets)は各スライド3〜5個を超えないこと。`
         : `スライド枚数の指定はありません。内容に応じて5〜10枚程度で構いません。要点(bullets)は各スライド3〜5個を超えないこと。`;
 
@@ -529,7 +553,12 @@ ${transcript || "（まだ会話はありません。お題のみからスライ
 - 根拠: その結論を裏付けるデータ・事実・比較などを積み上げる。
 - アクション: 相手に取ってほしい具体的な次の行動・意思決定事項で締める。
 ${slideCountInstruction}
-スライドは結論→根拠→アクションの順にすでに並んだ状態で返すこと（後で並べ替えない前提）。指定のJSONスキーマで返してください。`,
+スライドは結論→根拠→アクションの順にすでに並んだ状態で返すこと（後で並べ替えない前提）。
+
+あわせて、この壁打ちの会話の中で吉井さんが述べた「デッキ全体で守るべき制約」があれば抽出してください
+（例:「自治体批判ではなく環境変化の共有にとどめる」「用語は正式名称で統一する」等）。
+明示的な言及が無ければ空配列で構いません。憶測で作らないこと。
+指定のJSONスキーマで返してください。`,
           },
         ],
       });
@@ -537,16 +566,20 @@ ${slideCountInstruction}
       if (!tb) {
         return NextResponse.json({ error: "構成案の生成に失敗しました" }, { status: 502 });
       }
-      const parsed = JSON.parse(tb.text) as { slides: Slide[] };
+      const parsed = JSON.parse(tb.text) as { slides: Slide[]; constraints?: string[] };
+      const constraints = Array.isArray(parsed.constraints) ? parsed.constraints.filter(Boolean) : [];
 
       await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
-        body: JSON.stringify({ slides: parsed.slides }),
+        body: JSON.stringify({
+          slides: parsed.slides,
+          constraints: constraints.length > 0 ? constraints.join("\n") : null,
+        }),
         cache: "no-store",
       });
 
-      return NextResponse.json({ slides: parsed.slides });
+      return NextResponse.json({ slides: parsed.slides, constraints });
     }
 
     // ── 図解候補提案(Step A): (編集済みの可能性がある)構成案から、スライドごとに2〜3個の図解パターン候補を出す。
@@ -559,7 +592,7 @@ ${slideCountInstruction}
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -584,7 +617,7 @@ ${slideCountInstruction}
             role: "user",
             content: `【お題】${theme}
 ${organization ? `【紐付く対象】${organization}` : ""}
-
+${constraintsBlock(srows?.[0]?.constraints)}
 ==== スライド構成案 ====
 ${slidesText}
 
@@ -624,7 +657,7 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,constraints&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -655,12 +688,13 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
           {
             role: "user",
             content: `【お題】${theme}
-
+${constraintsBlock(srows?.[0]?.constraints)}
 ==== 選ばれた図解パターンとスライド本文（スライドごとに1個・確定済み） ====
 ${choicesText}
 
 それぞれの図解パターンに従って、実際のSVGを描いてください。diagramTypeとdescriptionはそのまま踏襲し、svgだけ新規に作成してください。
 ${NO_FABRICATION_INSTRUCTION}
+${todayContext()}
 choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してください。`,
           },
         ],
@@ -694,7 +728,7 @@ choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してく
         : [];
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -715,7 +749,7 @@ choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してく
             role: "user",
             content: `【お題】${theme}
 ${organization ? `【紐付く対象】${organization}` : ""}
-
+${constraintsBlock(srows?.[0]?.constraints)}
 ==== 他のスライドの見出し（重複回避の参考。内容は変えない） ====
 ${otherTitles.length > 0 ? otherTitles.map((t) => `- ${t}`).join("\n") : "（なし）"}
 
@@ -727,7 +761,10 @@ ${slide.bullets.map((b) => `- ${b}`).join("\n")}
 ${currentVisual ? `現在の図解: [${currentVisual.diagramType}] ${currentVisual.description}` : ""}
 
 このスライド1枚だけを、同じセクション（${slide.section}）の役割を保ったまま、内容・図解ともに違う切り口で作り直してください。
-他のスライドとの重複は避け、セクションの並び順・枚数には影響を与えないこと。指定のJSONスキーマで返してください。`,
+他のスライドとの重複は避け、セクションの並び順・枚数には影響を与えないこと。
+新しい内容は本文(title/bullets)の中だけで完結させ、図解(svg)の文言・数値・年月も本文と一致させること。
+${todayContext()}
+指定のJSONスキーマで返してください。`,
           },
         ],
       });
@@ -752,7 +789,7 @@ ${currentVisual ? `現在の図解: [${currentVisual.diagramType}] ${currentVisu
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -774,7 +811,7 @@ ${currentVisual ? `現在の図解: [${currentVisual.diagramType}] ${currentVisu
             role: "user",
             content: `【お題】${theme}
 ${srows?.[0]?.organization ? `【紐付く対象】${srows[0].organization}` : ""}
-
+${constraintsBlock(srows?.[0]?.constraints)}
 ==== 今のスライド ====
 セクション: ${slide.section}
 タイトル: ${slide.title}
@@ -793,6 +830,7 @@ ${instruction}
 この指示された箇所だけを変更してください。指示に関係ない文言・数値・レイアウト・配色・図解パターン・構図は、できる限りそのまま維持すること
 （丸ごと作り直すのではなく、指示箇所以外は「今の状態」を踏襲する）。
 ${NO_FABRICATION_INSTRUCTION}
+${todayContext()}
 セクション・並び順への影響は与えないこと。修正後のslideとvisual一式を、指定のJSONスキーマで返してください。`,
           },
         ],
@@ -836,7 +874,7 @@ ${NO_FABRICATION_INSTRUCTION}
         return NextResponse.json({ error: "セッションIDが不正です" }, { status: 400 });
       }
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,slides,visuals&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,slides,visuals,constraints&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -893,7 +931,7 @@ ${NO_FABRICATION_INSTRUCTION}
             role: "user",
             content: `【お題】${theme}
 ${organization ? `【紐付く対象】${organization}（${category}）` : ""}
-
+${constraintsBlock(row?.constraints)}
 ==== 壁打ちの会話 ====
 ${transcript || "（会話なし）"}
 

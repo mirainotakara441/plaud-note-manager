@@ -56,6 +56,31 @@ function sanitizeSvg(raw: string): string | null {
   return s;
 }
 
+// 文言だけをLLM無しで直接書き換える（「ここを直す」はAI任せで別の誤りを生むことがあるため、
+// 用語1つを直すような単純な修正はここで確実・即時・無料に済ませる）。
+function getSvgTextContents(svg: string): string[] {
+  try {
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    if (doc.querySelector("parsererror")) return [];
+    return Array.from(doc.querySelectorAll("text")).map((t) => t.textContent ?? "");
+  } catch {
+    return [];
+  }
+}
+
+function setSvgTextContent(svg: string, index: number, value: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    if (doc.querySelector("parsererror")) return svg;
+    const texts = doc.querySelectorAll("text");
+    if (!texts[index]) return svg;
+    texts[index].textContent = value;
+    return new XMLSerializer().serializeToString(doc.documentElement);
+  } catch {
+    return svg;
+  }
+}
+
 function SvgPreview({ svg }: { svg: string }) {
   const safe = sanitizeSvg(svg);
   if (!safe) {
@@ -101,6 +126,7 @@ function SlideRefineInner() {
   const [fixInstructions, setFixInstructions] = useState<Record<number, string>>({});
   const [fixBusyIndex, setFixBusyIndex] = useState<number | null>(null);
   const [retracting, setRetracting] = useState(false);
+  const [textEditIndex, setTextEditIndex] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [outlining, setOutlining] = useState(false);
@@ -149,6 +175,7 @@ function SlideRefineInner() {
     setEditingSlide({});
     setFixingSlide({});
     setFixInstructions({});
+    setTextEditIndex(null);
     setSaved(null);
     setError(null);
   }
@@ -227,6 +254,7 @@ function SlideRefineInner() {
       setEditingSlide({});
       setFixingSlide({});
       setFixInstructions({});
+      setTextEditIndex(null);
       // 過去に「確定して登録」済みのセッションを開いた場合、完了パネルから再開する
       // （titleは登録時にだけ付くので、これが有れば既に登録済みという判定にできる）。
       if (loadedVisuals.length > 0 && s.title) setSaved(s.title);
@@ -402,6 +430,17 @@ function SlideRefineInner() {
 
   function toggleFixing(i: number) {
     setFixingSlide((prev) => ({ ...prev, [i]: !prev[i] }));
+  }
+
+  function toggleTextEdit(i: number) {
+    setTextEditIndex((prev) => (prev === i ? null : i));
+  }
+
+  // 文言修正はAIを呼ばず、SVG内の<text>要素をその場で直接書き換える。確実・即時・無料。
+  function updateVisualSvgText(i: number, textIndex: number, value: string) {
+    setVisuals((prev) =>
+      prev.map((v, idx) => (idx === i ? { ...v, svg: setSvgTextContent(v.svg, textIndex, value) } : v))
+    );
   }
 
   // 「ここを直す」: 全面作り直しではなく、指示した箇所だけの修正をベストエフォートで依頼する。
@@ -942,6 +981,35 @@ function SlideRefineInner() {
                     <SvgPreview svg={v.svg} />
                   </div>
 
+                  {!saved && textEditIndex === i && (
+                    <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+                      <p className="text-xs font-medium text-indigo-800">
+                        図解内の文言をそのまま書き換えます（AIは使いません・即時反映）
+                      </p>
+                      <div className="mt-2 space-y-1.5">
+                        {getSvgTextContents(v.svg).length === 0 && (
+                          <p className="text-xs text-gray-400">書き換え可能な文言が見つかりませんでした</p>
+                        )}
+                        {getSvgTextContents(v.svg).map((t, ti) => (
+                          <input
+                            key={ti}
+                            type="text"
+                            value={t}
+                            onChange={(e) => updateVisualSvgText(i, ti, e.target.value)}
+                            className="block w-full rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:outline-none"
+                          />
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setTextEditIndex(null)}
+                        className="mt-2 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700"
+                      >
+                        閉じる
+                      </button>
+                    </div>
+                  )}
+
                   {!saved && !!fixingSlide[i] && (
                     <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
                       <label className="block text-xs font-medium text-purple-800">
@@ -986,6 +1054,14 @@ function SlideRefineInner() {
                         className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 active:bg-gray-50 disabled:opacity-40"
                       >
                         {isEditing ? "編集を終える" : "✏️ 編集する"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleTextEdit(i)}
+                        disabled={isRegenerating}
+                        className="rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-medium text-indigo-700 active:bg-indigo-50 disabled:opacity-40"
+                      >
+                        🔤 文言を直す
                       </button>
                       <button
                         type="button"
