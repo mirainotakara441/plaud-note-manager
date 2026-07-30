@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
+import { findTemplate, sectionNames, type SlideTemplate } from "@/lib/slideTemplates";
 
 // スライド壁打ち。/refine（対象との関係の熟成）のスライド版。
 // お題（伝えたいこと）を軸に、目的・聞き手・ゴールをAIが深掘り → スライド構成案 → 簡易ビジュアル →
@@ -11,7 +12,9 @@ export const maxDuration = 60;
 const MODEL = "claude-sonnet-5";
 
 type Msg = { role: "user" | "assistant"; content: string };
-type Slide = { section: "結論" | "根拠" | "アクション"; title: string; bullets: string[] };
+// sectionは選んだテンプレート(lib/slideTemplates.ts)のセクション名のいずれか。
+// テンプレートごとに名称が変わるためstringにしている（厳密なenum制約はschema側で都度組み立てる）。
+type Slide = { section: string; title: string; bullets: string[] };
 type VisualCandidate = { diagramType: string; description: string };
 type Visual = { diagramType: string; description: string; svg: string };
 
@@ -83,61 +86,57 @@ function constraintsBlock(constraints?: string | null): string {
   return c ? `\n==== 守るべき制約（壁打ちの会話から抽出） ====\n${c}\n` : "";
 }
 
-// スライド枚数指定なしの場合のデフォルトschema（5〜10枚程度、枚数は自由）。
-const OUTLINE_SCHEMA = {
-  type: "object",
-  properties: {
-    slides: {
-      type: "array",
-      description:
-        "スライド構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。5〜10枚程度。" +
-        "結論→根拠→アクションの順で並んでいること。",
-      items: {
-        type: "object",
-        properties: {
-          section: {
-            type: "string",
-            enum: ["結論", "根拠", "アクション"],
-            description:
-              "このスライドが構成上どこに位置するか。" +
-              "結論=最終的に伝えたい主張・お願いしたいこと（意思決定してほしい内容）を最初に明示する（1〜2枚）。" +
-              "根拠=その結論を裏付けるデータ・事実・比較などを積み上げる（複数枚）。" +
-              "アクション=相手に取ってほしい具体的な次の行動・意思決定事項で締める（1枚程度）。",
-          },
-          title: { type: "string", description: "スライドの見出し" },
-          bullets: {
-            type: "array",
-            description: "そのスライドに載せる要点。3〜5個。",
-            items: { type: "string" },
-          },
-        },
-        required: ["section", "title", "bullets"],
-        additionalProperties: false,
-      },
-    },
-    constraints: {
-      type: "array",
-      description:
-        "この壁打ちの会話全体から抽出した、スライド全体を通して守るべき制約。" +
-        "トーン・言い回しの制約（例:断定的な推奨表現を避ける）、用語の指定・表記統一、" +
-        "触れてはいけない・避けるべき論点など。会話に明示的な言及が無ければ空配列でよい。" +
-        "この後の図解生成・作り直し・登録の各工程に渡されるので、簡潔な一文ずつにすること。",
-      items: { type: "string" },
-    },
-  },
-  required: ["slides", "constraints"],
-  additionalProperties: false,
-};
-
-// 吉井さんがスライド枚数を指定した場合の schema。
+// 構成案schemaをテンプレート（lib/slideTemplates.ts）とスライド枚数指定から組み立てる。
 // 注: Anthropicの構造化出力は array の minItems/maxItems に 0/1 以外を指定できないため、
 // 枚数の強制はできない。schemaのdescriptionとプロンプト本文の指示で守らせる。
-function buildOutlineSchema(slideCount?: number | null) {
-  if (!slideCount || slideCount < 1) return OUTLINE_SCHEMA;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const schema = JSON.parse(JSON.stringify(OUTLINE_SCHEMA)) as any;
-  schema.properties.slides.description = `スライド構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。必ずちょうど${slideCount}枚（厳守）。結論→根拠→アクションの順で並んでいること。`;
-  return schema;
+function buildOutlineSchema(template: SlideTemplate, slideCount?: number | null) {
+  const names = sectionNames(template);
+  const order = names.join("→");
+  const sectionDescription = template.sections
+    .map((s) => `${s.name}=${s.guidance}（${s.countHint}）。`)
+    .join("");
+  const slidesDescription = slideCount
+    ? `スライド構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。必ずちょうど${slideCount}枚（厳守）。${order}の順で並んでいること。`
+    : `スライド構成案。1要素が1枚。表紙は不要で、中身のスライドだけ。5〜10枚程度。${order}の順で並んでいること。`;
+
+  return {
+    type: "object",
+    properties: {
+      slides: {
+        type: "array",
+        description: slidesDescription,
+        items: {
+          type: "object",
+          properties: {
+            section: {
+              type: "string",
+              enum: names,
+              description: `このスライドが構成上どこに位置するか。${sectionDescription}`,
+            },
+            title: { type: "string", description: "スライドの見出し" },
+            bullets: {
+              type: "array",
+              description: "そのスライドに載せる要点。3〜5個。",
+              items: { type: "string" },
+            },
+          },
+          required: ["section", "title", "bullets"],
+          additionalProperties: false,
+        },
+      },
+      constraints: {
+        type: "array",
+        description:
+          "この壁打ちの会話全体から抽出した、スライド全体を通して守るべき制約。" +
+          "トーン・言い回しの制約（例:断定的な推奨表現を避ける）、用語の指定・表記統一、" +
+          "触れてはいけない・避けるべき論点など。会話に明示的な言及が無ければ空配列でよい。" +
+          "この後の図解生成・作り直し・登録の各工程に渡されるので、簡潔な一文ずつにすること。",
+        items: { type: "string" },
+      },
+    },
+    required: ["slides", "constraints"],
+    additionalProperties: false,
+  };
 }
 
 // SVG生成時の安全上の制約（Step A/Bでは使わず、Step C=render-visuals でのみ使う説明文）。
@@ -204,33 +203,37 @@ const RENDER_VISUALS_SCHEMA = {
 
 // 1枚だけの作り直し: 内容(section/title/bullets)とビジュアル(diagramType/description/svg)を
 // まとめて1回で作り直す。段階を分けると操作が重くなるため、1ボタン1呼び出しにする。
-const REGENERATE_SLIDE_SCHEMA = {
-  type: "object",
-  properties: {
-    slide: {
-      type: "object",
-      properties: {
-        section: { type: "string", enum: ["結論", "根拠", "アクション"] },
-        title: { type: "string" },
-        bullets: { type: "array", items: { type: "string" } },
+// sectionのenumはそのセッションで選ばれたテンプレートのセクション名に合わせて組み立てる
+// （regenerate-slide/fix-slideの両方で使う）。
+function buildRegenerateSlideSchema(template: SlideTemplate) {
+  return {
+    type: "object",
+    properties: {
+      slide: {
+        type: "object",
+        properties: {
+          section: { type: "string", enum: sectionNames(template) },
+          title: { type: "string" },
+          bullets: { type: "array", items: { type: "string" } },
+        },
+        required: ["section", "title", "bullets"],
+        additionalProperties: false,
       },
-      required: ["section", "title", "bullets"],
-      additionalProperties: false,
-    },
-    visual: {
-      type: "object",
-      properties: {
-        diagramType: { type: "string" },
-        description: { type: "string" },
-        svg: { type: "string", description: SVG_SAFETY_INSTRUCTION },
+      visual: {
+        type: "object",
+        properties: {
+          diagramType: { type: "string" },
+          description: { type: "string" },
+          svg: { type: "string", description: SVG_SAFETY_INSTRUCTION },
+        },
+        required: ["diagramType", "description", "svg"],
+        additionalProperties: false,
       },
-      required: ["diagramType", "description", "svg"],
-      additionalProperties: false,
     },
-  },
-  required: ["slide", "visual"],
-  additionalProperties: false,
-};
+    required: ["slide", "visual"],
+    additionalProperties: false,
+  };
+}
 
 const SYNTHESIS_SCHEMA = {
   type: "object",
@@ -370,21 +373,29 @@ export async function GET(req: NextRequest) {
   if (sessionId) {
     const messages = await loadMessages(supabaseUrl, anonKey, sessionId);
     const sres = await fetch(
-      `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=purpose,slides,visuals,visual_candidates&id=eq.${sessionId}`,
+      `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=purpose,slides,visuals,visual_candidates,template_id&id=eq.${sessionId}`,
       { headers: restHeaders(anonKey), cache: "no-store" }
     );
     const srows = sres.ok ? await sres.json() : [];
     const purpose = srows?.[0]?.purpose ?? null;
+    const templateId = srows?.[0]?.template_id ?? null;
     const slides = Array.isArray(srows?.[0]?.slides) ? srows[0].slides : [];
     const visuals = Array.isArray(srows?.[0]?.visuals) ? srows[0].visuals : [];
     const visualCandidates = Array.isArray(srows?.[0]?.visual_candidates)
       ? srows[0].visual_candidates
       : [];
-    return NextResponse.json({ messages, purpose, slides, visuals, visual_candidates: visualCandidates });
+    return NextResponse.json({
+      messages,
+      purpose,
+      templateId,
+      slides,
+      visuals,
+      visual_candidates: visualCandidates,
+    });
   }
 
   const res = await fetch(
-    `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=id,theme,organization,category,title,purpose,updated_at&order=updated_at.desc&limit=20`,
+    `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=id,theme,organization,category,title,purpose,template_id,updated_at&order=updated_at.desc&limit=20`,
     { headers: restHeaders(anonKey), cache: "no-store" }
   );
   const sessions = res.ok ? await res.json() : [];
@@ -417,6 +428,7 @@ export async function POST(req: NextRequest) {
     visuals?: unknown;
     choices?: unknown;
     slideCount?: unknown;
+    templateId?: unknown;
     index?: unknown;
     visual?: unknown;
     slide?: unknown;
@@ -443,6 +455,10 @@ export async function POST(req: NextRequest) {
         typeof body.category === "string" && body.category.trim() ? body.category.trim() : null;
       const purpose =
         typeof body.purpose === "string" && body.purpose.trim() ? body.purpose.trim() : null;
+      const templateId =
+        typeof body.templateId === "string" && body.templateId.trim()
+          ? findTemplate(body.templateId).id
+          : findTemplate(null).id;
       if (!theme) {
         return NextResponse.json({ error: "お題を入力してください" }, { status: 400 });
       }
@@ -450,7 +466,7 @@ export async function POST(req: NextRequest) {
       const created = await fetch(restUrl(supabaseUrl, "slide_refine_sessions"), {
         method: "POST",
         headers: restHeaders(serviceKey, { Prefer: "return=representation" }),
-        body: JSON.stringify({ theme, organization, category, purpose }),
+        body: JSON.stringify({ theme, organization, category, purpose, template_id: templateId }),
         cache: "no-store",
       });
       if (!created.ok) {
@@ -507,8 +523,10 @@ export async function POST(req: NextRequest) {
         typeof body.slideCount === "number" && Number.isFinite(body.slideCount) && body.slideCount > 0
           ? Math.round(body.slideCount)
           : null;
+      const requestedTemplateId =
+        typeof body.templateId === "string" && body.templateId.trim() ? body.templateId.trim() : null;
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,template_id&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -517,6 +535,12 @@ export async function POST(req: NextRequest) {
       if (!theme) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
+      // 構成案生成時にテンプレートを選び直せる（未指定ならセッション作成時に決めたものを使う）。
+      const template = findTemplate(requestedTemplateId ?? srows?.[0]?.template_id);
+      const order = sectionNames(template).join("→");
+      const sectionGuidance = template.sections
+        .map((s) => `- ${s.name}: ${s.guidance}（${s.countHint}）`)
+        .join("\n");
 
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       const transcript = history
@@ -525,11 +549,11 @@ export async function POST(req: NextRequest) {
 
       const slideCountInstruction = slideCount
         ? slideCount <= 2
-          ? `スライドは${slideCount}枚だけにしてください。結論・根拠・アクションの要素を${slideCount}枚に統合しますが、` +
-            `本文(bullets)に「【結論】」「【根拠】」「【アクション】」のようなラベル文字列を書き込まないこと` +
+          ? `スライドは${slideCount}枚だけにしてください。${order}の要素を${slideCount}枚に統合しますが、` +
+            `本文(bullets)に${sectionNames(template).map((n) => `「【${n}】」`).join("")}のようなラベル文字列を書き込まないこと` +
             `（セクション分類はsectionフィールドだけで表現し、本文には現れないようにする）。` +
             `要点(bullets)は各スライド多くても4個までにすること。`
-          : `スライドの枚数はちょうど${slideCount}枚にしてください（結論・根拠・アクションの配分はこの${slideCount}枚に収まるよう調整すること）。要点(bullets)は各スライド3〜5個を超えないこと。`
+          : `スライドの枚数はちょうど${slideCount}枚にしてください（${order}の配分はこの${slideCount}枚に収まるよう調整すること）。要点(bullets)は各スライド3〜5個を超えないこと。`
         : `スライド枚数の指定はありません。内容に応じて5〜10枚程度で構いません。要点(bullets)は各スライド3〜5個を超えないこと。`;
 
       const res = await client.messages.create({
@@ -537,7 +561,7 @@ export async function POST(req: NextRequest) {
         max_tokens: 16000,
         thinking: { type: "adaptive" },
         system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: buildOutlineSchema(slideCount) } },
+        output_config: { format: { type: "json_schema", schema: buildOutlineSchema(template, slideCount) } },
         messages: [
           {
             role: "user",
@@ -548,12 +572,10 @@ ${organization ? `【紐付く対象】${organization}` : ""}
 ${transcript || "（まだ会話はありません。お題のみからスライド構成案を作ってください）"}
 
 この壁打ちの内容をもとに、スライド構成案を作ってください。
-必ず「結論→根拠→アクション」の型で並べること。
-- 結論: 最終的に伝えたい主張・お願いしたいこと（意思決定してほしい内容）を最初に明示する。
-- 根拠: その結論を裏付けるデータ・事実・比較などを積み上げる。
-- アクション: 相手に取ってほしい具体的な次の行動・意思決定事項で締める。
+必ず「${order}」の型で並べること。
+${sectionGuidance}
 ${slideCountInstruction}
-スライドは結論→根拠→アクションの順にすでに並んだ状態で返すこと（後で並べ替えない前提）。
+スライドは${order}の順にすでに並んだ状態で返すこと（後で並べ替えない前提）。
 
 あわせて、この壁打ちの会話の中で吉井さんが述べた「デッキ全体で守るべき制約」があれば抽出してください
 （例:「自治体批判ではなく環境変化の共有にとどめる」「用語は正式名称で統一する」等）。
@@ -575,11 +597,12 @@ ${slideCountInstruction}
         body: JSON.stringify({
           slides: parsed.slides,
           constraints: constraints.length > 0 ? constraints.join("\n") : null,
+          template_id: template.id,
         }),
         cache: "no-store",
       });
 
-      return NextResponse.json({ slides: parsed.slides, constraints });
+      return NextResponse.json({ slides: parsed.slides, constraints, templateId: template.id });
     }
 
     // ── 図解候補提案(Step A): (編集済みの可能性がある)構成案から、スライドごとに2〜3個の図解パターン候補を出す。
@@ -728,12 +751,13 @@ choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してく
         : [];
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints,template_id&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
       const theme = srows?.[0]?.theme;
       const organization = srows?.[0]?.organization ?? null;
+      const template = findTemplate(srows?.[0]?.template_id);
       if (!theme) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
@@ -743,7 +767,7 @@ choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してく
         max_tokens: 16000,
         thinking: { type: "adaptive" },
         system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: REGENERATE_SLIDE_SCHEMA } },
+        output_config: { format: { type: "json_schema", schema: buildRegenerateSlideSchema(template) } },
         messages: [
           {
             role: "user",
@@ -789,11 +813,12 @@ ${todayContext()}
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints,template_id&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
       const theme = srows?.[0]?.theme;
+      const template = findTemplate(srows?.[0]?.template_id);
       if (!theme) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
@@ -805,7 +830,7 @@ ${todayContext()}
         model: MODEL,
         max_tokens: 8000,
         system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: REGENERATE_SLIDE_SCHEMA } },
+        output_config: { format: { type: "json_schema", schema: buildRegenerateSlideSchema(template) } },
         messages: [
           {
             role: "user",

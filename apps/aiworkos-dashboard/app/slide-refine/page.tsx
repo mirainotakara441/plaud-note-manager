@@ -4,13 +4,15 @@ import Link from "next/link";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import StakeholderPicker, { type Category } from "@/app/components/StakeholderPicker";
 import { composeReply, parseQuestions, stripBold } from "@/lib/parseQuestions";
+import { SLIDE_TEMPLATES, findTemplate, sectionBadgeClass } from "@/lib/slideTemplates";
 
 // スライド壁打ち。/refine（対象との関係の熟成）のスライド版。
 // お題（このスライドで伝えたいこと）を軸に、目的・聞き手・ゴールを深掘り →
 // スライド構成案 → 簡易ビジュアル → 成果物として記憶に登録、という一本の流れ。
 
 type Msg = { role: "user" | "assistant"; content: string };
-type Slide = { section: "結論" | "根拠" | "アクション"; title: string; bullets: string[] };
+// sectionは選んだテンプレート(lib/slideTemplates.ts)のセクション名のいずれか（テンプレートごとに変わる）。
+type Slide = { section: string; title: string; bullets: string[] };
 type VisualCandidate = { diagramType: string; description: string };
 type Visual = { diagramType: string; description: string; svg: string };
 type Session = {
@@ -20,6 +22,7 @@ type Session = {
   category: string | null;
   title: string | null;
   purpose: string | null;
+  template_id: string | null;
   updated_at: string;
 };
 type Stage = "form" | "chat" | "outline" | "diagrams" | "visualize";
@@ -34,12 +37,6 @@ const PURPOSE_PRESETS = [
   "契約更新・アップセル",
   "その他",
 ] as const;
-
-const SECTION_BADGE_CLASS: Record<Slide["section"], string> = {
-  結論: "bg-amber-100 text-amber-700",
-  根拠: "bg-sky-100 text-sky-700",
-  アクション: "bg-emerald-100 text-emerald-700",
-};
 
 // AI生成のSVGはユーザー向けに描画される未検証の文字列なので、自前のクライアントとはいえ
 // 信用しきらずに軽く消毒する（多層防御。生成時点の縛りだけに頼らない）。
@@ -58,23 +55,48 @@ function sanitizeSvg(raw: string): string | null {
 
 // 文言だけをLLM無しで直接書き換える（「ここを直す」はAI任せで別の誤りを生むことがあるため、
 // 用語1つを直すような単純な修正はここで確実・即時・無料に済ませる）。
-function getSvgTextContents(svg: string): string[] {
+//
+// <text>が<tspan>で複数行に分かれているケース（例:
+// <text><tspan>1行目</tspan><tspan>2行目</tspan></text>）で、
+// 親<text>のtextContentをそのまま上書きすると複数のtspanが1本のテキストに潰れて
+// レイアウトが壊れる。tspanがあればtspan単位を編集対象にし、無い<text>だけを
+// テキストノード単位で扱う。pathは[textIndex]または[textIndex, tspanIndex]。
+type SvgTextEntry = { path: [number] | [number, number]; value: string };
+
+function getSvgTextEntries(svg: string): SvgTextEntry[] {
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
     if (doc.querySelector("parsererror")) return [];
-    return Array.from(doc.querySelectorAll("text")).map((t) => t.textContent ?? "");
+    const entries: SvgTextEntry[] = [];
+    Array.from(doc.querySelectorAll("text")).forEach((t, ti) => {
+      const tspans = Array.from(t.querySelectorAll("tspan"));
+      if (tspans.length > 0) {
+        tspans.forEach((ts, tsi) => entries.push({ path: [ti, tsi], value: ts.textContent ?? "" }));
+      } else {
+        entries.push({ path: [ti], value: t.textContent ?? "" });
+      }
+    });
+    return entries;
   } catch {
     return [];
   }
 }
 
-function setSvgTextContent(svg: string, index: number, value: string): string {
+function setSvgTextEntry(svg: string, path: [number] | [number, number], value: string): string {
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
     if (doc.querySelector("parsererror")) return svg;
     const texts = doc.querySelectorAll("text");
-    if (!texts[index]) return svg;
-    texts[index].textContent = value;
+    const t = texts[path[0]];
+    if (!t) return svg;
+    if (path.length === 2) {
+      const tspans = t.querySelectorAll("tspan");
+      const ts = tspans[path[1]];
+      if (!ts) return svg;
+      ts.textContent = value;
+    } else {
+      t.textContent = value;
+    }
     return new XMLSerializer().serializeToString(doc.documentElement);
   } catch {
     return svg;
@@ -104,6 +126,7 @@ function SlideRefineInner() {
   const [theme, setTheme] = useState("");
   const [purposeCategory, setPurposeCategory] = useState<string>(PURPOSE_PRESETS[0]);
   const [purposeCustom, setPurposeCustom] = useState("");
+  const [templateId, setTemplateId] = useState<string>(SLIDE_TEMPLATES[0].id);
   const [linkTarget, setLinkTarget] = useState(false);
   const [category, setCategory] = useState<Category>("自治体");
   const [organization, setOrganization] = useState("");
@@ -127,6 +150,8 @@ function SlideRefineInner() {
   const [fixBusyIndex, setFixBusyIndex] = useState<number | null>(null);
   const [retracting, setRetracting] = useState(false);
   const [textEditIndex, setTextEditIndex] = useState<number | null>(null);
+  const [queuedPptx, setQueuedPptx] = useState(false);
+  const [orderingPptx, setOrderingPptx] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [outlining, setOutlining] = useState(false);
@@ -138,6 +163,7 @@ function SlideRefineInner() {
 
   // その他が選ばれていれば自由記述、それ以外はプリセットのラベルそのものがpurpose文字列になる。
   const purpose = purposeCategory === "その他" ? purposeCustom.trim() : purposeCategory;
+  const template = findTemplate(templateId);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -176,6 +202,7 @@ function SlideRefineInner() {
     setFixingSlide({});
     setFixInstructions({});
     setTextEditIndex(null);
+    setQueuedPptx(false);
     setSaved(null);
     setError(null);
   }
@@ -195,6 +222,7 @@ function SlideRefineInner() {
           action: "start",
           theme: theme.trim(),
           purpose,
+          templateId,
           organization: linkTarget ? organization.trim() : undefined,
           category: linkTarget ? category : undefined,
         }),
@@ -221,6 +249,7 @@ function SlideRefineInner() {
       const d = await r.json();
       setSessionId(s.id);
       setTheme(s.theme);
+      setTemplateId(findTemplate(d?.templateId ?? s.template_id).id);
       const loadedPurpose: string | null = d?.purpose ?? s.purpose ?? null;
       if (loadedPurpose && (PURPOSE_PRESETS as readonly string[]).includes(loadedPurpose)) {
         setPurposeCategory(loadedPurpose);
@@ -436,10 +465,10 @@ function SlideRefineInner() {
     setTextEditIndex((prev) => (prev === i ? null : i));
   }
 
-  // 文言修正はAIを呼ばず、SVG内の<text>要素をその場で直接書き換える。確実・即時・無料。
-  function updateVisualSvgText(i: number, textIndex: number, value: string) {
+  // 文言修正はAIを呼ばず、SVG内のテキスト（tspan単位・無ければtext単位）をその場で直接書き換える。確実・即時・無料。
+  function updateVisualSvgText(i: number, path: [number] | [number, number], value: string) {
     setVisuals((prev) =>
-      prev.map((v, idx) => (idx === i ? { ...v, svg: setSvgTextContent(v.svg, textIndex, value) } : v))
+      prev.map((v, idx) => (idx === i ? { ...v, svg: setSvgTextEntry(v.svg, path, value) } : v))
     );
   }
 
@@ -532,6 +561,41 @@ function SlideRefineInner() {
     }
   }
 
+  // /weapons と同じ起票方式（kind: "slides"）に乗せる。実際の.pptx清書はMacの
+  // Claude Code（integration-workerスキル・slide-architectスキル）が担う。
+  // 図解(SVG)はこの起票には含まれない — 本文(タイトル・箇条書き)のみが引き継がれる。
+  async function orderPptx() {
+    setError(null);
+    setOrderingPptx(true);
+    try {
+      const finalSlides = keptIndices.map((i) => ({
+        title: slides[i].title,
+        bullets: slides[i].bullets,
+      }));
+      const r = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "slides",
+          params: {
+            organization: organization || undefined,
+            title: saved ?? theme,
+            slides: finalSlides,
+          },
+        }),
+      });
+      if (!r.ok) {
+        const d = await r.json();
+        return setError(d?.error ?? "起票に失敗しました");
+      }
+      setQueuedPptx(true);
+    } catch {
+      setError("通信エラーが発生しました");
+    } finally {
+      setOrderingPptx(false);
+    }
+  }
+
   return (
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
       <header className="mb-6">
@@ -575,6 +639,23 @@ function SlideRefineInner() {
               placeholder="未入力ならAIにお任せ（5〜10枚程度）"
               className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-600">構成案の型</label>
+            <select
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              disabled={loading}
+              className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+            >
+              {SLIDE_TEMPLATES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-400">{template.description}</p>
           </div>
 
           <div>
@@ -784,7 +865,7 @@ function SlideRefineInner() {
               <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${SECTION_BADGE_CLASS[s.section]}`}
+                    className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${sectionBadgeClass(template, s.section)}`}
                   >
                     {s.section}
                   </span>
@@ -832,7 +913,7 @@ function SlideRefineInner() {
               <div key={i} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${SECTION_BADGE_CLASS[s.section]}`}
+                    className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${sectionBadgeClass(template, s.section)}`}
                   >
                     {s.section}
                   </span>
@@ -931,7 +1012,7 @@ function SlideRefineInner() {
                   <div className="flex items-center gap-2">
                     {s && (
                       <span
-                        className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${SECTION_BADGE_CLASS[s.section]}`}
+                        className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold ${sectionBadgeClass(template, s.section)}`}
                       >
                         {s.section}
                       </span>
@@ -987,15 +1068,15 @@ function SlideRefineInner() {
                         図解内の文言をそのまま書き換えます（AIは使いません・即時反映）
                       </p>
                       <div className="mt-2 space-y-1.5">
-                        {getSvgTextContents(v.svg).length === 0 && (
+                        {getSvgTextEntries(v.svg).length === 0 && (
                           <p className="text-xs text-gray-400">書き換え可能な文言が見つかりませんでした</p>
                         )}
-                        {getSvgTextContents(v.svg).map((t, ti) => (
+                        {getSvgTextEntries(v.svg).map((entry) => (
                           <input
-                            key={ti}
+                            key={entry.path.join("-")}
                             type="text"
-                            value={t}
-                            onChange={(e) => updateVisualSvgText(i, ti, e.target.value)}
+                            value={entry.value}
+                            onChange={(e) => updateVisualSvgText(i, entry.path, e.target.value)}
                             className="block w-full rounded-md border border-indigo-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:outline-none"
                           />
                         ))}
@@ -1117,9 +1198,6 @@ function SlideRefineInner() {
                 {organization ? `${organization}向けの` : ""}
                 次回の提案・壁打ちの土台になります。
               </p>
-              <p className="mt-2 text-xs leading-relaxed text-emerald-700">
-                ※ .pptx化は今回のスコープ外です。構成案とビジュアル方針の確定・保存までで、この壁打ちは終わりです。
-              </p>
               <div className="mt-4 flex gap-2">
                 <button
                   type="button"
@@ -1135,6 +1213,31 @@ function SlideRefineInner() {
                   ホームに戻る
                 </Link>
               </div>
+
+              <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 text-left">
+                <button
+                  type="button"
+                  onClick={orderPptx}
+                  disabled={orderingPptx || queuedPptx}
+                  className="w-full rounded-xl bg-gray-800 px-4 py-2.5 text-sm font-semibold text-white transition active:bg-gray-900 disabled:opacity-40"
+                >
+                  {queuedPptx
+                    ? "注文しました"
+                    : orderingPptx
+                      ? "起票しています..."
+                      : `この${keptIndices.length}枚をpptxで清書する（注文）`}
+                </button>
+                <p className="mt-2 text-xs leading-relaxed text-gray-500">
+                  本文（タイトル・箇条書き）を本物のテンプレートで清書します。図解(SVG)はこの起票には含まれません
+                  — Macの実行役（Claude Code）が処理するので、次に「取込ジョブを処理して」と言うと.pptxが作られます。
+                </p>
+                {queuedPptx && (
+                  <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    ✅ 注文を積みました。ホームのジョブ一覧で状態を確認できます。
+                  </p>
+                )}
+              </div>
+
               <button
                 type="button"
                 onClick={retractSave}
