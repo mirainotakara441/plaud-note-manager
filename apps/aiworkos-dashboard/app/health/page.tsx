@@ -49,6 +49,43 @@ function toPoints(days: DayRow[], key: keyof DayRow): Point[] {
   return days.map((d) => ({ day: d.day, value: (d[key] as number | null) ?? null }));
 }
 
+// 日次の点を「月曜はじまりの週」ごとにまとめて平均を出す。
+// 日報録の週次稼働時間と同じ週の切り方（月〜日）に揃えている。
+function weeklyAverages(points: Point[]): {
+  weekStart: string;
+  avg: number;
+  days: number;
+}[] {
+  const buckets = new Map<string, number[]>();
+  for (const p of points) {
+    if (p.value == null) continue;
+    const [y, m, d] = p.day.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    const back = (dt.getDay() + 6) % 7; // 月曜=0 になるよう補正
+    const monday = new Date(y, m - 1, d - back);
+    const key = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(
+      monday.getDate()
+    ).padStart(2, "0")}`;
+    const arr = buckets.get(key) ?? [];
+    arr.push(p.value);
+    buckets.set(key, arr);
+  }
+  return Array.from(buckets.entries())
+    .map(([weekStart, vals]) => ({
+      weekStart,
+      avg: vals.reduce((a, b) => a + b, 0) / vals.length,
+      days: vals.length,
+    }))
+    .sort((a, b) => (a.weekStart < b.weekStart ? 1 : -1));
+}
+
+// 「7/27〜8/2」の形にする（月曜〜日曜）
+function weekRangeLabel(monday: string) {
+  const [y, m, d] = monday.split("-").map(Number);
+  const sun = new Date(y, m - 1, d + 6);
+  return `${m}/${d}〜${sun.getMonth() + 1}/${sun.getDate()}`;
+}
+
 function Section({ children }: { children: React.ReactNode }) {
   return (
     <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -63,6 +100,40 @@ export default function HealthPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showTable, setShowTable] = useState(false);
+  // 目標値（health_goals）。吉井さんが自分で入れるもので、既定値は持たせない。
+  const [goals, setGoals] = useState<Record<string, number>>({});
+  const [goalDraft, setGoalDraft] = useState<string>("");
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [savingGoal, setSavingGoal] = useState(false);
+
+  const loadGoals = useCallback(async () => {
+    try {
+      const res = await fetch("/api/health/goals", { cache: "no-store" });
+      const json = await res.json();
+      setGoals(json?.goals ?? {});
+    } catch {
+      // 目標は補助表示なので、取れなくてもページは出す
+      setGoals({});
+    }
+  }, []);
+
+  async function saveWeightGoal(target: number | null) {
+    setSavingGoal(true);
+    try {
+      const res = await fetch("/api/health/goals", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ metric: "weight_kg", target }),
+      });
+      if (!res.ok) throw new Error();
+      await loadGoals();
+      setEditingGoal(false);
+    } catch {
+      setError("目標の保存に失敗しました");
+    } finally {
+      setSavingGoal(false);
+    }
+  }
 
   const load = useCallback(async (days: number) => {
     setLoading(true);
@@ -93,6 +164,10 @@ export default function HealthPage() {
     load(rangeDays);
   }, [rangeDays, load]);
 
+  useEffect(() => {
+    loadGoals();
+  }, [loadGoals]);
+
   const days = useMemo(() => data?.days ?? [], [data]);
 
   const weightPoints = useMemo(() => toPoints(days, "weight_kg"), [days]);
@@ -107,6 +182,15 @@ export default function HealthPage() {
   const last7Steps = average(stepsPoints.slice(-7).map((p) => p.value));
   const last7Kcal = average(kcalPoints.slice(-7).map((p) => p.value));
   const avgWalkSpeed = average(walkingSpeedPoints.map((p) => p.value));
+
+  // 週ごとの平均歩数（月〜日）。直近8週ぶんを新しい順に。
+  const stepsByWeek = useMemo(() => weeklyAverages(stepsPoints).slice(0, 8), [stepsPoints]);
+  const stepsWeekMax = stepsByWeek.reduce((a, w) => Math.max(a, w.avg), 0);
+
+  // 体重の目標との差。目標未設定なら null。
+  const weightGoal = goals.weight_kg ?? null;
+  const weightGap =
+    weightGoal != null && latestWeight != null ? latestWeight - weightGoal : null;
   const avgStepLength = average(toPoints(days, "walking_step_length_cm").map((p) => p.value));
 
   // カロミル欠測期間の告知（連続30日以上のkcal欠測があれば表示）
@@ -225,7 +309,11 @@ export default function HealthPage() {
             <ChartTitle
               color={HEALTH_COLORS.weight}
               title="体重の推移"
-              hint="7日移動平均（太線）／実測（薄線）"
+              hint={
+                weightGoal != null
+                  ? `7日移動平均（太線）／実測（薄線）／目標 ${weightGoal}kg（破線）`
+                  : "7日移動平均（太線）／実測（薄線）"
+              }
             />
             <LineChart
               points={weightPoints}
@@ -233,7 +321,83 @@ export default function HealthPage() {
               maWindow={7}
               unit="kg"
               valueFormat={(v) => v.toFixed(1)}
+              goal={weightGoal}
             />
+
+            {/* 目標体重。値は吉井さんが入れるもので、こちらで既定値は置かない。 */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-gray-50 px-3 py-2">
+              {!editingGoal ? (
+                <>
+                  <span className="text-sm text-gray-500">目標体重</span>
+                  <span className="text-sm font-bold text-gray-900">
+                    {weightGoal != null ? `${weightGoal}kg` : "未設定"}
+                  </span>
+                  {weightGap != null && (
+                    <span
+                      className={`text-sm font-medium ${
+                        weightGap > 0 ? "text-rose-600" : "text-emerald-600"
+                      }`}
+                    >
+                      {weightGap > 0
+                        ? `あと −${weightGap.toFixed(1)}kg`
+                        : `達成 +${Math.abs(weightGap).toFixed(1)}kg`}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGoalDraft(weightGoal != null ? String(weightGoal) : "");
+                      setEditingGoal(true);
+                    }}
+                    className="ml-auto text-sm font-medium text-indigo-600 active:opacity-70"
+                  >
+                    {weightGoal != null ? "変更" : "設定する"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label className="text-sm text-gray-500" htmlFor="weight-goal">
+                    目標体重
+                  </label>
+                  <input
+                    id="weight-goal"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    value={goalDraft}
+                    onChange={(e) => setGoalDraft(e.target.value)}
+                    placeholder="例 68.0"
+                    className="w-24 rounded-lg border border-gray-300 px-2 py-1 text-base text-gray-900 focus:border-indigo-500 focus:outline-none"
+                  />
+                  <span className="text-sm text-gray-500">kg</span>
+                  <button
+                    type="button"
+                    disabled={savingGoal || !goalDraft.trim()}
+                    onClick={() => saveWeightGoal(Number(goalDraft))}
+                    className="rounded-lg bg-indigo-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-40 active:scale-95"
+                  >
+                    {savingGoal ? "保存中…" : "保存"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingGoal(false)}
+                    className="text-sm text-gray-500 active:opacity-70"
+                  >
+                    取消
+                  </button>
+                  {weightGoal != null && (
+                    <button
+                      type="button"
+                      disabled={savingGoal}
+                      onClick={() => saveWeightGoal(null)}
+                      className="ml-auto text-sm text-rose-600 active:opacity-70"
+                    >
+                      目標を消す
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
 
             <div className="mt-5 border-t border-gray-100 pt-4">
               <ChartTitle color={HEALTH_COLORS.bodyFat} title="体脂肪率の推移" hint="7日移動平均（太線）" />
@@ -251,6 +415,44 @@ export default function HealthPage() {
           <Section>
             <ChartTitle color={HEALTH_COLORS.steps} title="歩数の推移" hint={`直近7日平均 ${last7Steps != null ? Math.round(last7Steps).toLocaleString() : "—"}歩`} />
             <BarChart points={stepsPoints} color={HEALTH_COLORS.steps} unit="歩" />
+
+            {/* 週ごとの平均歩数（月〜日）。日報録の週次と同じ週の切り方に揃えている。 */}
+            {stepsByWeek.length > 0 && (
+              <div className="mt-5 border-t border-gray-100 pt-4">
+                <div className="mb-3 flex items-baseline justify-between gap-2">
+                  <h3 className="text-sm font-bold text-gray-500">週ごとの平均歩数</h3>
+                  <span className="text-[0.6875rem] text-gray-400">月〜日</span>
+                </div>
+                <ul className="space-y-2">
+                  {stepsByWeek.map((w) => (
+                    <li key={w.weekStart} className="flex items-center gap-2">
+                      <span className="w-20 shrink-0 text-sm tabular-nums text-gray-500">
+                        {weekRangeLabel(w.weekStart)}
+                      </span>
+                      <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-100">
+                        <span
+                          className="block h-full rounded-full"
+                          style={{
+                            width: `${Math.max(
+                              stepsWeekMax > 0 ? (w.avg / stepsWeekMax) * 100 : 0,
+                              2
+                            )}%`,
+                            background: HEALTH_COLORS.steps,
+                          }}
+                        />
+                      </span>
+                      <span className="w-24 shrink-0 text-right text-sm font-medium tabular-nums text-gray-700">
+                        {Math.round(w.avg).toLocaleString()}歩
+                      </span>
+                      {/* 日数が7日に満たない週は平均の重みが違うので、正直に出す */}
+                      <span className="w-10 shrink-0 text-right text-[0.6875rem] tabular-nums text-gray-400">
+                        {w.days}日
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </Section>
 
           {/* 摂取カロリーと体重の関係 */}

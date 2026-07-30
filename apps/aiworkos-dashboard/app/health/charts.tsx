@@ -93,6 +93,8 @@ export function LineChart({
   unit = "",
   valueFormat,
   gapLabel = "データなし",
+  goal,
+  goalLabel = "目標",
 }: {
   points: Point[];
   color: string;
@@ -101,6 +103,9 @@ export function LineChart({
   unit?: string;
   valueFormat?: (v: number) => string;
   gapLabel?: string;
+  /** 目標値。渡すと水平の破線を引く。未設定なら何も描かない。 */
+  goal?: number | null;
+  goalLabel?: string;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -120,8 +125,12 @@ export function LineChart({
   const xStep = n > 1 ? plotW / (n - 1) : 0;
   const xOf = (i: number) => PAD.left + xStep * i;
 
-  const dataMin = allDefined.length ? Math.min(...allDefined) : 0;
-  const dataMax = allDefined.length ? Math.max(...allDefined) : 1;
+  // 目標線が実測の範囲外にあると線が画面外に出て見えなくなるため、
+  // 目標値も縦軸のスケール計算に含める。
+  const hasGoal = typeof goal === "number" && Number.isFinite(goal);
+  const scaleValues = hasGoal ? [...allDefined, goal as number] : allDefined;
+  const dataMin = scaleValues.length ? Math.min(...scaleValues) : 0;
+  const dataMax = scaleValues.length ? Math.max(...scaleValues) : 1;
   const pad = (dataMax - dataMin) * 0.12 || Math.abs(dataMax) * 0.1 || 1;
   const yMin = dataMin - pad;
   const yMax = dataMax + pad;
@@ -179,6 +188,31 @@ export function LineChart({
             </text>
           </g>
         ))}
+
+        {/* 目標線。実測の線と混同しないよう破線で、色も分ける。 */}
+        {hasGoal && (
+          <g>
+            <line
+              x1={PAD.left}
+              x2={WIDTH - PAD.right}
+              y1={yOf(goal as number)}
+              y2={yOf(goal as number)}
+              stroke="#d4537e"
+              strokeWidth={1.5}
+              strokeDasharray="5 4"
+            />
+            <text
+              x={WIDTH - PAD.right}
+              y={yOf(goal as number) - 4}
+              textAnchor="end"
+              fontSize={9}
+              fill="#993556"
+            >
+              {goalLabel} {fmt(goal as number)}
+              {unit}
+            </text>
+          </g>
+        )}
 
         {/* 欠測帯 */}
         {gapRuns.map((r, i) => {
