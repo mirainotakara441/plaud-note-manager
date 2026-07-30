@@ -7,9 +7,12 @@ import NotificationOptIn from "@/app/components/NotificationOptIn";
 // 日々のToDo：2つの由来のToDoを1画面に束ねる。
 //   ① daily_actions（/api/actions）… 一行日記の「やってみよう」「本日のポイント」。
 //      日付ベース・ジャンルの概念なし。
-//   ② strategic_todos（/api/strategic-todos）… NotionのToDo DBからミラーした
+//   ② strategic_todos（/api/strategic-todos）… NotionのToDo DBと双方向で同期する
 //      ジャンル別（社内／自治体／議員／事業者／委託会社）の月次営業ToDo。
 //      日付は持たず target_month と created_at がある。
+//      この画面での変更はライトスルーで即Notionへ流れる。逆にNotionで直接いじった分は
+//      「📄 Notionから取り込み」ボタン（/api/strategic-todos/sync）で引き込む。
+//      Notionへの反映に失敗した行には「Notion未反映」バッジを出す（同期状態を偽らない）。
 // テーブルは統合せず、このUIレイヤーで束ねる（由来もデータ形も違うため）。
 // 表示は「カテゴリー別」「時系列」の2モードを切り替えられる。
 
@@ -151,6 +154,22 @@ export default function ActionsPage() {
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Notionからの取込
+  const [notionSyncing, setNotionSyncing] = useState(false);
+
+  // ライトスルーでNotionへ反映できなかった行のid。
+  // 同期できたと嘘をつかないため、該当行に控えめなバッジを出す。
+  // 取り込み・再操作で解消したら外す。
+  const [notionFailed, setNotionFailed] = useState<Set<string>>(new Set());
+  function markNotion(id: string, sync: unknown) {
+    setNotionFailed((prev) => {
+      const next = new Set(prev);
+      if (sync === "failed") next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
   // 一括完了
   const [bulkBusy, setBulkBusy] = useState(false);
 
@@ -194,7 +213,12 @@ export default function ActionsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: t.id, status: next }),
     });
-    if (!res.ok) load();
+    if (!res.ok) {
+      load();
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    markNotion(t.id, data?.notionSync);
   }
 
   // 戦略ToDoの「進行中」トグル（未着手 ⇄ 進行中）。完了済みには効かせない。
@@ -207,7 +231,12 @@ export default function ActionsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: t.id, status: next }),
     });
-    if (!res.ok) load();
+    if (!res.ok) {
+      load();
+      return;
+    }
+    const data = await res.json().catch(() => null);
+    markNotion(t.id, data?.notionSync);
   }
 
   function startStrategicEdit(t: Strategic) {
@@ -237,6 +266,8 @@ export default function ActionsPage() {
         body: JSON.stringify({ id, task_name: name, notes, genre }),
       });
       if (!res.ok) throw new Error("更新に失敗しました");
+      const data = await res.json().catch(() => null);
+      markNotion(id, data?.notionSync);
     } catch (e) {
       setStrategic(prev);
       setError(e instanceof Error ? e.message : "更新に失敗しました");
@@ -253,7 +284,13 @@ export default function ActionsPage() {
     if (!res.ok) {
       setStrategic(prev);
       setError("削除に失敗しました");
+      return;
     }
+    const data = await res.json().catch(() => null);
+    if (data?.notionSync === "failed") {
+      setNotice("Supabaseから削除しました。Notion側のページはアーカイブできていません");
+    }
+    markNotion(id, null); // 行自体が消えるのでバッジも掃除する
   }
 
   async function addStrategic(genre: string) {
@@ -269,6 +306,10 @@ export default function ActionsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "追加に失敗しました");
       setStrategic((p) => [...p, data.item]);
+      if (data?.item?.id) markNotion(data.item.id, data?.notionSync);
+      if (data?.notionSync === "failed") {
+        setNotice("追加しましたが、Notion側にはページを作成できませんでした");
+      }
       setStAddText("");
       setStAddGenre(null);
     } catch (e) {
@@ -387,6 +428,38 @@ export default function ActionsPage() {
       setNotice(e instanceof Error ? e.message : "取込に失敗しました");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  // Notion「ToDo DB」からの取り込み（Notion側での変更をサイトへ反映する）。
+  // サイト→Notion はライトスルーで即時なので、押す必要があるのは
+  // 「Notionで直接いじったとき」だけ。
+  async function syncNotion() {
+    if (notionSyncing) return;
+    setNotionSyncing(true);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/strategic-todos/sync", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "取込に失敗しました");
+      const parts = [
+        `追加 ${data.added ?? 0}件`,
+        `更新 ${data.updated ?? 0}件`,
+        `削除 ${data.removed ?? 0}件`,
+      ];
+      if (data.skipped > 0) parts.push(`取込不可 ${data.skipped}件`);
+      let msg = `Notionから取り込みました（${parts.join(" ・ ")}）`;
+      if (Array.isArray(data.errors) && data.errors.length > 0) {
+        msg += ` ※一部失敗: ${data.errors[0]}`;
+      }
+      setNotice(msg);
+      // 取り込み後はNotionと一致しているはずなので、未反映バッジを掃除する
+      setNotionFailed(new Set());
+      await load();
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "取込に失敗しました");
+    } finally {
+      setNotionSyncing(false);
     }
   }
 
@@ -650,10 +723,18 @@ export default function ActionsPage() {
                 )}
                 {t.notion_page_id && (
                   <span
-                    title="Notion由来（この画面での変更はNotionには反映されません）"
+                    title="Notion「ToDo DB」と同期（この画面での変更はNotionにも反映されます）"
                     className="text-[11px] text-gray-300"
                   >
                     📄
+                  </span>
+                )}
+                {notionFailed.has(t.id) && (
+                  <span
+                    title="Supabaseには保存済みですが、Notionへの反映に失敗しています。もう一度操作するか、Notion側を直接ご確認ください。"
+                    className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"
+                  >
+                    Notion未反映
                   </span>
                 )}
                 {t.target_month && (
@@ -724,6 +805,14 @@ export default function ActionsPage() {
               className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 transition active:bg-emerald-100 disabled:opacity-50"
             >
               {syncing ? "取込中…" : "📓 日記から取込"}
+            </button>
+            <button
+              type="button"
+              onClick={syncNotion}
+              disabled={notionSyncing}
+              className="shrink-0 rounded-lg border border-sky-300 bg-sky-50 px-3 py-1.5 text-sm font-semibold text-sky-700 transition active:bg-sky-100 disabled:opacity-50"
+            >
+              {notionSyncing ? "取込中…" : "📄 Notionから取り込み"}
             </button>
             {remaining > 0 && (
               <button
