@@ -148,35 +148,51 @@ function itemSchema(template: ProcedureTemplate) {
   };
 }
 
-function buildDraftSchema(template: ProcedureTemplate) {
-  const order = procedureSectionNames(template).join("→");
+// 章立ては「1回で全章」ではなく数章ずつに分けて作る（下の draft アクションのコメント参照）。
+// sectionNames はそのバッチで作る章だけに絞り、schemaのenumもそこへ狭める
+// （全章のenumを渡すと、担当外の章まで書き始めてしまう）。
+function buildDraftPartSchema(template: ProcedureTemplate, sectionNames: string[]) {
+  const scoped: ProcedureTemplate = {
+    ...template,
+    sections: template.sections.filter((s) => sectionNames.includes(s.name)),
+  };
+  const order = sectionNames.join("→");
   return {
     type: "object",
     properties: {
       items: {
         type: "array",
-        description: `${template.label}の章立て。1要素が1章。${order}の順で並んでいること。表紙・目次は不要。`,
-        items: itemSchema(template),
-      },
-      openItems: {
-        type: "array",
-        description:
-          "この文書を相手方に出す前に決めきる必要があるのに、壁打ちの会話ではまだ決まっていない事項。" +
-          "「誰に確認すれば決まるか」まで書くと望ましい。創作で本文を埋める代わりに、必ずここへ逃がすこと。",
-        items: { type: "string" },
-      },
-      constraints: {
-        type: "array",
-        description:
-          "壁打ちの会話全体から抽出した、文書全体で守るべき制約（用語の統一、避けるべき表現、相手方の事情など）。" +
-          "明示的な言及が無ければ空配列でよい。憶測で作らないこと。",
-        items: { type: "string" },
+        description: `${template.label}のうち、次の章だけを作る: ${order}。1要素が1章。この順で並んでいること。指定外の章は絶対に作らない。表紙・目次は不要。`,
+        items: itemSchema(scoped),
       },
     },
-    required: ["items", "openItems", "constraints"],
+    required: ["items"],
     additionalProperties: false,
   };
 }
+
+// 要確認事項・制約の抽出だけを行う軽い呼び出し（出力が短いので速い）。
+const OPEN_ITEMS_SCHEMA = {
+  type: "object",
+  properties: {
+    openItems: {
+      type: "array",
+      description:
+        "この文書を相手方に出す前に決めきる必要があるのに、壁打ちの会話ではまだ決まっていない事項。" +
+        "「誰に確認すれば決まるか」まで書くと望ましい。本文に「要確認」と書かれている箇所は必ずここに挙げる。",
+      items: { type: "string" },
+    },
+    constraints: {
+      type: "array",
+      description:
+        "壁打ちの会話全体から抽出した、文書全体で守るべき制約（用語の統一、避けるべき表現、相手方の事情など）。" +
+        "明示的な言及が無ければ空配列でよい。憶測で作らないこと。",
+      items: { type: "string" },
+    },
+  },
+  required: ["openItems", "constraints"],
+  additionalProperties: false,
+};
 
 function buildSingleItemSchema(template: ProcedureTemplate) {
   return {
@@ -417,6 +433,8 @@ export async function POST(req: NextRequest) {
     message?: unknown;
     items?: unknown;
     openItems?: unknown;
+    sectionNames?: unknown;
+    priorItems?: unknown;
     item?: unknown;
     instruction?: unknown;
   };
@@ -529,7 +547,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });
     }
 
-    // ── 章立て案: 面談の全会話から文書の章立て（本文・表・要確認事項）を作る
+    // ── 章立て案（分割生成）: 会話から指定された章だけを作る。
+    //
+    // なぜ分割するか: 1回で全章を作る設計にしていたが、2026-07-30 に吉井さんの実セッション
+    // （trial型・8章・9往復・会話5,200字）で本番が失敗。同じ入力をローカルで測ると
+    // thinking有りで56秒、thinkingを外しても62.6秒かかり、Vercelの maxDuration=60 を超えていた。
+    // 律速はモデルの思考ではなく「日本語の章本文＋表をまとめて吐き出す出力量」なので、
+    // thinkingを外すだけでは足りない。画面側が数章ずつに分けて呼び、1回の呼び出しを短く保つ。
+    // 12章ある実施理由書でも各バッチは3章程度に収まり、上限に対して十分な余裕ができる。
+    //
+    // priorItems には、すでに出来上がっている前のバッチの章が入る。重複回避の参考として
+    // モデルに見せ、DBにも合算して保存する（途中で失敗しても、そこまでは残って再開できる）。
     if (action === "draft") {
       const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
       if (!sessionId) {
@@ -548,8 +576,20 @@ export async function POST(req: NextRequest) {
       }
       // 章立て案の生成時にテンプレートを選び直せる（未指定なら開始時のもの）。
       const template = findProcedureTemplate(requestedTemplateId ?? row.template_id);
-      const order = procedureSectionNames(template).join("→");
+      const allNames = procedureSectionNames(template);
+      // 章の指定が無ければ全章（テンプレートの章数が少ない場合や、外部から素直に叩く場合）。
+      const requested = Array.isArray(body.sectionNames)
+        ? (body.sectionNames as unknown[]).filter(
+            (n): n is string => typeof n === "string" && allNames.includes(n)
+          )
+        : [];
+      const sectionNames = requested.length > 0 ? requested : allNames;
+      const priorItems: ProcedureItem[] = Array.isArray(body.priorItems)
+        ? (body.priorItems as ProcedureItem[])
+        : [];
+
       const sectionGuidance = template.sections
+        .filter((s) => sectionNames.includes(s.name))
         .map(
           (s) =>
             `- ${s.name}: ${s.guidance}（${s.countHint}）${s.tableHint ? ` ※${s.tableHint}` : " ※この章に表は不要"}`
@@ -564,9 +604,13 @@ export async function POST(req: NextRequest) {
       const res = await client.messages.create({
         model: MODEL,
         max_tokens: 16000,
-        thinking: { type: "adaptive" },
         system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: buildDraftSchema(template) } },
+        output_config: {
+          format: {
+            type: "json_schema",
+            schema: buildDraftPartSchema(template, sectionNames),
+          },
+        },
         messages: [
           {
             role: "user",
@@ -575,18 +619,25 @@ export async function POST(req: NextRequest) {
 ${row.organization ? `【相手方】${row.organization}（${row.category ?? "その他"}）` : "【相手方】特定なし"}
 ${row.purpose ? `【位置づけ】${row.purpose}` : ""}
 ${row.period ? `【実施時期の目安】${row.period}` : ""}
+【この文書の全体構成】${allNames.join("→")}
 
 ==== 壁打ちの会話 ====
 ${transcript || "（まだ会話はありません。お題のみから章立て案を作ってください）"}
 
-この壁打ちの内容をもとに、この文書の章立て案を作ってください。
-必ず「${order}」の順で並べること。
+${
+  priorItems.length > 0
+    ? `==== すでに出来ている章（内容は変えない。重複を避けるための参考） ====\n${priorItems
+        .map((it, k) => `${k + 1}. [${it.section}] ${it.title}`)
+        .join("\n")}\n`
+    : ""
+}
+この壁打ちの内容をもとに、上の全体構成のうち **${sectionNames.join("・")}** の章だけを作ってください。
+指定外の章は絶対に作らないこと（後続のバッチで別途作ります）。
 ${sectionGuidance}
 
 ${NO_FABRICATION_INSTRUCTION}
 ${todayContext()}
-会話で決まっていない事項は本文をそれらしく埋めるのではなく、openItems（要確認事項）に逃がしてください。
-あわせて、会話の中で吉井さんが述べた「文書全体で守るべき制約」があれば constraints に抽出してください（無ければ空配列）。
+会話で決まっていない事項は、本文をそれらしく埋めるのではなく「（要確認）」と明記して断定しないでください。
 指定のJSONスキーマで返してください。`,
           },
         ],
@@ -595,12 +646,68 @@ ${todayContext()}
       if (!tb) {
         return NextResponse.json({ error: "章立て案の生成に失敗しました" }, { status: 502 });
       }
-      const parsed = JSON.parse(tb.text) as {
-        items: RawItem[];
-        openItems?: string[];
-        constraints?: string[];
-      };
+      const parsed = JSON.parse(tb.text) as { items: RawItem[] };
       const items = (parsed.items ?? []).map(normalizeItem);
+      const merged = [...priorItems, ...items];
+
+      await fetch(`${restUrl(supabaseUrl, "procedure_refine_sessions")}?id=eq.${sessionId}`, {
+        method: "PATCH",
+        headers: restHeaders(serviceKey),
+        body: JSON.stringify({ items: merged, template_id: template.id }),
+        cache: "no-store",
+      });
+
+      return NextResponse.json({ items, allItems: merged, templateId: template.id });
+    }
+
+    // ── 要確認事項・制約の抽出: 章立てが揃ってから、決めきれていない事項だけを別立てで出す。
+    // 章本文の生成と分けているのは、出力が短く速いのと、章を作り直した後にも再抽出できるため。
+    if (action === "draft-open") {
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+      const items: ProcedureItem[] = Array.isArray(body.items) ? (body.items as ProcedureItem[]) : [];
+      if (!sessionId || items.length === 0) {
+        return NextResponse.json({ error: "入力が不正です" }, { status: 400 });
+      }
+      const row = await loadSession(sessionId, "theme,organization,category,period,template_id");
+      if (!row?.theme) {
+        return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
+      }
+      const template = findProcedureTemplate(row.template_id);
+      const history = await loadMessages(supabaseUrl, anonKey, sessionId);
+      const transcript = history
+        .map((m) => `${m.role === "user" ? "吉井" : "参謀"}: ${m.content}`)
+        .join("\n\n");
+
+      const res = await client.messages.create({
+        model: MODEL,
+        max_tokens: 4000,
+        system: [{ type: "text", text: PERSONA_PROMPT }],
+        output_config: { format: { type: "json_schema", schema: OPEN_ITEMS_SCHEMA } },
+        messages: [
+          {
+            role: "user",
+            content: `【お題】${row.theme}
+【文書の種類】${template.label}
+${row.organization ? `【相手方】${row.organization}（${row.category ?? "その他"}）` : ""}
+
+==== 壁打ちの会話 ====
+${transcript || "（会話なし）"}
+
+==== 出来上がった章立て ====
+${items.map((it, k) => itemToText(it, k)).join("\n\n")}
+
+この文書を相手方に出す前に決めきる必要があるのに、まだ決まっていない事項を openItems に挙げてください。
+本文に「要確認」と書かれている箇所は必ず拾うこと。会話で決まっている事項は挙げないこと。
+あわせて、会話の中で吉井さんが述べた「文書全体で守るべき制約」があれば constraints に抽出してください（無ければ空配列）。
+指定のJSONスキーマで返してください。`,
+          },
+        ],
+      });
+      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
+      if (!tb) {
+        return NextResponse.json({ error: "要確認事項の抽出に失敗しました" }, { status: 502 });
+      }
+      const parsed = JSON.parse(tb.text) as { openItems?: string[]; constraints?: string[] };
       const openItems = Array.isArray(parsed.openItems) ? parsed.openItems.filter(Boolean) : [];
       const constraints = Array.isArray(parsed.constraints)
         ? parsed.constraints.filter(Boolean)
@@ -613,12 +720,11 @@ ${todayContext()}
           items,
           open_items: openItems,
           constraints: constraints.length > 0 ? constraints.join("\n") : null,
-          template_id: template.id,
         }),
         cache: "no-store",
       });
 
-      return NextResponse.json({ items, openItems, constraints, templateId: template.id });
+      return NextResponse.json({ openItems, constraints });
     }
 
     // ── 1章だけ作り直す / ここを直す: instruction があれば「指示された箇所だけ」の修正、

@@ -74,10 +74,10 @@ function TablePreview({ table }: { table: ProcedureItem["table"] }) {
   return (
     <div className="mt-3">
       {table.caption && (
-        <p className="mb-1 text-xs font-semibold text-gray-600">{table.caption}</p>
+        <p className="mb-1 text-sm font-semibold text-gray-600">{table.caption}</p>
       )}
       <div className="overflow-x-auto rounded-lg border border-gray-200">
-        <table className="min-w-full border-collapse text-xs">
+        <table className="min-w-full border-collapse text-sm">
           <thead>
             <tr className="bg-gray-50">
               {table.headers.map((h, i) => (
@@ -138,6 +138,11 @@ function ProcedureRefineInner() {
 
   const [loading, setLoading] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  const [draftProgress, setDraftProgress] = useState<{
+    done: number;
+    total: number;
+    label: string;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [retracting, setRetracting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -323,28 +328,77 @@ function ProcedureRefineInner() {
     }
   }
 
+  // 章立ては数章ずつに分けて作る。1回で全章を作らせるとサーバー側の実行時間上限(60秒)を
+  // 超えて失敗するため（2026-07-30、8章の実測で62.6秒。API側のコメント参照）。
+  // 1バッチ = SECTIONS_PER_BATCH 章。途中で失敗しても、そこまでの章はサーバーに保存済みで、
+  // 「続きから」開き直せば残っている。
+  const SECTIONS_PER_BATCH = 3;
+
   async function goDraft() {
     if (!sessionId) return;
     setError(null);
     setDrafting(true);
-    try {
+
+    const names = template.sections.map((s) => s.name);
+    const batches: string[][] = [];
+    for (let i = 0; i < names.length; i += SECTIONS_PER_BATCH) {
+      batches.push(names.slice(i, i + SECTIONS_PER_BATCH));
+    }
+    // 最後の1手は要確認事項の抽出なので、進捗の分母は バッチ数 + 1。
+    const total = batches.length + 1;
+    let acc: ProcedureItem[] = [];
+
+    // 時間切れ（JSONではなくエラーページが返る）を「通信エラー」で済ませず、原因が分かる形で出す。
+    async function post(payload: Record<string, unknown>) {
       const r = await fetch("/api/procedure-refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "draft", sessionId, templateId }),
+        body: JSON.stringify(payload),
       });
-      const d = await r.json();
-      if (!r.ok) return setError(d?.error ?? "章立て案の生成に失敗しました");
-      setItems(Array.isArray(d.items) ? d.items : []);
-      setOpenItems(Array.isArray(d.openItems) ? d.openItems : []);
+      const d = await r.json().catch(() => null);
+      if (!d) throw new Error("timeout");
+      if (!r.ok) throw new Error(d?.error ?? "章立て案の生成に失敗しました");
+      return d;
+    }
+
+    try {
+      for (let i = 0; i < batches.length; i++) {
+        setDraftProgress({ done: i, total, label: batches[i].join("・") });
+        const d = await post({
+          action: "draft",
+          sessionId,
+          templateId,
+          sectionNames: batches[i],
+          priorItems: acc,
+        });
+        acc = acc.concat(Array.isArray(d.items) ? d.items : []);
+        // 1章も返らないと以降の重複回避が効かなくなるため、その場で気づけるようにする。
+        setItems(acc);
+      }
+
+      setDraftProgress({ done: batches.length, total, label: "要確認事項の洗い出し" });
+      const o = await post({ action: "draft-open", sessionId, items: acc });
+      setOpenItems(Array.isArray(o.openItems) ? o.openItems : []);
       setResolvedOpen({});
       setDeleted({});
       setEditing({});
       setStage("draft");
-    } catch {
-      setError("通信エラーが発生しました");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg === "timeout") {
+        setError(
+          acc.length > 0
+            ? `章立ての生成が時間切れになりました。${acc.length}章までは保存できています。もう一度「もう章立て案を作る」を押してください（会話も残っています）`
+            : "章立ての生成が時間切れになりました。もう一度「もう章立て案を作る」を押してください（会話は残っています）"
+        );
+      } else {
+        setError(msg || "通信エラーが発生しました");
+      }
+      // 途中まで出来ていれば、それを見ながら続けられるように章立て画面へ進める。
+      if (acc.length > 0) setStage("draft");
     } finally {
       setDrafting(false);
+      setDraftProgress(null);
     }
   }
 
@@ -446,7 +500,7 @@ function ProcedureRefineInner() {
           ← ホーム
         </Link>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">提出文書 壁打ち</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <p className="mt-1 text-base leading-relaxed text-gray-500">
           実施理由書・実施要領書・スキーム整理を、文書の型ごとの急所からAIが深掘り。答えるほど埋まり、章立て・表・要確認事項まで作ります
         </p>
       </header>
@@ -482,7 +536,7 @@ function ProcedureRefineInner() {
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-gray-400">{template.description}</p>
+            <p className="mt-1 text-sm text-gray-500">{template.description}</p>
             <div className="mt-2 flex flex-wrap gap-1">
               {template.sections.map((s) => (
                 <span
@@ -608,7 +662,7 @@ function ProcedureRefineInner() {
               i === lastAssistantIndex && questions.length > 0 ? null : (
                 <div
                   key={i}
-                  className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  className={`whitespace-pre-wrap rounded-2xl px-4 py-3 text-base leading-relaxed ${
                     m.role === "assistant"
                       ? "border border-gray-200 bg-white text-gray-800 shadow-sm"
                       : "ml-6 bg-indigo-600 text-white"
@@ -621,7 +675,7 @@ function ProcedureRefineInner() {
             {loading && (
               <div className="flex items-center gap-2 px-1 py-2">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />
-                <span className="text-sm text-gray-500">考えています...</span>
+                <span className="text-base text-gray-500">考えています...</span>
               </div>
             )}
           </div>
@@ -629,7 +683,7 @@ function ProcedureRefineInner() {
           {!loading && questions.length > 0 && (
             <div className="space-y-3">
               {parsed?.intro && (
-                <p className="whitespace-pre-wrap px-1 text-sm leading-relaxed text-gray-600">
+                <p className="whitespace-pre-wrap px-1 text-base leading-relaxed text-gray-600">
                   {parsed.intro}
                 </p>
               )}
@@ -643,13 +697,13 @@ function ProcedureRefineInner() {
                     }`}
                   >
                     <div className="flex items-start gap-2">
-                      <span className="mt-0.5 shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">
+                      <span className="mt-0.5 shrink-0 rounded-md bg-indigo-100 px-2 py-1 text-sm font-bold text-indigo-700">
                         {q.label}
                       </span>
-                      <p className="text-sm font-semibold leading-relaxed text-gray-900">{q.heading}</p>
+                      <p className="text-lg font-bold leading-relaxed text-gray-900">{q.heading}</p>
                     </div>
                     {q.body && (
-                      <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-gray-500">
+                      <p className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-gray-700">
                         {q.body}
                       </p>
                     )}
@@ -659,12 +713,12 @@ function ProcedureRefineInner() {
                       rows={5}
                       disabled={isSkipped}
                       placeholder="ここに答える（箇条書き・音声入力そのままでOK）"
-                      className="mt-3 block w-full resize-y rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50 disabled:opacity-50"
+                      className="mt-3 block w-full resize-y rounded-lg border border-gray-300 px-3 py-2.5 text-lg leading-relaxed text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50 disabled:opacity-50"
                     />
                     <button
                       type="button"
                       onClick={() => setSkipped((prev) => ({ ...prev, [q.label]: !prev[q.label] }))}
-                      className="mt-2 text-xs font-medium text-gray-500 active:opacity-70"
+                      className="mt-2 text-sm font-medium text-gray-500 active:opacity-70"
                     >
                       {isSkipped ? "↩︎ やっぱり答える" : "この問いはスキップ"}
                     </button>
@@ -676,7 +730,7 @@ function ProcedureRefineInner() {
 
           <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
             {questions.length > 0 && (
-              <label className="mb-1 block px-1 text-xs font-medium text-gray-500">
+              <label className="mb-1 block px-1 text-sm font-medium text-gray-500">
                 補足（任意・問い以外に伝えたいこと）
               </label>
             )}
@@ -688,7 +742,7 @@ function ProcedureRefineInner() {
                 questions.length > 0 ? "例: 相手方は年度末が繁忙で動けない" : "質問に答える"
               }
               disabled={loading}
-              className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+              className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-lg leading-relaxed text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
             />
             <div className="mt-2 flex gap-2">
               <button
@@ -705,7 +759,11 @@ function ProcedureRefineInner() {
                 disabled={drafting || loading || !hasAssistantTurn}
                 className="flex-1 rounded-xl bg-purple-600 px-4 py-2.5 text-base font-semibold text-white transition active:bg-purple-700 disabled:opacity-40"
               >
-                {drafting ? "章立てを作成中..." : "もう章立て案を作る"}
+                {drafting
+                  ? draftProgress
+                    ? `作成中 ${draftProgress.done + 1}/${draftProgress.total}（${draftProgress.label}）`
+                    : "章立てを作成中..."
+                  : "もう章立て案を作る"}
               </button>
             </div>
           </div>
@@ -718,7 +776,7 @@ function ProcedureRefineInner() {
       {stage === "draft" && (
         <div className="space-y-4">
           {!saved && (
-            <p className="text-xs text-gray-400">
+            <p className="text-sm leading-relaxed text-gray-500">
               章ごとに「編集する」「ここを直す」「作り直す」「削除」を選べます。本文は1行1項目、表は1行目が列名・セルは | 区切りです。
             </p>
           )}
@@ -726,10 +784,10 @@ function ProcedureRefineInner() {
           {/* 要確認事項（決まっていないこと）。ここを潰すのが実施要領書の肝。 */}
           {openItems.length > 0 && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-              <p className="text-sm font-bold text-amber-900">
+              <p className="text-base font-bold text-amber-900">
                 要確認事項（まだ決まっていないこと） {remainingOpen.length}/{openItems.length}
               </p>
-              <p className="mt-1 text-xs leading-relaxed text-amber-800">
+              <p className="mt-1 text-sm leading-relaxed text-amber-800">
                 AIが創作せずに残した未確定の項目です。解決したものはチェックを入れると、登録・全文から外れます。
               </p>
               <div className="mt-3 space-y-2">
@@ -753,7 +811,7 @@ function ProcedureRefineInner() {
                         ✓
                       </span>
                       <span
-                        className={`text-sm leading-relaxed ${done ? "text-amber-700 line-through" : "text-amber-900"}`}
+                        className={`text-base leading-relaxed ${done ? "text-amber-700 line-through" : "text-amber-900"}`}
                       >
                         {o}
                       </span>
@@ -813,14 +871,14 @@ function ProcedureRefineInner() {
                         type="text"
                         value={item.title}
                         onChange={(e) => updateItem(i, { title: e.target.value })}
-                        className="block w-full rounded-md border border-purple-300 bg-purple-50 px-2 py-1.5 text-sm font-bold text-gray-900 focus:outline-none"
+                        className="block w-full rounded-md border border-purple-300 bg-purple-50 px-2 py-1.5 text-lg font-bold text-gray-900 focus:outline-none"
                       />
                       <textarea
                         value={item.body.join("\n")}
                         onChange={(e) => updateItem(i, { body: e.target.value.split("\n") })}
                         rows={Math.max(3, item.body.length)}
                         placeholder="本文を1行ずつ"
-                        className="block w-full resize-y rounded-md border border-purple-300 bg-purple-50 px-2 py-1.5 text-sm leading-relaxed text-gray-700 focus:outline-none"
+                        className="block w-full resize-y rounded-md border border-purple-300 bg-purple-50 px-2 py-1.5 text-base leading-relaxed text-gray-700 focus:outline-none"
                       />
                       <input
                         type="text"
@@ -847,10 +905,10 @@ function ProcedureRefineInner() {
                     </div>
                   ) : (
                     <div className="mt-2">
-                      <p className="text-sm font-bold text-gray-900">{item.title}</p>
+                      <p className="text-lg font-bold text-gray-900">{item.title}</p>
                       <ul className="mt-1 space-y-0.5">
                         {item.body.filter(Boolean).map((b, bi) => (
-                          <li key={bi} className="flex gap-2 text-sm leading-relaxed text-gray-700">
+                          <li key={bi} className="flex gap-2 text-base leading-relaxed text-gray-700">
                             <span className="text-gray-300">・</span>
                             <span>{b}</span>
                           </li>
