@@ -4,14 +4,20 @@ import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-// 団体別攻略：団体を選ぶと、その団体の「いまの状態・課題・打ち手・基礎データ」
-// （タイムライン以外）と、会議・週報・成果物の時系列（タイムライン）を
-// 1画面で確認できるミニCRM的なページ。
-// 日記は意味検索で「関連しそうな日記」として時系列側に別枠で補助表示する。
-// データは /api/organizations（一覧）・/api/organizations/profile（タイムライン以外）・
-// /api/organizations/timeline（タイムライン）。閲覧専用（読み取りのみ）。
+// 団体別攻略：団体を選ぶと「現状 / 課題 / 施策 / 基礎データ / タイムライン」を
+// タブで切り替えて確認できるミニCRM的なページ。
+//
+// 各タブの中身は2階建て:
+//   ① 吉井さんの手書きメモ（organization_notes）… 上に置く。編集・保存できる。
+//   ② 自動導出（週報・会議・成果物から機械的に組み立てたもの）… 手書きメモがあっても消さない。
+//
+// データ取得:
+//   /api/organizations?include=weekly … 団体一覧（会議由来＋週報由来）
+//   /api/organizations/profile        … 現状・課題・施策・基礎データ
+//   /api/organizations/notes          … 手書きメモ（GET / PUT / DELETE）
+//   /api/organizations/timeline       … タイムライン（タブが選ばれるまで取りに行かない）
 
-type Organization = { name: string; count: number };
+type Organization = { name: string; count: number; weeklyCount?: number };
 
 type TimelineEntry = {
   id: string;
@@ -79,6 +85,41 @@ type ProfileResponse = {
   notes: string[];
 };
 
+type NoteSection = "現状" | "課題" | "施策" | "基礎データ";
+
+type OrganizationNote = {
+  id: string;
+  organization: string;
+  section: NoteSection;
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type TabKey = "status" | "issues" | "tactics" | "basics" | "timeline";
+
+type TabDef = {
+  key: TabKey;
+  label: string;
+  /** 手書きメモの保存先セクション。タイムラインだけメモを持たない。 */
+  section: NoteSection | null;
+};
+
+// 並び順：現状 → 課題 → 施策 → 基礎データ → タイムライン
+const TABS: TabDef[] = [
+  { key: "status", label: "現状", section: "現状" },
+  { key: "issues", label: "課題", section: "課題" },
+  { key: "tactics", label: "施策", section: "施策" },
+  { key: "basics", label: "基礎データ", section: "基礎データ" },
+  { key: "timeline", label: "タイムライン", section: null },
+];
+
+const DEFAULT_TAB: TabKey = "status";
+
+function toTabKey(value: string | null): TabKey {
+  return TABS.some((t) => t.key === value) ? (value as TabKey) : DEFAULT_TAB;
+}
+
 const KIND_BADGE: Record<TimelineEntry["kind"], string> = {
   会議: "bg-blue-100 text-blue-700",
   週報: "bg-cyan-100 text-cyan-700",
@@ -99,6 +140,14 @@ function formatDate(dateStr: string | null): string {
   ).padStart(2, "0")}`;
 }
 
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${formatDate(iso)} ${String(d.getHours()).padStart(2, "0")}:${String(
+    d.getMinutes()
+  ).padStart(2, "0")}`;
+}
+
 function truncate(s: string, n: number): string {
   const clean = s.replace(/\s+/g, " ").trim();
   return clean.length > n ? `${clean.slice(0, n)}…` : clean;
@@ -111,15 +160,6 @@ function errorMessage(json: unknown, fallback: string): string {
     typeof (json as { error?: unknown }).error === "string"
     ? (json as { error: string }).error
     : fallback;
-}
-
-function SectionHeading({ title, note }: { title: string; note: string }) {
-  return (
-    <div className="mb-3 border-l-4 border-indigo-500 pl-3">
-      <h2 className="text-lg font-bold leading-tight text-gray-900">{title}</h2>
-      <p className="text-xs text-gray-500">{note}</p>
-    </div>
-  );
 }
 
 function BlockCard({
@@ -181,8 +221,191 @@ function NoteRow({ note }: { note: ProfileNote }) {
   );
 }
 
-function ProfileBlock({ profile }: { profile: ProfileResponse }) {
-  const { status, issues, tactics, basics, notes } = profile;
+// ---------------------------------------------------------------------------
+// 手書きメモ
+// ---------------------------------------------------------------------------
+
+// 自動導出の内容と混ざらないよう、手書きメモは琥珀色の枠で明示的に区別する。
+function NoteEditor({
+  section,
+  note,
+  loading,
+  onSave,
+  onDelete,
+}: {
+  section: NoteSection;
+  note: OrganizationNote | null;
+  loading: boolean;
+  onSave: (section: NoteSection, content: string) => Promise<boolean>;
+  onDelete: (section: NoteSection) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // 団体・セクションを切り替えたときは呼び出し側の key で作り直されるため、
+  // ここで編集状態をリセットする必要はない（リセットすると保存直後の
+  // 「保存しました」表示まで消えてしまう）。
+
+  useEffect(() => {
+    if (savedAt === null) return;
+    const timer = setTimeout(() => setSavedAt(null), 3000);
+    return () => clearTimeout(timer);
+  }, [savedAt]);
+
+  function startEditing() {
+    setDraft(note?.content ?? "");
+    setError(null);
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    const content = draft.trim();
+    if (content === "") {
+      setError("メモが空です。削除する場合は「削除」を押してください。");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const ok = await onSave(section, content);
+    setBusy(false);
+    if (ok) {
+      setEditing(false);
+      setSavedAt(Date.now());
+    } else {
+      setError("保存に失敗しました。通信状況を確認してもう一度お試しください。");
+    }
+  }
+
+  async function handleDelete() {
+    setBusy(true);
+    setError(null);
+    const ok = await onDelete(section);
+    setBusy(false);
+    if (ok) {
+      setEditing(false);
+      setDraft("");
+    } else {
+      setError("削除に失敗しました。");
+    }
+  }
+
+  return (
+    <section className="rounded-2xl border border-amber-300 bg-amber-50/60 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-bold text-amber-900">
+          手書きメモ
+        </span>
+        <span className="text-xs text-amber-800">吉井さんが書いた「{section}」</span>
+        {savedAt !== null && (
+          <span className="ml-auto text-xs font-semibold text-emerald-700">
+            保存しました
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <p className="mt-3 text-sm text-amber-800">読み込み中…</p>
+      ) : editing ? (
+        <div className="mt-3">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={6}
+            maxLength={5000}
+            autoFocus
+            placeholder={`「${section}」について、自分の言葉で書いておくこと`}
+            className="block w-full resize-y rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm leading-relaxed text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={busy}
+              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white active:opacity-70 disabled:opacity-50"
+            >
+              {busy ? "保存中…" : "保存"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+              }}
+              disabled={busy}
+              className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-800 active:opacity-70 disabled:opacity-50"
+            >
+              取消
+            </button>
+            {note && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={busy}
+                className="ml-auto text-sm font-medium text-red-600 active:opacity-70 disabled:opacity-50"
+              >
+                削除
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-amber-700">{draft.length} / 5000 文字</p>
+        </div>
+      ) : note ? (
+        <div className="mt-3">
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-900">
+            {note.content}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={startEditing}
+              className="rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-sm font-semibold text-amber-800 active:opacity-70"
+            >
+              編集
+            </button>
+            <span className="text-[11px] text-amber-700">
+              最終更新：{formatDateTime(note.updated_at)}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-3">
+          <p className="text-sm text-amber-800">
+            手書きメモはまだありません。下の自動集計に足したいことを書けます。
+          </p>
+          <button
+            type="button"
+            onClick={startEditing}
+            className="mt-2 rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-sm font-semibold text-amber-800 active:opacity-70"
+          >
+            メモを書く
+          </button>
+        </div>
+      )}
+
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 各タブの自動導出パネル
+// ---------------------------------------------------------------------------
+
+function AutoLabel({ hint }: { hint: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+        自動集計
+      </span>
+      <span className="text-xs text-gray-500">{hint}</span>
+    </div>
+  );
+}
+
+function StatusPanel({ status }: { status: ProfileResponse["status"] }) {
   // 主役に据えた週報は「直近の推移」から外す（同じ週に別団体名の週報が
   // 部分一致で入ることがあるので、週＋団体名の組で判定する）
   const olderWeeks = status.headline
@@ -196,168 +419,150 @@ function ProfileBlock({ profile }: { profile: ProfileResponse }) {
     : status.recent;
 
   return (
-    <div className="space-y-4">
-      {notes.length > 0 && (
-        <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/70 p-3">
-          <p className="text-xs font-semibold text-amber-800">
-            {profile.sparse ? "情報が少ない団体です" : "データについての注記"}
+    <BlockCard
+      title="現状"
+      hint={
+        status.headline
+          ? "週報の最新週が主役"
+          : status.fallback
+            ? "週報が無いため会議メモから"
+            : undefined
+      }
+    >
+      {status.headline ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">
+              {status.headline.weekStart} 週
+            </span>
+            <span className="text-xs text-gray-500">{status.headline.category}</span>
+            {!status.headline.exact && status.headline.organization && (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+                {status.headline.organization}
+              </span>
+            )}
+          </div>
+          <p className="mt-2 text-sm leading-relaxed text-gray-800">
+            {status.headline.summary}
           </p>
-          <ul className="mt-1 space-y-0.5">
-            {notes.map((n) => (
-              <li key={n} className="text-xs leading-relaxed text-amber-900">
-                ・{n}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* 状態 */}
-      <BlockCard
-        title="状態"
-        hint={
-          status.headline
-            ? "週報の最新週が主役"
-            : status.fallback
-              ? "週報が無いため会議メモから"
-              : undefined
-        }
-      >
-        {status.headline ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">
-                {status.headline.weekStart} 週
-              </span>
-              <span className="text-xs text-gray-500">
-                {status.headline.category}
-              </span>
-              {!status.headline.exact && status.headline.organization && (
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
-                  {status.headline.organization}
-                </span>
-              )}
+          {olderWeeks.length > 0 && (
+            <div className="mt-3 border-t border-gray-100 pt-3">
+              <p className="text-xs font-semibold text-gray-500">直近の推移</p>
+              <ul className="mt-1.5 space-y-1.5">
+                {olderWeeks.map((w) => (
+                  <li key={`${w.weekStart}-${w.organization ?? ""}`} className="text-sm">
+                    <span className="mr-2 text-xs text-gray-400">{w.weekStart}</span>
+                    {!w.exact && w.organization && (
+                      <span className="mr-1 text-xs text-gray-400">
+                        [{w.organization}]
+                      </span>
+                    )}
+                    <span className="text-gray-700">{truncate(w.summary, 90)}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-            <p className="mt-2 text-sm leading-relaxed text-gray-800">
-              {status.headline.summary}
-            </p>
-            {olderWeeks.length > 0 && (
-              <div className="mt-3 border-t border-gray-100 pt-3">
-                <p className="text-xs font-semibold text-gray-500">
-                  直近の推移
-                </p>
-                <ul className="mt-1.5 space-y-1.5">
-                  {olderWeeks.map((w) => (
-                    <li key={`${w.weekStart}-${w.organization ?? ""}`} className="text-sm">
-                      <span className="mr-2 text-xs text-gray-400">
-                        {w.weekStart}
-                      </span>
-                      {!w.exact && w.organization && (
-                        <span className="mr-1 text-xs text-gray-400">
-                          [{w.organization}]
-                        </span>
-                      )}
-                      <span className="text-gray-700">
-                        {truncate(w.summary, 90)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          )}
+        </>
+      ) : status.fallback ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+              会議メモより
+            </span>
+            <span className="text-xs text-gray-500">
+              {formatDate(status.fallback.date)}
+            </span>
+          </div>
+          <p className="mt-2 text-sm leading-relaxed text-gray-800">
+            {truncate(status.fallback.text, 300)}
+          </p>
+          <p className="mt-1 text-[11px] text-gray-400">
+            出所：{status.fallback.label}
+          </p>
+        </>
+      ) : (
+        <EmptyLine text="記録なし（現状を示す週報・会議がまだありません）" />
+      )}
+    </BlockCard>
+  );
+}
+
+function IssuesPanel({ issues }: { issues: ProfileNote[] }) {
+  return (
+    <BlockCard title="課題" hint="週報の気づき＋会議メモの課題">
+      {issues.length > 0 ? (
+        <ul className="space-y-2">
+          {issues.map((n) => (
+            <NoteRow key={n.id} note={n} />
+          ))}
+        </ul>
+      ) : (
+        <EmptyLine text="記録なし（課題として記録された記述は見つかりませんでした）" />
+      )}
+    </BlockCard>
+  );
+}
+
+function TacticsPanel({ tactics }: { tactics: ProfileNote[] }) {
+  return (
+    <BlockCard title="施策（進行中の打ち手）" hint="直近3週の週報＋最新会議のアクション">
+      {tactics.length > 0 ? (
+        <ul className="space-y-2">
+          {tactics.map((n) => (
+            <NoteRow key={n.id} note={n} />
+          ))}
+        </ul>
+      ) : (
+        <EmptyLine text="記録なし（打ち手として記録された記述は見つかりませんでした）" />
+      )}
+    </BlockCard>
+  );
+}
+
+function BasicsPanel({ basics }: { basics: ProfileResponse["basics"] }) {
+  return (
+    <BlockCard title="基礎データ" hint="登録済みの記録から機械的に集計">
+      <div className="flex flex-wrap items-center gap-2">
+        {basics.master.registered ? (
+          <>
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+              マスタ登録あり
+            </span>
+            {basics.master.category && (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+                {basics.master.category}
+              </span>
             )}
           </>
-        ) : status.fallback ? (
-          <>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
-                会議メモより
-              </span>
-              <span className="text-xs text-gray-500">
-                {formatDate(status.fallback.date)}
-              </span>
-            </div>
-            <p className="mt-2 text-sm leading-relaxed text-gray-800">
-              {truncate(status.fallback.text, 300)}
-            </p>
-            <p className="mt-1 text-[11px] text-gray-400">
-              出所：{status.fallback.label}
-            </p>
-          </>
         ) : (
-          <EmptyLine text="状態を示す記録（週報・会議）がまだありません。" />
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">
+            マスタ未登録
+          </span>
         )}
-      </BlockCard>
-
-      {/* 課題 */}
-      <BlockCard title="課題" hint="週報の気づき＋会議メモの課題">
-        {issues.length > 0 ? (
-          <ul className="space-y-2">
-            {issues.map((n) => (
-              <NoteRow key={n.id} note={n} />
-            ))}
-          </ul>
-        ) : (
-          <EmptyLine text="課題として記録された記述は見つかりませんでした。" />
-        )}
-      </BlockCard>
-
-      {/* 施策 */}
-      <BlockCard title="施策（進行中の打ち手）" hint="直近3週の週報＋最新会議のアクション">
-        {tactics.length > 0 ? (
-          <ul className="space-y-2">
-            {tactics.map((n) => (
-              <NoteRow key={n.id} note={n} />
-            ))}
-          </ul>
-        ) : (
-          <EmptyLine text="打ち手として記録された記述は見つかりませんでした。" />
-        )}
-      </BlockCard>
-
-      {/* 基礎データ */}
-      <BlockCard title="基礎データ" hint="登録済みの記録から機械的に集計">
-        <div className="flex flex-wrap items-center gap-2">
-          {basics.master.registered ? (
-            <>
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                マスタ登録あり
-              </span>
-              {basics.master.category && (
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
-                  {basics.master.category}
-                </span>
-              )}
-            </>
-          ) : (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">
-              マスタ未登録
-            </span>
-          )}
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <StatTile label="会議" value={`${basics.meetingCount} 件`} />
-          <StatTile label="週報" value={`${basics.weeklyCount} 週`} />
-          <StatTile label="成果物" value={`${basics.deliverableCount} 件`} />
-          <StatTile
-            label="最終接点"
-            value={
-              basics.lastContactDate
-                ? `${formatDate(basics.lastContactDate)}${
-                    basics.daysSinceLastContact !== null
-                      ? `（${basics.daysSinceLastContact}日前）`
-                      : ""
-                  }`
-                : "記録なし"
-            }
-          />
-        </div>
-        {basics.firstContactDate && (
-          <p className="mt-2 text-xs text-gray-500">
-            初回接点：{formatDate(basics.firstContactDate)}
-          </p>
-        )}
-      </BlockCard>
-    </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <StatTile label="会議" value={`${basics.meetingCount} 件`} />
+        <StatTile label="週報" value={`${basics.weeklyCount} 週`} />
+        <StatTile label="成果物" value={`${basics.deliverableCount} 件`} />
+        <StatTile
+          label="最終接点"
+          value={
+            basics.lastContactDate
+              ? `${formatDate(basics.lastContactDate)}${
+                  basics.daysSinceLastContact !== null
+                    ? `（${basics.daysSinceLastContact}日前）`
+                    : ""
+                }`
+              : "記録なし"
+          }
+        />
+      </div>
+      <p className="mt-2 text-xs text-gray-500">
+        初回接点：
+        {basics.firstContactDate ? formatDate(basics.firstContactDate) : "記録なし"}
+      </p>
+    </BlockCard>
   );
 }
 
@@ -419,28 +624,49 @@ function Spinner({ label }: { label: string }) {
   );
 }
 
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      {message}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 本体
+// ---------------------------------------------------------------------------
+
 function OrganizationsInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const presetOrg = searchParams.get("org") ?? "";
+  const selected = searchParams.get("org")?.trim() ?? "";
+  const activeTab = toTabKey(searchParams.get("tab"));
 
   const [orgs, setOrgs] = useState<Organization[] | null>(null);
   const [orgsError, setOrgsError] = useState<string | null>(null);
-  const [selected, setSelected] = useState(presetOrg);
-
-  const [data, setData] = useState<TimelineResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
 
+  const [notes, setNotes] = useState<Partial<Record<NoteSection, OrganizationNote>>>({});
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+
+  const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+  // タイムラインはタブが選ばれるまで取りに行かない（重いため）
+  const [timelineRequestedFor, setTimelineRequestedFor] = useState<string | null>(null);
+
+  // 団体一覧。週報にしか出てこない団体も選べるよう include=weekly で取る。
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const res = await fetch("/api/organizations");
+        const res = await fetch("/api/organizations?include=weekly", {
+          cache: "no-store",
+        });
         const json: unknown = await res.json().catch(() => null);
         if (!active) return;
         if (!res.ok) {
@@ -448,8 +674,10 @@ function OrganizationsInner() {
           return;
         }
         const list =
-          json && typeof json === "object" && Array.isArray((json as { organizations?: unknown }).organizations)
-            ? ((json as { organizations: Organization[] }).organizations)
+          json &&
+          typeof json === "object" &&
+          Array.isArray((json as { organizations?: unknown }).organizations)
+            ? (json as { organizations: Organization[] }).organizations
             : [];
         setOrgs(list);
       } catch {
@@ -461,33 +689,7 @@ function OrganizationsInner() {
     };
   }, []);
 
-  const loadTimeline = useCallback(async (org: string) => {
-    if (!org) return;
-    setLoading(true);
-    setError(null);
-    setData(null);
-    try {
-      const res = await fetch(
-        `/api/organizations/timeline?org=${encodeURIComponent(org)}`,
-        { cache: "no-store" }
-      );
-      const json: unknown = await res.json().catch(() => null);
-      if (!res.ok) {
-        setError(errorMessage(json, "取得に失敗しました"));
-        return;
-      }
-      setData(json as TimelineResponse);
-    } catch {
-      setError("通信エラーが発生しました。接続を確認してください。");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // 「タイムライン以外」はタイムラインと独立に取得する（片方が落ちても
-  // もう片方は表示できるようにするため）。
   const loadProfile = useCallback(async (org: string) => {
-    if (!org) return;
     setProfileLoading(true);
     setProfileError(null);
     setProfile(null);
@@ -498,7 +700,7 @@ function OrganizationsInner() {
       );
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) {
-        setProfileError(errorMessage(json, "状態・課題・施策の取得に失敗しました"));
+        setProfileError(errorMessage(json, "現状・課題・施策の取得に失敗しました"));
         return;
       }
       setProfile(json as ProfileResponse);
@@ -509,156 +711,380 @@ function OrganizationsInner() {
     }
   }, []);
 
-  const load = useCallback(
-    (org: string) => {
-      loadProfile(org);
-      loadTimeline(org);
+  const loadNotes = useCallback(async (org: string) => {
+    setNotesLoading(true);
+    setNotesError(null);
+    setNotes({});
+    try {
+      const res = await fetch(
+        `/api/organizations/notes?org=${encodeURIComponent(org)}`,
+        { cache: "no-store" }
+      );
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setNotesError(errorMessage(json, "手書きメモの取得に失敗しました"));
+        return;
+      }
+      const rows =
+        json && typeof json === "object" && Array.isArray((json as { notes?: unknown }).notes)
+          ? (json as { notes: OrganizationNote[] }).notes
+          : [];
+      const map: Partial<Record<NoteSection, OrganizationNote>> = {};
+      for (const row of rows) map[row.section] = row;
+      setNotes(map);
+    } catch {
+      setNotesError("手書きメモの取得で通信エラーが発生しました。");
+    } finally {
+      setNotesLoading(false);
+    }
+  }, []);
+
+  const loadTimeline = useCallback(async (org: string) => {
+    setTimelineLoading(true);
+    setTimelineError(null);
+    setTimeline(null);
+    try {
+      const res = await fetch(
+        `/api/organizations/timeline?org=${encodeURIComponent(org)}`,
+        { cache: "no-store" }
+      );
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setTimelineError(errorMessage(json, "タイムラインの取得に失敗しました"));
+        return;
+      }
+      setTimeline(json as TimelineResponse);
+    } catch {
+      setTimelineError("通信エラーが発生しました。接続を確認してください。");
+    } finally {
+      setTimelineLoading(false);
+    }
+  }, []);
+
+  // 団体が変わったら現状・課題・施策・基礎データとメモを取り直し、タイムラインは捨てる
+  useEffect(() => {
+    setTimeline(null);
+    setTimelineError(null);
+    setTimelineRequestedFor(null);
+    if (!selected) {
+      setProfile(null);
+      setProfileError(null);
+      setNotes({});
+      setNotesError(null);
+      return;
+    }
+    loadProfile(selected);
+    loadNotes(selected);
+  }, [selected, loadProfile, loadNotes]);
+
+  // 遅延ロード：タイムラインタブが選ばれた最初の1回だけ取りに行く
+  useEffect(() => {
+    if (activeTab !== "timeline" || !selected) return;
+    if (timelineRequestedFor === selected) return;
+    setTimelineRequestedFor(selected);
+    loadTimeline(selected);
+  }, [activeTab, selected, timelineRequestedFor, loadTimeline]);
+
+  const pushQuery = useCallback(
+    (org: string, tab: TabKey) => {
+      if (!org) {
+        router.push("/organizations");
+        return;
+      }
+      router.push(`/organizations?org=${encodeURIComponent(org)}&tab=${tab}`);
     },
-    [loadProfile, loadTimeline]
+    [router]
   );
 
-  useEffect(() => {
-    if (presetOrg) load(presetOrg);
-  }, [presetOrg, load]);
+  const saveNote = useCallback(
+    async (section: NoteSection, content: string): Promise<boolean> => {
+      if (!selected) return false;
+      try {
+        const res = await fetch("/api/organizations/notes", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ organization: selected, section, content }),
+        });
+        if (!res.ok) return false;
+        const json: unknown = await res.json().catch(() => null);
+        const note =
+          json && typeof json === "object"
+            ? ((json as { note?: OrganizationNote | null }).note ?? null)
+            : null;
+        if (!note) return false;
+        setNotes((prev) => ({ ...prev, [section]: note }));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [selected]
+  );
 
-  function handleSelect(org: string) {
-    setSelected(org);
-    router.push(org ? `/organizations?org=${encodeURIComponent(org)}` : "/organizations");
-    if (org) load(org);
-  }
+  const deleteNote = useCallback(
+    async (section: NoteSection): Promise<boolean> => {
+      if (!selected) return false;
+      try {
+        const res = await fetch(
+          `/api/organizations/notes?org=${encodeURIComponent(
+            selected
+          )}&section=${encodeURIComponent(section)}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) return false;
+        setNotes((prev) => {
+          const next = { ...prev };
+          delete next[section];
+          return next;
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [selected]
+  );
 
   const sortedOrgs = useMemo(() => {
     if (!orgs) return [];
-    return [...orgs].sort((a, b) => b.count - a.count);
+    return [...orgs].sort(
+      (a, b) =>
+        b.count - a.count ||
+        (b.weeklyCount ?? 0) - (a.weeklyCount ?? 0) ||
+        a.name.localeCompare(b.name, "ja")
+    );
   }, [orgs]);
+
+  // タブの件数バッジ。自動導出の件数を出す（未取得のタイムラインは null＝バッジ無し）。
+  const tabCounts: Record<TabKey, number | null> = useMemo(() => {
+    if (!profile) {
+      return {
+        status: null,
+        issues: null,
+        tactics: null,
+        basics: null,
+        timeline: timeline ? timeline.timeline.length : null,
+      };
+    }
+    const statusCount = profile.status.headline
+      ? Math.max(profile.status.recent.length, 1)
+      : profile.status.fallback
+        ? 1
+        : 0;
+    return {
+      status: statusCount,
+      issues: profile.issues.length,
+      tactics: profile.tactics.length,
+      basics:
+        profile.basics.meetingCount +
+        profile.basics.weeklyCount +
+        profile.basics.deliverableCount,
+      timeline: timeline ? timeline.timeline.length : null,
+    };
+  }, [profile, timeline]);
+
+  const activeDef = TABS.find((t) => t.key === activeTab) ?? TABS[0];
+
+  function renderAutoPanel() {
+    if (profileLoading) return <Spinner label="集計中…" />;
+    if (profileError) return <ErrorBox message={profileError} />;
+    if (!profile) return null;
+    switch (activeTab) {
+      case "status":
+        return <StatusPanel status={profile.status} />;
+      case "issues":
+        return <IssuesPanel issues={profile.issues} />;
+      case "tactics":
+        return <TacticsPanel tactics={profile.tactics} />;
+      case "basics":
+        return <BasicsPanel basics={profile.basics} />;
+      default:
+        return null;
+    }
+  }
+
+  function renderTimelineTab() {
+    if (timelineLoading) return <Spinner label="タイムラインを読み込み中…" />;
+    if (timelineError) return <ErrorBox message={timelineError} />;
+    if (!timeline) return null;
+    return (
+      <div className="space-y-8">
+        <div>
+          <AutoLabel hint="会議・週報・成果物を日付降順で" />
+          <div className="mt-3">
+            {timeline.timeline.length > 0 ? (
+              <div className="space-y-3">
+                {timeline.timeline.map((entry) => (
+                  <TimelineCard key={entry.id} entry={entry} />
+                ))}
+              </div>
+            ) : (
+              <EmptyLine text="記録なし（会議・週報・成果物がまだ登録されていません）" />
+            )}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="mb-1 text-base font-bold text-gray-900">関連しそうな日記</h3>
+          <p className="mb-3 text-xs text-gray-400">
+            ※AIが意味的に関連しそうと判断した日記です。時系列本体とは確度が異なる参考情報です。
+          </p>
+          {timeline.relatedDiaries.length > 0 ? (
+            <div className="space-y-3">
+              {timeline.relatedDiaries.map((diary) => (
+                <DiaryCard key={diary.id} diary={diary} />
+              ))}
+            </div>
+          ) : (
+            <EmptyLine text="記録なし（関連しそうな日記は見つかりませんでした）" />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
       <header className="mb-6">
-        <Link
-          href="/"
-          className="text-sm font-medium text-indigo-600 active:opacity-70"
-        >
+        <Link href="/" className="text-sm font-medium text-indigo-600 active:opacity-70">
           ← ホーム
         </Link>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">
           団体別攻略
         </h1>
         <p className="mt-1 text-sm text-gray-500">
-          団体を選ぶと、いまの状態・課題・施策（タイムライン以外）と、会議・週報・成果物の時系列（タイムライン）を1画面で確認できます
+          団体を選び、現状・課題・施策・基礎データ・タイムラインをタブで切り替えて確認できます。各タブには手書きメモを残せます。
         </p>
       </header>
 
       {/* 団体セレクタ */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <label
-          htmlFor="org-select"
-          className="block text-sm font-medium text-gray-600"
-        >
+        <label htmlFor="org-select" className="block text-sm font-medium text-gray-600">
           団体を選択
         </label>
         <select
           id="org-select"
           value={selected}
-          onChange={(e) => handleSelect(e.target.value)}
+          onChange={(e) => pushQuery(e.target.value, activeTab)}
           disabled={!orgs}
           className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
         >
-          <option value="">
-            {orgs ? "団体を選んでください" : "読み込み中..."}
-          </option>
+          <option value="">{orgs ? "団体を選んでください" : "読み込み中..."}</option>
           {sortedOrgs.map((o) => (
             <option key={o.name} value={o.name}>
-              {o.name}（会議 {o.count}件）
+              {o.count > 0
+                ? `${o.name}（会議 ${o.count}件）`
+                : `${o.name}（週報 ${o.weeklyCount ?? 0}週）`}
             </option>
           ))}
         </select>
         {orgsError && <p className="mt-2 text-sm text-red-600">{orgsError}</p>}
       </div>
 
-      {!selected && !loading && !profileLoading && (
+      {!selected && (
         <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-white/60 p-6 text-center">
           <p className="text-sm leading-relaxed text-gray-600">
             団体を選んでください。
             <br />
-            状態・課題・施策・基礎データと、時系列の記録をまとめて表示します。
+            現状・課題・施策・基礎データ・タイムラインをタブで切り替えて見られます。
           </p>
         </div>
       )}
 
-      {/* ① タイムライン以外 */}
       {selected && (
-        <section className="mt-8" aria-live="polite">
-          <SectionHeading
-            title="タイムライン以外"
-            note="いまの状態・課題・施策・基礎データ（時系列ではない要約）"
-          />
-          {profileLoading && <Spinner label="状態を集計中…" />}
-          {!profileLoading && profileError && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {profileError}
-            </div>
-          )}
-          {!profileLoading && !profileError && profile && (
-            <ProfileBlock profile={profile} />
-          )}
-        </section>
-      )}
-
-      {/* ② タイムライン */}
-      {selected && (
-        <section className="mt-10" aria-live="polite">
-          <SectionHeading
-            title="タイムライン"
-            note="会議・週報・成果物を日付降順で。関連しそうな日記も参考表示"
-          />
-
-          {loading && <Spinner label="読み込み中…" />}
-
-          {!loading && error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              {error}
+        <>
+          {/* データの薄さについての注記（タブに関係なく常に出す） */}
+          {profile && profile.notes.length > 0 && (
+            <div className="mt-6 rounded-xl border border-dashed border-amber-300 bg-amber-50/70 p-3">
+              <p className="text-xs font-semibold text-amber-800">
+                {profile.sparse ? "情報が少ない団体です" : "データについての注記"}
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {profile.notes.map((n) => (
+                  <li key={n} className="text-xs leading-relaxed text-amber-900">
+                    ・{n}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
-          {!loading && !error && data && (
-            <div className="space-y-8">
-              <div>
-                {data.timeline.length > 0 ? (
-                  <div className="space-y-3">
-                    {data.timeline.map((entry) => (
-                      <TimelineCard key={entry.id} entry={entry} />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-xl border border-gray-200 bg-white p-4 text-sm text-gray-500">
-                    記録がありません。
-                  </p>
-                )}
+          {/* タブ */}
+          <nav
+            className="mt-6 -mx-4 overflow-x-auto px-4"
+            aria-label="団体別攻略のタブ"
+          >
+            <div className="flex w-max gap-2" role="tablist">
+              {TABS.map((t) => {
+                const isActive = t.key === activeTab;
+                const count = tabCounts[t.key];
+                const hasNote = t.section ? !!notes[t.section] : false;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => pushQuery(selected, t.key)}
+                    className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition active:opacity-70 ${
+                      isActive
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-gray-300 bg-white text-gray-700"
+                    }`}
+                  >
+                    {t.label}
+                    {count !== null && (
+                      <span
+                        className={`ml-1 text-xs font-bold ${
+                          isActive ? "text-indigo-100" : "text-gray-400"
+                        }`}
+                      >
+                        ({count})
+                      </span>
+                    )}
+                    {hasNote && (
+                      <span
+                        className={`ml-1 text-xs ${
+                          isActive ? "text-amber-200" : "text-amber-600"
+                        }`}
+                        title="手書きメモあり"
+                      >
+                        ✎
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
+
+          <section className="mt-4 space-y-4" aria-live="polite">
+            {/* 手書きメモ（自動集計より上）。タイムラインタブにはメモを置かない。 */}
+            {activeDef.section && (
+              <>
+                <NoteEditor
+                  key={`${selected}:${activeDef.section}`}
+                  section={activeDef.section}
+                  note={notes[activeDef.section] ?? null}
+                  loading={notesLoading}
+                  onSave={saveNote}
+                  onDelete={deleteNote}
+                />
+                {notesError && <ErrorBox message={notesError} />}
+              </>
+            )}
+
+            {/* 自動導出 */}
+            {activeTab === "timeline" ? (
+              renderTimelineTab()
+            ) : (
+              <div className="space-y-2">
+                <AutoLabel hint="週報・会議・成果物から機械的に集計" />
+                {renderAutoPanel()}
               </div>
-
-              <div>
-                <h3 className="mb-1 text-base font-bold text-gray-900">
-                  関連しそうな日記
-                </h3>
-                <p className="mb-3 text-xs text-gray-400">
-                  ※AIが意味的に関連しそうと判断した日記です。時系列本体とは確度が異なる参考情報です。
-                </p>
-                {data.relatedDiaries.length > 0 ? (
-                  <div className="space-y-3">
-                    {data.relatedDiaries.map((diary) => (
-                      <DiaryCard key={diary.id} diary={diary} />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-xl border border-dashed border-gray-200 bg-white/60 p-4 text-sm text-gray-400">
-                    関連しそうな日記は見つかりませんでした。
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-        </section>
+            )}
+          </section>
+        </>
       )}
 
       <div className="mt-8 text-center">

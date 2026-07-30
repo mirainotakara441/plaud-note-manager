@@ -179,6 +179,55 @@ export async function fetchRelatedDiaries(
   }
 }
 
+// ---------------------------------------------------------------------------
+// 手書きメモ（organization_notes）
+// ---------------------------------------------------------------------------
+//
+// 「現状」「課題」「施策」「基礎データ」は週報・会議からの派生情報なので、
+// 元データを書き換えず、上書き／追記用のメモを別テーブルに持たせている。
+// 1団体×1セクションにつき1行（organization, section が UNIQUE）。
+// anon には SELECT のみ許可しているため、読みは anonCreds()、
+// 書きは serviceCreds() を使う。
+
+export const NOTE_SECTIONS = ["現状", "課題", "施策", "基礎データ"] as const;
+
+export type NoteSection = (typeof NOTE_SECTIONS)[number];
+
+export function isNoteSection(v: unknown): v is NoteSection {
+  return typeof v === "string" && (NOTE_SECTIONS as readonly string[]).includes(v);
+}
+
+export type OrganizationNote = {
+  id: string;
+  organization: string;
+  section: NoteSection;
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export const ORGANIZATION_NOTES_SELECT =
+  "id,organization,section,content,created_at,updated_at";
+
+/** 指定団体の手書きメモを全セクション分取得する（完全一致）。 */
+export async function fetchOrganizationNotes(
+  url: string,
+  key: string,
+  org: string
+): Promise<OrganizationNote[]> {
+  const orgParam = encodeURIComponent(org);
+  const res = await fetch(
+    `${url}/rest/v1/organization_notes?select=${ORGANIZATION_NOTES_SELECT}&organization=eq.${orgParam}`,
+    { headers: restHeaders(key), cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`手書きメモ取得エラー ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const rows: unknown = await res.json();
+  return Array.isArray(rows) ? (rows as OrganizationNote[]) : [];
+}
+
 export type StakeholderRow = { category: string; name: string };
 
 // ステークホルダー・マスタ。取得できなくても致命ではないので失敗時は空配列。
