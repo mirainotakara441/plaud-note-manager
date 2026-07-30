@@ -1,17 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { STAKEHOLDER_CATEGORIES } from "@/lib/categories";
 
 // ステークホルダー・マスタ。カテゴリー→具体名の2段階選択に使う。
 // 新しい名前が使われたら POST で追加され、次回から選択肢に出る（マスタが育つ）。
 
-export const CATEGORIES = [
-  "自治体",
-  "事業者",
-  "銀行",
-  "議員",
-  "委託会社",
-  "その他",
-] as const;
+// 値は stakeholders.category のCHECK制約と一致していなければならないため、
+// lib/categories.ts の一箇所で管理する（正準8分類との差分もそちらに記載）。
+export const CATEGORIES = STAKEHOLDER_CATEGORIES;
 
 type Row = { category: string; name: string };
 

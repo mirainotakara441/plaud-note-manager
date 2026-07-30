@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const VALID_SOURCE_TYPES = ["日記", "会議", "学び"];
+// memory_chunks.source_type の CHECK制約と一致させること。
+// ここに無い値が来ると source_type がpayloadに載らず、フィルタが「黙って無視」される
+// （エラーにならないので、UIでは絞り込んだつもりなのに全件から検索されてしまう）。
+// 2026-07-30まで ["日記","会議","学び"] しか無く、検索UIが出していた`成果物`(246件)と
+// `学会`(10件) の絞り込みが効いていなかった。
+const VALID_SOURCE_TYPES = ["日記", "会議", "学び", "成果物", "学会", "PDF", "その他"];
 
 export async function POST(req: NextRequest) {
   const supabaseUrl = process.env.SUPABASE_URL;

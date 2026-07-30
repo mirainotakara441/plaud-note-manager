@@ -10,6 +10,8 @@
 // APIのペイロードが { status: { name } } と { select: { name } } で異なるので注意
 // （ここを間違えると 400 validation_error になる）。
 
+import { ORG_CATEGORIES, isOrgCategory, type OrgCategory } from "@/lib/categories";
+
 export const NOTION_TODO_DATABASE_ID = "95b41654d8d64a1db401173da45102a5";
 const NOTION_VERSION = "2022-06-28";
 const NOTION_API = "https://api.notion.com/v1";
@@ -20,10 +22,16 @@ export function isTodoStatus(v: unknown): v is TodoStatus {
   return typeof v === "string" && (TODO_STATUSES as readonly string[]).includes(v);
 }
 
-export const TODO_GENRES = ["社内", "自治体", "議員", "事業者", "委託会社"] as const;
-export type TodoGenre = (typeof TODO_GENRES)[number];
+// ジャンルは正準8分類（lib/categories.ts）。この値は3箇所すべてが一致していないと壊れる:
+//   1. Supabase strategic_todos.genre の CHECK制約
+//   2. Notion「ToDo DB」の`ジャンル`セレクトの選択肢
+//   3. app/actions/page.tsx の GENRE_ORDER / GENRE_META（表示順・アイコン・色）
+// 2026-07-30に1・2とも正準8分類へ拡張済み。ここを狭めると、UIで選べるのにAPIが
+// 400を返す（＝以前 /deliverables で起きていたのと同じ型のバグ）ので狭めないこと。
+export const TODO_GENRES = ORG_CATEGORIES;
+export type TodoGenre = OrgCategory;
 export function isTodoGenre(v: unknown): v is TodoGenre {
-  return typeof v === "string" && (TODO_GENRES as readonly string[]).includes(v);
+  return isOrgCategory(v);
 }
 
 // Supabase strategic_todos の「Notionと同期する分」だけを抜き出した形。
