@@ -108,8 +108,8 @@ const REVIEW_FEATURES: Feature[] = [
   {
     href: "/organizations",
     icon: "🧭",
-    title: "団体別タイムライン",
-    desc: "団体を選ぶと会議・週報・成果物を時系列で1画面に",
+    title: "団体別攻略",
+    desc: "団体ごとの状態・課題・施策と、会議・週報・成果物の時系列を1画面に",
     accent: "bg-fuchsia-100 text-fuchsia-700",
   },
   {
