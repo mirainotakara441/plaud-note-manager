@@ -36,6 +36,7 @@ type Row = {
   status: string;
   target_month: string | null;
   notes: string | null;
+  due_date: string | null;
 };
 
 function norm(v: string | null | undefined): string | null {
@@ -50,7 +51,9 @@ function same(row: Row, n: NotionTodo): boolean {
     row.genre === n.genre &&
     row.status === n.status &&
     norm(row.target_month) === norm(n.target_month) &&
-    norm(row.notes) === norm(n.notes)
+    norm(row.notes) === norm(n.notes) &&
+    // due_date は Supabase から "YYYY-MM-DD" で返り、Notion側も同形に正規化済み。
+    norm(row.due_date) === norm(n.due_date)
   );
 }
 
@@ -82,7 +85,7 @@ export async function POST() {
 
   // 2) Supabase全件
   const listRes = await fetch(
-    `${c.url}/rest/v1/${TABLE}?select=id,notion_page_id,task_name,genre,status,target_month,notes`,
+    `${c.url}/rest/v1/${TABLE}?select=id,notion_page_id,task_name,genre,status,target_month,notes,due_date`,
     { headers: restHeaders(c.key), cache: "no-store" }
   );
   if (!listRes.ok) {
@@ -137,6 +140,7 @@ export async function POST() {
           status: n.status,
           target_month: n.target_month,
           notes: n.notes,
+          due_date: n.due_date,
           updated_at: now,
         }))
       ),
@@ -160,6 +164,7 @@ export async function POST() {
         status: n.status,
         target_month: n.target_month,
         notes: n.notes,
+        due_date: n.due_date,
         updated_at: now,
       }),
     });
