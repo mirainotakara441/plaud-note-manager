@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import NotificationOptIn from "@/app/components/NotificationOptIn";
+import { toJstDateString } from "@/lib/date";
 
 // 日々のToDo：2つの由来のToDoを1画面に束ねる。
 //   ① daily_actions（/api/actions）… 一行日記の「やってみよう」「本日のポイント」。
@@ -37,6 +38,7 @@ type Strategic = {
   status: StrategicStatus;
   target_month: string | null;
   notes: string | null;
+  due_date: string | null; // YYYY-MM-DD / null=納期なし。Notionの`納期`と同期する
   created_at: string;
   updated_at: string;
 };
@@ -95,6 +97,64 @@ function fmtDate(d: string) {
   const wd = WD[new Date(y, m - 1, day).getDay()] ?? "";
   return `${m}/${day}（${wd}）`;
 }
+// ── 納期（due_date）の判定・表示 ────────────────────────────────────
+// 判定は必ずJST基準で行う。端末のタイムゾーン任せにすると、時計が海外に
+// 合っている端末で「今日」が1日ずれ、赤／琥珀の警告が嘘になる。
+// 今日の日付は lib/date.ts の toJstDateString を流用して求める。
+function jstToday(): string {
+  return toJstDateString(new Date().toISOString());
+}
+
+// YYYY-MM-DD 同士の日数差（to - from）。両方をUTCの0時として解釈するため、
+// 夏時間や端末タイムゾーンの影響を受けない。
+function diffDays(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.round((b - a) / 86400000);
+}
+
+// 納期バッジの相対表示と色。閾値は次の3段階（JST基準の日数差）:
+//   diff <  0 … 期限超過   赤（rose）  「N日超過」
+//   diff == 0 … 今日       琥珀（amber）「今日」
+//   diff == 1 … 明日       琥珀（amber）「明日」
+//   diff >= 2 … それ以降   通常（グレー）「あとN日」
+// 完了済みは急かす意味がないので、超過していてもグレーに落として静かにする。
+function dueMeta(due: string, done: boolean): { rel: string; klass: string; urgent: boolean } {
+  const diff = diffDays(jstToday(), due);
+  const rel =
+    diff < 0 ? `${-diff}日超過` : diff === 0 ? "今日" : diff === 1 ? "明日" : `あと${diff}日`;
+  if (done) {
+    return { rel, klass: "border-gray-200 bg-gray-50 text-gray-400", urgent: false };
+  }
+  if (diff < 0) {
+    return { rel, klass: "border-rose-300 bg-rose-50 text-rose-700 font-semibold", urgent: true };
+  }
+  if (diff <= 1) {
+    return { rel, klass: "border-amber-300 bg-amber-50 text-amber-700 font-semibold", urgent: true };
+  }
+  return { rel, klass: "border-gray-200 bg-white text-gray-500", urgent: false };
+}
+
+// 並び順の共通比較関数。
+//   ① 納期があるものを、納期の近い順（超過しているものが最上）で先に置く
+//   ② 納期がないものは、その後ろに従来どおり登録順（created_at 昇順）で置く
+// なぜ「納期あり」を上に固めるのか:
+//   納期は吉井さんが自分で「この日までにやる」と宣言した唯一の締切情報で、
+//   target_month（月単位）や created_at（登録した順）より意思が強い。
+//   期限に追われているものを毎朝いちばん先に目に入れたいので、納期ありを優先する。
+//   逆に納期なしを上に混ぜると、超過している行がスクロールの下に埋もれて警告色の
+//   意味がなくなる。
+function byDueThenCreated(a: Strategic, b: Strategic): number {
+  const ad = a.due_date;
+  const bd = b.due_date;
+  if (ad && bd) {
+    if (ad !== bd) return ad < bd ? -1 : 1;
+  } else if (ad) return -1;
+  else if (bd) return 1;
+  return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+}
+
 // その日が属する週の月曜日を返す
 function weekMonday(d: string): Date {
   const [y, m, day] = d.split("-").map(Number);
@@ -158,6 +218,10 @@ export default function ActionsPage() {
   const [stEditNotes, setStEditNotes] = useState("");
   const [stEditGenre, setStEditGenre] = useState<string>("社内");
   const [stSaving, setStSaving] = useState(false);
+
+  // 納期の入力（カレンダーを開いている行のid）。
+  // input[type=date] を使うので、iPhoneでもPCでもOS標準のカレンダーが出る。
+  const [dueEditId, setDueEditId] = useState<string | null>(null);
 
   // 戦略ToDoの新規追加（ジャンルごとにインライン行を開く）
   const [stAddGenre, setStAddGenre] = useState<string | null>(null); // 追加フォームを開いているジャンル
@@ -251,6 +315,34 @@ export default function ActionsPage() {
     }
     const data = await res.json().catch(() => null);
     markNotion(t.id, data?.notionSync);
+  }
+
+  // 納期の設定／解除。value に YYYY-MM-DD を渡すと設定、null で解除。
+  // 楽観的更新→失敗時は元の配列に戻す（他のインライン編集と同じ作法）。
+  async function saveDue(t: Strategic, value: string | null) {
+    if (t.due_date === value) {
+      setDueEditId(null);
+      return;
+    }
+    const prev = strategic;
+    setStrategic((p) => p.map((x) => (x.id === t.id ? { ...x, due_date: value } : x)));
+    setDueEditId(null);
+    try {
+      const res = await fetch("/api/strategic-todos", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: t.id, due_date: value }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error ?? "納期の更新に失敗しました");
+      markNotion(t.id, data?.notionSync);
+      if (data?.notionSync === "failed") {
+        setNotice("納期を保存しましたが、Notion側の「納期」には反映できませんでした");
+      }
+    } catch (e) {
+      setStrategic(prev);
+      setError(e instanceof Error ? e.message : "納期の更新に失敗しました");
+    }
   }
 
   function startStrategicEdit(t: Strategic) {
@@ -503,6 +595,10 @@ export default function ActionsPage() {
   }, [items]);
 
   // ── カテゴリーモード：戦略ToDoをジャンルごとに束ねる（未完→完了の順）
+  // ジャンル内の並びは「完了は常に最下段」を保ったまま、未完了同士を
+  // byDueThenCreated（納期の近い順→納期なしは登録順）で並べる。
+  // ジャンルという括りは崩さずに、その中で締切が迫っているものだけを上げたい
+  // ＝「1点突破」する相手をジャンルごとに1件目で見つけられる形にするため。
   const genreGroups = useMemo(() => {
     const byGenre = new Map<string, Strategic[]>();
     for (const t of strategic) {
@@ -514,7 +610,7 @@ export default function ActionsPage() {
         const ad = a.status === "完了" ? 1 : 0;
         const bd = b.status === "完了" ? 1 : 0;
         if (ad !== bd) return ad - bd;
-        return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+        return byDueThenCreated(a, b);
       });
     }
     return Array.from(byGenre.entries()).sort((a, b) => {
@@ -528,18 +624,56 @@ export default function ActionsPage() {
     [strategic]
   );
 
+  // 納期の警告件数（未完了のみ）。over=超過、soon=今日/明日。
+  // 閾値は dueMeta の色分けと必ず同じにする（バッジは赤なのに件数に出ない、を防ぐ）。
+  const dueAlert = useMemo(() => {
+    const today = jstToday();
+    let over = 0;
+    let soon = 0;
+    for (const t of strategic) {
+      if (!t.due_date || t.status === "完了") continue;
+      const d = diffDays(today, t.due_date);
+      if (d < 0) over += 1;
+      else if (d <= 1) soon += 1;
+    }
+    return { over, soon };
+  }, [strategic]);
+
   // ── 時系列モード：両方を1本の時間軸に混ぜて新しい順。
   // daily_actions は entry_date、strategic_todos は created_at（JSTのローカル日付）を軸にする。
   type Row =
     | { key: string; date: string; type: "action"; item: Item }
     | { key: string; date: string; type: "strategic"; todo: Strategic };
 
+  // 納期が入っている未完了の営業ToDoは、時系列の並びに混ぜずに専用セクションへ
+  // 切り出して最上部に置く。
+  //
+  // なぜ混ぜないのか（この判断の理由）:
+  //   既存の時系列は created_at / entry_date の「降順（新しいものが上）」で、
+  //   過去に向かって読む“記録の軸”になっている。一方 納期は「昇順（近いものが上）」で
+  //   未来に向かって読む“締切の軸”で、向きが正反対。これを1本のリストに混ぜると、
+  //   同じ縦方向のスクロールが上と下で違う意味になり、どちらも読めなくなる。
+  //   （created_at は「いつ登録したか」でしかなく、行動の優先度をまったく表さない。）
+  //   そこで軸ごとにセクションを分け、「これから」の納期を先に、「これまで」の記録を
+  //   後に置く。フィードフォワードの順序＝未来への問いを先に見る形に合わせた。
+  // 完了済みは締切として急かす意味がないので、このセクションには入れず通常の時系列に残す。
+  const dueRows = useMemo(
+    () =>
+      strategic
+        .filter((t) => t.due_date && t.status !== "完了")
+        .sort(byDueThenCreated),
+    [strategic]
+  );
+
   const timelineGroups = useMemo(() => {
+    // 納期セクションに出した行は時系列側では省く（同じToDoを二重に出さないため）。
+    const inDueSection = new Set(dueRows.map((t) => t.id));
     const rows: Row[] = [];
     for (const it of items) {
       rows.push({ key: `a-${it.id}`, date: it.entry_date, type: "action", item: it });
     }
     for (const t of strategic) {
+      if (inDueSection.has(t.id)) continue;
       const d = new Date(t.created_at);
       const date = Number.isNaN(d.getTime()) ? (t.target_month ?? "") : keyOf(d);
       rows.push({ key: `s-${t.id}`, date, type: "strategic", todo: t });
@@ -556,7 +690,7 @@ export default function ActionsPage() {
       byDate.get(r.date)!.push(r);
     }
     return Array.from(byDate.entries());
-  }, [items, strategic]);
+  }, [items, strategic, dueRows]);
 
   const doneItems = useMemo(
     () => items.filter((x) => x.done).sort((a, b) => (a.entry_date < b.entry_date ? 1 : -1)),
@@ -754,6 +888,59 @@ export default function ActionsPage() {
                 {t.target_month && (
                   <span className="text-[0.6875rem] text-gray-400">{t.target_month}</span>
                 )}
+
+                {/* 納期。ボタンを押すとOS標準のカレンダー（input[type=date]）が開く。
+                    設定済みなら「📅 8/5（水） あと3日」のように相対表示も添える。 */}
+                {dueEditId === t.id ? (
+                  <span className="inline-flex items-center gap-1">
+                    <input
+                      type="date"
+                      autoFocus
+                      value={t.due_date ?? ""}
+                      onChange={(e) => saveDue(t, e.target.value || null)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setDueEditId(null);
+                      }}
+                      aria-label="納期"
+                      className="rounded-lg border border-emerald-400 px-1.5 py-0.5 text-[0.8125rem] text-gray-700"
+                    />
+                    {t.due_date && (
+                      <button
+                        type="button"
+                        onClick={() => saveDue(t, null)}
+                        className="rounded-full border border-gray-300 px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-500 transition active:bg-gray-100"
+                      >
+                        クリア
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setDueEditId(null)}
+                      className="rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-400 transition active:bg-gray-100"
+                    >
+                      閉じる
+                    </button>
+                  </span>
+                ) : (
+                  (() => {
+                    const dm = t.due_date ? dueMeta(t.due_date, done) : null;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setDueEditId(t.id)}
+                        title={t.due_date ? "納期を変更・解除する" : "納期を設定する"}
+                        className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] transition active:scale-95 ${
+                          dm ? dm.klass : "border-dashed border-gray-300 text-gray-400"
+                        }`}
+                      >
+                        {t.due_date && dm
+                          ? `📅 ${fmtDate(t.due_date)} ${dm.rel}`
+                          : "📅 納期"}
+                      </button>
+                    );
+                  })()
+                )}
+
                 {!done && (
                   <button
                     type="button"
@@ -952,6 +1139,16 @@ export default function ActionsPage() {
         営業ToDo 未完 <b className="text-gray-800">{strategicOpen}</b> 件 ・ 日々のToDo 未完{" "}
         <b className="text-gray-800">{remaining}</b> 件 ・ 済み{" "}
         <b className="text-gray-800">{doneItems.length}</b> 件
+        {dueAlert.over > 0 && (
+          <span className="ml-2 rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 font-semibold text-rose-700">
+            納期超過 {dueAlert.over}件
+          </span>
+        )}
+        {dueAlert.soon > 0 && (
+          <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">
+            今日・明日 {dueAlert.soon}件
+          </span>
+        )}
       </div>
 
       {loading && <p className="py-10 text-center text-sm text-gray-400">読み込み中…</p>}
@@ -1092,6 +1289,24 @@ export default function ActionsPage() {
       {/* ───── 時系列モード ───── */}
       {!loading && view === "timeline" && (
         <div className="space-y-6">
+          {/* 納期セクション（締切の軸・近い順）。下の日付セクションは記録の軸・新しい順。 */}
+          {dueRows.length > 0 && (
+            <section>
+              <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
+                <span className="rounded bg-rose-50 px-1.5 py-0.5 text-xs text-rose-700">📅</span>
+                納期あり（近い順）
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
+                  {dueRows.length}
+                </span>
+              </h2>
+              <div className="space-y-2">
+                {dueRows.map((t) => (
+                  <div key={`d-${t.id}`}>{renderStrategic(t)}</div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {timelineGroups.map(([date, rows]) => (
             <section key={date}>
               <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">

@@ -34,6 +34,21 @@ export function isTodoGenre(v: unknown): v is TodoGenre {
   return isOrgCategory(v);
 }
 
+// 納期（Supabase: due_date date / Notion: 納期 date型）。
+// 受け渡しは必ず YYYY-MM-DD の文字列。時刻は持たせない。
+// 「その日までにやる」という粒度しか使わないうえ、時刻を持たせるとタイムゾーン
+// （NotionはUTCオフセット付きで返す）の変換ミスで日付が1日ずれるため。
+const DUE_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export function isDueDate(v: unknown): v is string {
+  if (typeof v !== "string" || !DUE_DATE_RE.test(v)) return false;
+  // 2026-02-30 のように「形は合っているが存在しない日付」を弾く。
+  const [y, m, d] = v.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
+  );
+}
+
 // Supabase strategic_todos の「Notionと同期する分」だけを抜き出した形。
 export type TodoFields = {
   task_name: string;
@@ -41,6 +56,7 @@ export type TodoFields = {
   status: TodoStatus;
   target_month: string | null;
   notes: string | null;
+  due_date: string | null; // YYYY-MM-DD / null=納期なし
 };
 
 export type NotionTodo = TodoFields & { notion_page_id: string };
@@ -101,6 +117,10 @@ export function toNotionProperties(fields: Partial<TodoFields>): Record<string, 
   if (fields.status !== undefined) props["ステータス"] = { status: { name: fields.status } };
   if (fields.target_month !== undefined) props["対象月"] = richTextProp(fields.target_month);
   if (fields.notes !== undefined) props["備考"] = richTextProp(fields.notes);
+  // date型。解除は { date: null }（{ date: {} } や空文字は 400 validation_error になる）。
+  if (fields.due_date !== undefined) {
+    props["納期"] = fields.due_date ? { date: { start: fields.due_date } } : { date: null };
+  }
   return props;
 }
 
@@ -121,6 +141,20 @@ function plainText(prop: unknown, key: "title" | "rich_text"): string {
     .map((r) => (typeof r?.plain_text === "string" ? r.plain_text : ""))
     .join("")
     .trim();
+}
+
+// Notionのdate型プロパティ → YYYY-MM-DD。
+// Notionは日付のみなら "2026-08-05"、時刻付きなら "2026-08-05T10:00:00.000+09:00" を返す。
+// 納期は日付粒度しか使わないため先頭10文字だけを採る。
+// 注意: 時刻付きの値は入力者のタイムゾーンでの表記そのままが返るので、
+// Dateに通して変換すると日付がずれる。文字列のまま切ること。
+function dateStart(prop: unknown): string | null {
+  const v = (prop as Record<string, unknown> | undefined)?.["date"];
+  if (!v || typeof v !== "object") return null;
+  const start = (v as Record<string, unknown>).start;
+  if (typeof start !== "string" || start === "") return null;
+  const day = start.slice(0, 10);
+  return isDueDate(day) ? day : null;
 }
 
 function namedValue(prop: unknown, key: "select" | "status"): string | null {
@@ -149,8 +183,11 @@ export function fromNotionPage(page: NotionPage): NotionTodo | null {
 
   const target_month = plainText(props["対象月"], "rich_text") || null;
   const notes = plainText(props["備考"], "rich_text") || null;
+  // 納期は「読めなければ未設定」でよい（ジャンル等と違って行を丸ごとスキップはしない）。
+  // 納期はあくまで補助情報で、これが読めないだけでタスク本体を取り込めないのは損。
+  const due_date = dateStart(props["納期"]);
 
-  return { notion_page_id: id, task_name, genre, status, target_month, notes };
+  return { notion_page_id: id, task_name, genre, status, target_month, notes, due_date };
 }
 
 // ============ Notion REST 呼び出し ============

@@ -5,6 +5,7 @@ import {
   TODO_GENRES,
   isTodoStatus,
   isTodoGenre,
+  isDueDate,
   notionToken,
   notionCreateTodoPage,
   notionUpdateTodoPage,
@@ -73,7 +74,22 @@ async function trySync(label: string, fn: (token: string) => Promise<void>): Pro
 }
 
 const SELECT =
-  "id,notion_page_id,task_name,genre,status,target_month,notes,created_at,updated_at";
+  "id,notion_page_id,task_name,genre,status,target_month,notes,due_date,created_at,updated_at";
+
+// 納期（due_date）のリクエスト値を検証して { value } に正規化する。
+// 受け付けるのは YYYY-MM-DD の実在日付か、解除を意味する null / 空文字のみ。
+// 不正な文字列を黙って null に落とすと「クリアしたつもりがない解除」が起きるため、
+// 呼び出し側で400にできるよう error を返す。
+function parseDueDate(raw: unknown): { value: string | null } | { error: string } {
+  if (raw === null) return { value: null };
+  if (typeof raw !== "string") return { error: "due_dateは文字列またはnullです" };
+  const s = raw.trim();
+  if (s === "") return { value: null }; // 空文字＝納期の解除（input[type=date]を空にした場合）
+  if (!isDueDate(s)) {
+    return { error: "due_dateはYYYY-MM-DD形式の実在する日付で指定してください" };
+  }
+  return { value: s };
+}
 
 // 一覧取得（ジャンル順→登録順）。並べ替え・グルーピングは画面側で行う。
 export async function GET() {
@@ -119,6 +135,10 @@ export async function POST(req: NextRequest) {
   const notes: unknown = body?.notes;
   const notes_value = typeof notes === "string" ? notes.trim() || null : null;
 
+  const due = parseDueDate(body?.due_date === undefined ? null : body.due_date);
+  if ("error" in due) return NextResponse.json({ error: due.error }, { status: 400 });
+  const due_date_value = due.value;
+
   const res = await fetch(`${c.url}/rest/v1/${TABLE}`, {
     method: "POST",
     headers: headers(c.key, "return=representation"),
@@ -129,6 +149,7 @@ export async function POST(req: NextRequest) {
       status: "未着手",
       target_month: target_month_value,
       notes: notes_value,
+      due_date: due_date_value,
     }),
   });
   if (!res.ok) {
@@ -147,6 +168,7 @@ export async function POST(req: NextRequest) {
     status: "未着手",
     target_month: target_month_value,
     notes: notes_value,
+    due_date: due_date_value,
   };
   try {
     const token = await notionToken();
@@ -313,6 +335,17 @@ export async function PATCH(req: NextRequest) {
       notionFields.target_month = tm ? tm : null;
       hasField = true;
     }
+  }
+
+  // 納期。null または空文字で解除できる（画面の「クリア」ボタン）。
+  // ここは他の項目と違い「undefinedでなければ触る」判定にしないと、
+  // null（解除）を渡されたときに黙って無視してしまう。
+  if (body?.due_date !== undefined) {
+    const due = parseDueDate(body.due_date);
+    if ("error" in due) return NextResponse.json({ error: due.error }, { status: 400 });
+    patch.due_date = due.value;
+    notionFields.due_date = due.value;
+    hasField = true;
   }
 
   if (!hasField) {

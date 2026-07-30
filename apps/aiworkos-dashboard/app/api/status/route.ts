@@ -141,9 +141,11 @@ async function fetchOrgCategoryMap(): Promise<Map<string, OrgCategory>> {
     }
   }
 
+  // 団体マスタは Notion「顧客CRM」の写し（notion_organizations）を正とする。
+  // 旧 stakeholders は 2026-07-30 に読み取りをこちらへ切り替えて使わなくなった。
   const [weekly, stakeholders] = await Promise.all([
     rows("weekly_reports?select=organization,category&organization=not.is.null&limit=2000"),
-    rows("stakeholders?select=name,category&limit=2000"),
+    rows("notion_organizations?select=name,category&category=not.is.null&limit=2000"),
   ]);
 
   // 弱い方（週報）から入れて、強い方（団体マスタ）で上書きする
