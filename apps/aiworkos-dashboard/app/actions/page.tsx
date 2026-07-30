@@ -135,6 +135,18 @@ export default function ActionsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
 
+  // 戦略ToDoのインライン編集
+  const [stEditId, setStEditId] = useState<string | null>(null);
+  const [stEditName, setStEditName] = useState("");
+  const [stEditNotes, setStEditNotes] = useState("");
+  const [stEditGenre, setStEditGenre] = useState<string>("社内");
+  const [stSaving, setStSaving] = useState(false);
+
+  // 戦略ToDoの新規追加（ジャンルごとにインライン行を開く）
+  const [stAddGenre, setStAddGenre] = useState<string | null>(null); // 追加フォームを開いているジャンル
+  const [stAddText, setStAddText] = useState("");
+  const [stAdding, setStAdding] = useState(false);
+
   // 日記からの取込
   const [syncing, setSyncing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -196,6 +208,74 @@ export default function ActionsPage() {
       body: JSON.stringify({ id: t.id, status: next }),
     });
     if (!res.ok) load();
+  }
+
+  function startStrategicEdit(t: Strategic) {
+    setStEditId(t.id);
+    setStEditName(t.task_name);
+    setStEditNotes(t.notes ?? "");
+    setStEditGenre(t.genre);
+  }
+
+  async function saveStrategicEdit() {
+    if (!stEditId || stSaving) return;
+    const name = stEditName.trim();
+    if (!name) return;
+    const id = stEditId;
+    const genre = stEditGenre;
+    const notes = stEditNotes;
+    setStSaving(true);
+    const prev = strategic;
+    setStrategic((p) =>
+      p.map((x) => (x.id === id ? { ...x, task_name: name, genre, notes: notes.trim() || null } : x))
+    );
+    setStEditId(null);
+    try {
+      const res = await fetch("/api/strategic-todos", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, task_name: name, notes, genre }),
+      });
+      if (!res.ok) throw new Error("更新に失敗しました");
+    } catch (e) {
+      setStrategic(prev);
+      setError(e instanceof Error ? e.message : "更新に失敗しました");
+    } finally {
+      setStSaving(false);
+    }
+  }
+
+  async function removeStrategic(id: string) {
+    if (!window.confirm("この営業ToDoを削除します。よろしいですか？")) return;
+    const prev = strategic;
+    setStrategic((p) => p.filter((x) => x.id !== id));
+    const res = await fetch(`/api/strategic-todos?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!res.ok) {
+      setStrategic(prev);
+      setError("削除に失敗しました");
+    }
+  }
+
+  async function addStrategic(genre: string) {
+    const text = stAddText.trim();
+    if (!text || stAdding) return;
+    setStAdding(true);
+    try {
+      const res = await fetch("/api/strategic-todos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_name: text, genre }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? "追加に失敗しました");
+      setStrategic((p) => [...p, data.item]);
+      setStAddText("");
+      setStAddGenre(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "追加に失敗しました");
+    } finally {
+      setStAdding(false);
+    }
   }
 
   async function toggleDone(it: Item) {
@@ -487,6 +567,7 @@ export default function ActionsPage() {
   function renderStrategic(t: Strategic, opts?: { showGenre?: boolean }) {
     const done = t.status === "完了";
     const gm = genreMeta(t.genre);
+    const editing = stEditId === t.id;
     return (
       <div
         key={t.id}
@@ -506,40 +587,117 @@ export default function ActionsPage() {
         </button>
 
         <div className="min-w-0 flex-1">
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            {opts?.showGenre !== false && (
-              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${gm.klass}`}>
-                {gm.icon} {t.genre}
-              </span>
-            )}
-            {t.target_month && (
-              <span className="text-[11px] text-gray-400">{t.target_month}</span>
-            )}
-            {!done && (
-              <button
-                type="button"
-                onClick={() => toggleStrategicProgress(t)}
-                className={`rounded-full border px-1.5 py-0.5 text-[11px] font-medium transition active:scale-95 ${
-                  t.status === "進行中"
-                    ? "border-amber-300 bg-amber-50 text-amber-700"
-                    : "border-gray-200 text-gray-400"
+          {editing ? (
+            <div className="flex flex-col gap-2">
+              <input
+                type="text"
+                value={stEditName}
+                autoFocus
+                onChange={(e) => setStEditName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveStrategicEdit();
+                  if (e.key === "Escape") setStEditId(null);
+                }}
+                className="min-w-0 flex-1 rounded-lg border border-emerald-400 px-2 py-1 text-sm"
+              />
+              <select
+                value={stEditGenre}
+                onChange={(e) => setStEditGenre(e.target.value)}
+                className="min-w-0 flex-1 rounded-lg border border-emerald-400 px-2 py-1 text-sm"
+              >
+                {GENRE_ORDER.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={stEditNotes}
+                onChange={(e) => setStEditNotes(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveStrategicEdit();
+                  if (e.key === "Escape") setStEditId(null);
+                }}
+                placeholder="備考（任意）"
+                className="min-w-0 flex-1 rounded-lg border border-emerald-400 px-2 py-1 text-sm"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={saveStrategicEdit}
+                  disabled={stSaving || !stEditName.trim()}
+                  className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStEditId(null)}
+                  className="shrink-0 rounded-lg border border-gray-300 px-3 py-1 text-sm font-medium text-gray-500"
+                >
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                {opts?.showGenre !== false && (
+                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${gm.klass}`}>
+                    {gm.icon} {t.genre}
+                  </span>
+                )}
+                {t.notion_page_id && (
+                  <span
+                    title="Notion由来（この画面での変更はNotionには反映されません）"
+                    className="text-[11px] text-gray-300"
+                  >
+                    📄
+                  </span>
+                )}
+                {t.target_month && (
+                  <span className="text-[11px] text-gray-400">{t.target_month}</span>
+                )}
+                {!done && (
+                  <button
+                    type="button"
+                    onClick={() => toggleStrategicProgress(t)}
+                    className={`rounded-full border px-1.5 py-0.5 text-[11px] font-medium transition active:scale-95 ${
+                      t.status === "進行中"
+                        ? "border-amber-300 bg-amber-50 text-amber-700"
+                        : "border-gray-200 text-gray-400"
+                    }`}
+                  >
+                    {t.status === "進行中" ? "進行中" : "未着手"}
+                  </button>
+                )}
+              </div>
+              <p
+                onClick={() => startStrategicEdit(t)}
+                className={`cursor-text text-sm leading-relaxed transition-colors duration-200 ${
+                  done ? "text-gray-400 line-through" : "text-gray-800"
                 }`}
               >
-                {t.status === "進行中" ? "進行中" : "未着手"}
-              </button>
-            )}
-          </div>
-          <p
-            className={`text-sm leading-relaxed transition-colors duration-200 ${
-              done ? "text-gray-400 line-through" : "text-gray-800"
-            }`}
-          >
-            {t.task_name}
-          </p>
-          {t.notes && (
-            <p className="mt-1 text-[11px] leading-relaxed text-gray-400">{t.notes}</p>
+                {t.task_name}
+              </p>
+              {t.notes && (
+                <p className="mt-1 text-[11px] leading-relaxed text-gray-400">{t.notes}</p>
+              )}
+            </>
           )}
         </div>
+
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => removeStrategic(t.id)}
+            aria-label="削除"
+            className="mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-gray-300 transition active:bg-gray-100 active:text-rose-500"
+          >
+            ✕
+          </button>
+        )}
       </div>
     );
   }
@@ -720,6 +878,50 @@ export default function ActionsPage() {
                   </h2>
                   <div className="space-y-2">
                     {todos.map((t) => renderStrategic(t, { showGenre: false }))}
+                  </div>
+                  <div className="mt-2">
+                    {stAddGenre === genre ? (
+                      <div className="flex gap-2 rounded-lg border border-gray-200 bg-white p-2">
+                        <input
+                          type="text"
+                          value={stAddText}
+                          autoFocus
+                          onChange={(e) => setStAddText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") addStrategic(genre);
+                            if (e.key === "Escape") setStAddGenre(null);
+                          }}
+                          placeholder="営業ToDoを入力してEnter"
+                          className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => addStrategic(genre)}
+                          disabled={stAdding || !stAddText.trim()}
+                          className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white transition active:bg-emerald-700 disabled:opacity-40"
+                        >
+                          追加
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStAddGenre(null)}
+                          className="shrink-0 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-500"
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStAddGenre(genre);
+                          setStAddText("");
+                        }}
+                        className="rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-sm font-medium text-emerald-600 transition active:bg-emerald-50"
+                      >
+                        ＋ 追加
+                      </button>
+                    )}
                   </div>
                 </section>
               );
