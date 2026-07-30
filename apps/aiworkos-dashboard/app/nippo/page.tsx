@@ -30,6 +30,16 @@ type Log = {
   created_at: string;
 };
 
+// 週次の稼働時間。月曜はじまり（JST）。セッション履歴から機械的に推定した
+// 概算で、並行して動かしたぶんは重複を除いてある。
+type Week = {
+  week_start: string; // その週の月曜 YYYY-MM-DD
+  minutes: number;
+  sessions: number;
+  active_days: number;
+  by_workstream: Record<string, number> | null;
+};
+
 const STATUS_META: Record<Status, { label: string; klass: string }> = {
   completed: { label: "完了", klass: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
   follow_up: { label: "要フォロー", klass: "bg-amber-50 text-amber-700 ring-amber-200" },
@@ -65,11 +75,35 @@ function daysBetween(a: string, b: string) {
     (new Date(by, bm - 1, bd).getTime() - new Date(ay, am - 1, ad).getTime()) / 86400000
   );
 }
+function addDays(d: string, n: number) {
+  const [y, m, day] = d.split("-").map(Number);
+  const t = new Date(y, m - 1, day + n);
+  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+}
+// 週の表記は「7/27〜8/2」のように月曜〜日曜で出す。
+function fmtWeekRange(monday: string) {
+  const sunday = addDays(monday, 6);
+  const [, m1, d1] = monday.split("-").map(Number);
+  const [, m2, d2] = sunday.split("-").map(Number);
+  return `${m1}/${d1}〜${m2}/${d2}`;
+}
+function fmtHours(min: number) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h > 0 ? `${h}時間${pad(m)}分` : `${m}分`;
+}
+// 今週（月曜はじまり）の月曜日
+function thisMonday() {
+  const d = new Date();
+  const back = (d.getDay() + 6) % 7; // 月=0 になるよう補正
+  return addDays(todayStr(), -back);
+}
 
 type Filter = "all" | "open" | Status;
 
 export default function NippoPage() {
   const [items, setItems] = useState<Log[]>([]);
+  const [weeks, setWeeks] = useState<Week[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -82,6 +116,7 @@ export default function NippoPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "取得に失敗しました");
       setItems(data.items ?? []);
+      setWeeks(data.weeks ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "取得に失敗しました");
     } finally {
@@ -107,6 +142,14 @@ export default function NippoPage() {
     const max = items.reduce((a, b) => (a.work_date > b.work_date ? a : b)).work_date;
     return { date: max, staleDays: daysBetween(max, todayStr()) };
   }, [items]);
+
+  // 週次の稼働時間。直近8週ぶんを新しい順に。棒の長さは最大の週を基準にする。
+  const weekView = useMemo(() => {
+    const recent = weeks.slice(0, 8);
+    const max = recent.reduce((a, w) => Math.max(a, w.minutes), 0);
+    const monday = thisMonday();
+    return { recent, max, monday };
+  }, [weeks]);
 
   // フィルタ適用
   const filtered = useMemo(() => {
@@ -161,6 +204,55 @@ export default function NippoPage() {
           </div>
         ))}
       </div>
+
+      {/* 週ごとの稼働時間（月曜〜日曜）。あくまで推定値なのでその旨を添える。 */}
+      {weekView.recent.length > 0 && (
+        <section className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-baseline justify-between gap-2">
+            <h2 className="text-sm font-bold text-gray-500">週ごとの稼働時間</h2>
+            <span className="text-[11px] text-gray-400">月〜日・推定</span>
+          </div>
+          <ul className="space-y-2">
+            {weekView.recent.map((w) => {
+              const isThis = w.week_start === weekView.monday;
+              const pct = weekView.max > 0 ? (w.minutes / weekView.max) * 100 : 0;
+              return (
+                <li key={w.week_start} className="flex items-center gap-2">
+                  <span
+                    className={`w-20 shrink-0 text-xs tabular-nums ${
+                      isThis ? "font-bold text-indigo-600" : "text-gray-500"
+                    }`}
+                  >
+                    {fmtWeekRange(w.week_start)}
+                  </span>
+                  <span className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-gray-100">
+                    <span
+                      className={`block h-full rounded-full ${
+                        isThis ? "bg-indigo-500" : "bg-indigo-200"
+                      }`}
+                      style={{ width: `${Math.max(pct, 2)}%` }}
+                    />
+                  </span>
+                  <span
+                    className={`w-24 shrink-0 text-right text-xs tabular-nums ${
+                      isThis ? "font-bold text-gray-900" : "text-gray-600"
+                    }`}
+                  >
+                    {fmtHours(w.minutes)}
+                  </span>
+                  <span className="w-8 shrink-0 text-right text-[11px] text-gray-400 tabular-nums">
+                    {w.active_days}日
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
+            セッション履歴からの概算です。30分以上あいた時間は席を外したものとして
+            除き、複数を並行して動かした時間は二重に数えていません。
+          </p>
+        </section>
+      )}
 
       {/* 集約の鮮度。2日以上空いていたら未集約であることを明示する。 */}
       {latest && latest.staleDays >= 2 && (
