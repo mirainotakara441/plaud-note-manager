@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-// 週報ダッシュボード：自治体・事業者・議員・委託企業まわりの週次活動を、
+// 週報ダッシュボード：自治体・事業者・議員・委託会社まわりの週次活動を、
 // カテゴリー別に1枚で確認する。データは /api/weekly-report（Supabase・読み取り専用）。
 // 登録は週報登録スキル側で行う。このページは閲覧専用。
 
@@ -38,7 +38,7 @@ const CATEGORIES = [
   "自治体",
   "事業者",
   "議員",
-  "委託企業",
+  "委託会社",
   "銀行",
   "プロモーション",
 ] as const;
@@ -277,7 +277,7 @@ export default function WeeklyReportPage() {
           週報ダッシュボード
         </h1>
         <p className="mt-1 text-sm leading-relaxed text-gray-500">
-          自治体・事業者・議員・委託企業まわりの週次活動を、カテゴリー別に1枚で
+          自治体・事業者・議員・委託会社まわりの週次活動を、カテゴリー別に1枚で
         </p>
       </header>
 

@@ -109,7 +109,7 @@ const REVIEW_FEATURES: Feature[] = [
     href: "/weekly-report",
     icon: "🗂️",
     title: "週報ダッシュボード",
-    desc: "自治体・事業者・議員・委託企業の週次活動をカテゴリー別に一枚で確認",
+    desc: "自治体・事業者・議員・委託会社の週次活動をカテゴリー別に一枚で確認",
     accent: "bg-cyan-100 text-cyan-700",
   },
   {

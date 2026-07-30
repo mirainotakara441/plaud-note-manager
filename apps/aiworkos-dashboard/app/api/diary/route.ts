@@ -19,8 +19,11 @@ export const dynamic = "force-dynamic";
 // claude-sonnet-5: 入力 $3/MTok（〜2026-08-31 は導入価格 $2）、出力 $15/MTok（同 $10）。
 const MODEL = "claude-sonnet-5";
 
-// Notion「一行日記」DB
-const NOTION_DATABASE_ID = "3dda2c5f-873a-4d23-b763-abbf78d6eb54";
+// Notion「一行日記」DB。
+// env優先・現行のハードコード値をフォールバックに統一（/api/status が使う
+// NOTION_DB_DIARY と同じ環境変数名を共有する）。env未設定でも従来どおり動く。
+const NOTION_DATABASE_ID =
+  process.env.NOTION_DB_DIARY?.trim() || "3dda2c5f-873a-4d23-b763-abbf78d6eb54";
 
 const TAGS = [
   "自治体",

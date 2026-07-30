@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DELIVERABLE_CATEGORIES } from "@/lib/categories";
 
 // 成果物アップロードUIから、ブラウザ側で抽出済みのテキストチャンクを受け取り、
 // store-memory Edge Function 経由で memory_chunks(source_type=成果物) に登録する。
@@ -8,8 +9,12 @@ import { NextRequest, NextResponse } from "next/server";
 export const maxDuration = 60;
 
 const DOC_TYPES = ["提案書", "実習書", "スライド", "報告書", "メモ", "その他"];
-// 対象のカテゴリー。自治体だけでなく議員・事業者も提案の対象になるため。
-const CATEGORIES = ["自治体", "議員", "事業者", "その他"];
+// 対象のカテゴリー。自治体だけでなく議員・事業者・銀行・委託会社も提案の対象になる。
+// 以前はここが4分類（自治体/議員/事業者/その他）しか許可しておらず、UI
+// （StakeholderPicker）が送れる`銀行``委託会社`が黙って`自治体`に化けていた。
+// 正準8分類＋`共通`を受け付ける lib/categories.ts に一本化して取りこぼしを無くす。
+// 保存先は memory_chunks.metadata（JSONB）でDB制約が無いため、拡張しても安全。
+const CATEGORIES: readonly string[] = DELIVERABLE_CATEGORIES;
 const MAX_CHUNKS = 300;
 const MAX_CHUNK_CHARS = 4000;
 

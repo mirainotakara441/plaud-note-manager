@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
-// 週報ダッシュボード：週次の営業活動（支店・自治体・事業者・議員・委託企業・銀行・
+// 週報ダッシュボード：週次の営業活動（支店・自治体・事業者・議員・委託会社・銀行・
 // プロモーション・全体）をカテゴリー別に構造化した weekly_reports を読む。
 // 読み取りは anonキー、書き込み（PATCH）は service role キーで叩く
 // （2026-07-25 レビュー対応）。

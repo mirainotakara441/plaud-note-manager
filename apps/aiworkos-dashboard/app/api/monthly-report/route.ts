@@ -22,8 +22,10 @@ const WEEKLY_TABLE = "weekly_reports";
 // claude-sonnet-5: 入力 $3/MTok（〜2026-08-31 は導入価格 $2）、出力 $15/MTok（同 $10）。
 const MODEL = "claude-sonnet-5";
 
-// Notion「🧠 AIワークOS」ページ配下に月報ページを作成する
-const NOTION_PARENT_PAGE_ID = "3969363cfff88125988ff09a8cb32016";
+// Notion「🧠 AIワークOS」ページ配下に月報ページを作成する。
+// env優先・現行のハードコード値をフォールバックに統一。env未設定でも従来どおり動く。
+const NOTION_PARENT_PAGE_ID =
+  process.env.NOTION_PARENT_PAGE_ID?.trim() || "3969363cfff88125988ff09a8cb32016";
 
 type WeeklyReportRow = {
   id: string;

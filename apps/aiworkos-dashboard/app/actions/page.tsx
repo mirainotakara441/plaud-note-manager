@@ -47,13 +47,27 @@ const KIND_META: Record<Kind, { label: string; icon: string; klass: string }> = 
 };
 
 // ジャンルの並び順と見た目。ここに無いジャンルは末尾にグレーで出す。
-const GENRE_ORDER = ["社内", "自治体", "議員", "事業者", "委託会社"] as const;
+// strategic_todos.genre は正準8分類（lib/categories.ts の ORG_CATEGORIES）。
+// ここは「表示順」を持つので、正準に値が増えたら必ずここにも足すこと。
+const GENRE_ORDER = [
+  "社内",
+  "自治体",
+  "議員",
+  "事業者",
+  "委託会社",
+  "銀行",
+  "官民連携",
+  "その他",
+] as const;
 const GENRE_META: Record<string, { icon: string; klass: string }> = {
   社内: { icon: "🏢", klass: "text-slate-700 bg-slate-100" },
   自治体: { icon: "🏛️", klass: "text-indigo-700 bg-indigo-50" },
   議員: { icon: "🎌", klass: "text-rose-700 bg-rose-50" },
   事業者: { icon: "🤝", klass: "text-sky-700 bg-sky-50" },
   委託会社: { icon: "🔧", klass: "text-violet-700 bg-violet-50" },
+  銀行: { icon: "🏦", klass: "text-amber-700 bg-amber-50" },
+  官民連携: { icon: "🤲", klass: "text-teal-700 bg-teal-50" },
+  その他: { icon: "📁", klass: "text-gray-600 bg-gray-100" },
 };
 function genreMeta(g: string) {
   return GENRE_META[g] ?? { icon: "📁", klass: "text-gray-600 bg-gray-100" };

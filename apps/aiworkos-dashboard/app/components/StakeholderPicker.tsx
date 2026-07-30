@@ -1,19 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { STAKEHOLDER_CATEGORIES } from "@/lib/categories";
 
 // ステークホルダーの2段階選択：カテゴリーを選ぶ → そのカテゴリーの具体名を選ぶ。
 // 一覧に無い相手（新しい議員など）は「その他（直接入力）」で追加でき、
 // 登録時にマスタへ反映されるので次回から選択肢に出る。
 
-export const CATEGORIES = [
-  "自治体",
-  "事業者",
-  "銀行",
-  "議員",
-  "委託会社",
-  "その他",
-] as const;
+// 値は stakeholders.category のCHECK制約と一致していなければならないため、
+// lib/categories.ts の一箇所で管理する（正準8分類との差分もそちらに記載）。
+export const CATEGORIES = STAKEHOLDER_CATEGORIES;
 
 export type Category = (typeof CATEGORIES)[number];
 
