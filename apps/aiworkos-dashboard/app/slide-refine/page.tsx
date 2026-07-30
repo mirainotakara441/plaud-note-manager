@@ -787,13 +787,13 @@ function SlideRefineInner() {
                     }`}
                   >
                     <div className="flex items-start gap-2">
-                      <span className="mt-0.5 shrink-0 rounded-md bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-700">
+                      <span className="mt-0.5 shrink-0 rounded-md bg-indigo-100 px-2 py-1 text-sm font-bold text-indigo-700">
                         {q.label}
                       </span>
-                      <p className="text-sm font-semibold leading-relaxed text-gray-900">{q.heading}</p>
+                      <p className="text-lg font-bold leading-relaxed text-gray-900">{q.heading}</p>
                     </div>
                     {q.body && (
-                      <p className="mt-2 text-xs leading-relaxed whitespace-pre-wrap text-gray-500">{q.body}</p>
+                      <p className="mt-2 whitespace-pre-wrap text-base leading-relaxed text-gray-700">{q.body}</p>
                     )}
                     <textarea
                       value={answers[q.label] ?? ""}

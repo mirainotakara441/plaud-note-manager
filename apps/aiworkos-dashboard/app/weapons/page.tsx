@@ -403,7 +403,7 @@ function WeaponsInner() {
               >
                 <span className="flex items-center gap-2">
                   <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[0.625rem] font-bold ${
                       pick[k]
                         ? "border-amber-500 bg-amber-500 text-white"
                         : "border-gray-300 text-transparent"

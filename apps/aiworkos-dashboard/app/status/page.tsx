@@ -395,7 +395,7 @@ export default function StatusPage() {
                       <span className="ml-0.5 font-normal text-gray-400">今週</span>
                     </span>
                   </div>
-                  <p className="mt-1 text-[11px] text-gray-400">
+                  <p className="mt-1 text-[0.6875rem] text-gray-400">
                     最終 {fmtDate(t.last)}（{agoLabel(t.last)}）
                   </p>
                 </div>
@@ -582,7 +582,7 @@ function DailyChart({ daily }: { daily: Daily[] }) {
     <div className="flex items-end gap-1" style={{ height: 120 }}>
       {series.map((d, i) => (
         <div key={d.d} className="flex flex-1 flex-col items-center justify-end gap-1">
-          <span className="text-[9px] font-medium text-gray-500 tabular-nums">
+          <span className="text-[0.5625rem] font-medium text-gray-500 tabular-nums">
             {d.count > 0 ? d.count : ""}
           </span>
           <div
@@ -591,7 +591,7 @@ function DailyChart({ daily }: { daily: Daily[] }) {
             title={`${d.d}: ${d.count}件`}
           />
           {/* ラベルは1日おき（14本で潰れないように） */}
-          <span className="h-3 text-[9px] text-gray-400">
+          <span className="h-3 text-[0.5625rem] text-gray-400">
             {i % 2 === 0 ? d.d.slice(5) : ""}
           </span>
         </div>

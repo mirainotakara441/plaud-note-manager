@@ -200,7 +200,7 @@ export default function NippoPage() {
         ].map((m) => (
           <div key={m.l} className="rounded-xl bg-gray-50 px-2 py-3 text-center">
             <div className={`text-xl font-bold ${m.c}`}>{m.v}</div>
-            <div className="mt-0.5 text-[11px] text-gray-500">{m.l}</div>
+            <div className="mt-0.5 text-[0.6875rem] text-gray-500">{m.l}</div>
           </div>
         ))}
       </div>
@@ -210,7 +210,7 @@ export default function NippoPage() {
         <section className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-baseline justify-between gap-2">
             <h2 className="text-sm font-bold text-gray-500">週ごとの稼働時間</h2>
-            <span className="text-[11px] text-gray-400">月〜日・推定</span>
+            <span className="text-[0.6875rem] text-gray-400">月〜日・推定</span>
           </div>
           <ul className="space-y-2">
             {weekView.recent.map((w) => {
@@ -240,14 +240,14 @@ export default function NippoPage() {
                   >
                     {fmtHours(w.minutes)}
                   </span>
-                  <span className="w-8 shrink-0 text-right text-[11px] text-gray-400 tabular-nums">
+                  <span className="w-8 shrink-0 text-right text-[0.6875rem] text-gray-400 tabular-nums">
                     {w.active_days}日
                   </span>
                 </li>
               );
             })}
           </ul>
-          <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
+          <p className="mt-3 text-[0.6875rem] leading-relaxed text-gray-400">
             セッション履歴からの概算です。30分以上あいた時間は席を外したものとして
             除き、複数を並行して動かした時間は二重に数えていません。
           </p>

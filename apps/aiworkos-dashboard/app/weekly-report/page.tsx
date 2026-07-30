@@ -341,7 +341,7 @@ export default function WeeklyReportPage() {
             ].map((m) => (
               <div key={m.l} className="rounded-xl bg-gray-50 px-2 py-3 text-center">
                 <div className={`text-xl font-bold ${m.c}`}>{m.v}</div>
-                <div className="mt-0.5 text-[11px] text-gray-500">{m.l}</div>
+                <div className="mt-0.5 text-[0.6875rem] text-gray-500">{m.l}</div>
               </div>
             ))}
           </div>
@@ -446,12 +446,12 @@ export default function WeeklyReportPage() {
                                   <div className="mb-1 flex items-center gap-2">
                                     <span className="font-medium">次：</span>
                                     {r.action_done === true && (
-                                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[0.6875rem] font-medium text-emerald-700">
                                         ✅ 対応済み
                                       </span>
                                     )}
                                     {r.action_done === false && (
-                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.6875rem] font-medium text-amber-700">
                                         ⏳ 未対応
                                       </span>
                                     )}

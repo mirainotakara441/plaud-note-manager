@@ -594,10 +594,10 @@ export default function ActionsPage() {
 
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-2">
-            <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${meta.klass}`}>
+            <span className={`rounded px-1.5 py-0.5 text-[0.6875rem] font-semibold ${meta.klass}`}>
               {meta.icon} {meta.label}
             </span>
-            <span className="text-[11px] text-gray-400">{fmtDate(it.entry_date)}</span>
+            <span className="text-[0.6875rem] text-gray-400">{fmtDate(it.entry_date)}</span>
           </div>
           {editing ? (
             <div className="flex gap-2">
@@ -731,14 +731,14 @@ export default function ActionsPage() {
             <>
               <div className="mb-1 flex flex-wrap items-center gap-2">
                 {opts?.showGenre !== false && (
-                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${gm.klass}`}>
+                  <span className={`rounded px-1.5 py-0.5 text-[0.6875rem] font-semibold ${gm.klass}`}>
                     {gm.icon} {t.genre}
                   </span>
                 )}
                 {t.notion_page_id && (
                   <span
                     title="Notion「ToDo DB」と同期（この画面での変更はNotionにも反映されます）"
-                    className="text-[11px] text-gray-300"
+                    className="text-[0.6875rem] text-gray-300"
                   >
                     📄
                   </span>
@@ -746,19 +746,19 @@ export default function ActionsPage() {
                 {notionFailed.has(t.id) && (
                   <span
                     title="Supabaseには保存済みですが、Notionへの反映に失敗しています。もう一度操作するか、Notion側を直接ご確認ください。"
-                    className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"
+                    className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[0.6875rem] font-medium text-amber-700"
                   >
                     Notion未反映
                   </span>
                 )}
                 {t.target_month && (
-                  <span className="text-[11px] text-gray-400">{t.target_month}</span>
+                  <span className="text-[0.6875rem] text-gray-400">{t.target_month}</span>
                 )}
                 {!done && (
                   <button
                     type="button"
                     onClick={() => toggleStrategicProgress(t)}
-                    className={`rounded-full border px-1.5 py-0.5 text-[11px] font-medium transition active:scale-95 ${
+                    className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] font-medium transition active:scale-95 ${
                       t.status === "進行中"
                         ? "border-amber-300 bg-amber-50 text-amber-700"
                         : "border-gray-200 text-gray-400"
@@ -777,7 +777,7 @@ export default function ActionsPage() {
                 {t.task_name}
               </p>
               {t.notes && (
-                <p className="mt-1 text-[11px] leading-relaxed text-gray-400">{t.notes}</p>
+                <p className="mt-1 text-[0.6875rem] leading-relaxed text-gray-400">{t.notes}</p>
               )}
             </>
           )}
@@ -975,7 +975,7 @@ export default function ActionsPage() {
                   <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
                     <span className={`rounded px-1.5 py-0.5 text-xs ${gm.klass}`}>{gm.icon}</span>
                     {genre}
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
                       残{open} / 全{todos.length}
                     </span>
                   </h2>
@@ -1036,7 +1036,7 @@ export default function ActionsPage() {
             <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
               <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700">📓</span>
               日々の気づき
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
                 残{remaining}
               </span>
             </h2>
@@ -1046,16 +1046,16 @@ export default function ActionsPage() {
               <div className="space-y-5">
                 {activeWeeks.map(([wk, its]) => (
                   <div key={wk}>
-                    <h3 className="mb-2 flex items-center gap-2 px-1 text-[13px] font-bold text-gray-500">
+                    <h3 className="mb-2 flex items-center gap-2 px-1 text-[0.8125rem] font-bold text-gray-500">
                       {weekLabel(wk)}
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
                         {its.length}
                       </span>
                       <button
                         type="button"
                         onClick={() => completeWeek(its)}
                         disabled={bulkBusy}
-                        className="ml-auto shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-400 transition active:bg-gray-100 active:text-emerald-700 disabled:opacity-50"
+                        className="ml-auto shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-400 transition active:bg-gray-100 active:text-emerald-700 disabled:opacity-50"
                       >
                         この週をすべて完了
                       </button>
@@ -1077,7 +1077,7 @@ export default function ActionsPage() {
               >
                 <span>{doneOpen ? "▼" : "▶"}</span>
                 ✓ 済み（日々のToDo）
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
                   {doneItems.length}
                 </span>
               </button>
@@ -1097,7 +1097,7 @@ export default function ActionsPage() {
               <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden />
                 {date ? fmtDate(date) : "日付なし"}
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
                   {rows.length}
                 </span>
               </h2>

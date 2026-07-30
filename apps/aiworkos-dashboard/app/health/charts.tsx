@@ -445,11 +445,11 @@ export function StatTile({
   return (
     <div className="flex-1 rounded-xl bg-gray-50 p-3 text-center">
       <p className="text-xl font-bold text-gray-900">{value}</p>
-      <p className="mt-0.5 flex items-center justify-center gap-1 text-[11px] text-gray-500">
+      <p className="mt-0.5 flex items-center justify-center gap-1 text-[0.6875rem] text-gray-500">
         {color && <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />}
         {label}
       </p>
-      {sub && <p className="mt-0.5 text-[10px] text-gray-400">{sub}</p>}
+      {sub && <p className="mt-0.5 text-[0.625rem] text-gray-400">{sub}</p>}
     </div>
   );
 }

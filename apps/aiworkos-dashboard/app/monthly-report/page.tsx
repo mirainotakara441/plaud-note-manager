@@ -331,7 +331,7 @@ export default function MonthlyReportPage() {
                 ].map((m) => (
                   <div key={m.l} className="rounded-xl bg-gray-50 px-2 py-3 text-center">
                     <div className={`text-xl font-bold ${m.c}`}>{m.v}</div>
-                    <div className="mt-0.5 text-[11px] text-gray-500">{m.l}</div>
+                    <div className="mt-0.5 text-[0.6875rem] text-gray-500">{m.l}</div>
                   </div>
                 ))}
               </div>

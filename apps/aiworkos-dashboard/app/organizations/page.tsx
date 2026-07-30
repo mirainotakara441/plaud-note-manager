@@ -204,19 +204,19 @@ function NoteRow({ note }: { note: ProfileNote }) {
     <li className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex flex-wrap items-center gap-2">
         <span
-          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${SOURCE_BADGE[note.source]}`}
+          className={`rounded-full px-2 py-0.5 text-[0.6875rem] font-semibold ${SOURCE_BADGE[note.source]}`}
         >
           {note.source}
         </span>
         {note.latest && (
-          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[0.6875rem] font-semibold text-indigo-700">
             最新
           </span>
         )}
         <span className="text-xs text-gray-500">{formatDate(note.date)}</span>
       </div>
       <p className="mt-1.5 text-sm leading-relaxed text-gray-800">{note.text}</p>
-      <p className="mt-1 text-[11px] text-gray-400">出所：{note.label}</p>
+      <p className="mt-1 text-[0.6875rem] text-gray-400">出所：{note.label}</p>
     </li>
   );
 }
@@ -295,7 +295,7 @@ function NoteEditor({
   return (
     <section className="rounded-2xl border border-amber-300 bg-amber-50/60 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-bold text-amber-900">
+        <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[0.6875rem] font-bold text-amber-900">
           手書きメモ
         </span>
         <span className="text-xs text-amber-800">吉井さんが書いた「{section}」</span>
@@ -350,7 +350,7 @@ function NoteEditor({
               </button>
             )}
           </div>
-          <p className="mt-1 text-[11px] text-amber-700">{draft.length} / 5000 文字</p>
+          <p className="mt-1 text-[0.6875rem] text-amber-700">{draft.length} / 5000 文字</p>
         </div>
       ) : note ? (
         <div className="mt-3">
@@ -365,7 +365,7 @@ function NoteEditor({
             >
               編集
             </button>
-            <span className="text-[11px] text-amber-700">
+            <span className="text-[0.6875rem] text-amber-700">
               最終更新：{formatDateTime(note.updated_at)}
             </span>
           </div>
@@ -397,7 +397,7 @@ function NoteEditor({
 function AutoLabel({ hint }: { hint: string }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[0.6875rem] font-bold text-indigo-700">
         自動集計
       </span>
       <span className="text-xs text-gray-500">{hint}</span>
@@ -432,12 +432,12 @@ function StatusPanel({ status }: { status: ProfileResponse["status"] }) {
       {status.headline ? (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-[11px] font-semibold text-cyan-700">
+            <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-[0.6875rem] font-semibold text-cyan-700">
               {status.headline.weekStart} 週
             </span>
             <span className="text-xs text-gray-500">{status.headline.category}</span>
             {!status.headline.exact && status.headline.organization && (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] text-gray-600">
                 {status.headline.organization}
               </span>
             )}
@@ -467,7 +467,7 @@ function StatusPanel({ status }: { status: ProfileResponse["status"] }) {
       ) : status.fallback ? (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[0.6875rem] font-semibold text-blue-700">
               会議メモより
             </span>
             <span className="text-xs text-gray-500">
@@ -477,7 +477,7 @@ function StatusPanel({ status }: { status: ProfileResponse["status"] }) {
           <p className="mt-2 text-sm leading-relaxed text-gray-800">
             {truncate(status.fallback.text, 300)}
           </p>
-          <p className="mt-1 text-[11px] text-gray-400">
+          <p className="mt-1 text-[0.6875rem] text-gray-400">
             出所：{status.fallback.label}
           </p>
         </>
@@ -526,17 +526,17 @@ function BasicsPanel({ basics }: { basics: ProfileResponse["basics"] }) {
       <div className="flex flex-wrap items-center gap-2">
         {basics.master.registered ? (
           <>
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[0.6875rem] font-semibold text-emerald-700">
               マスタ登録あり
             </span>
             {basics.master.category && (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600">
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] text-gray-600">
                 {basics.master.category}
               </span>
             )}
           </>
         ) : (
-          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-semibold text-gray-600">
             マスタ未登録
           </span>
         )}
