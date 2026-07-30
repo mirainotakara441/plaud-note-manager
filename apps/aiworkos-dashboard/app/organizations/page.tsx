@@ -3,21 +3,35 @@
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ORG_CATEGORIES, isOrgCategory, type OrgCategory } from "@/lib/categories";
 
 // 団体別攻略：団体を選ぶと「現状 / 課題 / 施策 / 基礎データ / タイムライン」を
 // タブで切り替えて確認できるミニCRM的なページ。
+//
+// 団体の選び方は2段階（2026-07-30 改修。42団体が単一ドロップダウンにベタ並びで
+// 探せなかったため）:
+//   ① 大ジャンル（正準8分類。lib/categories.ts の ORG_CATEGORIES）をチップで選ぶ
+//   ② そのジャンルの団体をドロップダウンで選ぶ（接点の多い順）
+// ジャンルは0件のものを出さない。ジャンル判定の根拠と並び順の根拠は
+// lib/organizations.ts（resolveOrgCategory / compareOrgByContact）に書いてある。
 //
 // 各タブの中身は2階建て:
 //   ① 吉井さんの手書きメモ（organization_notes）… 上に置く。編集・保存できる。
 //   ② 自動導出（週報・会議・成果物から機械的に組み立てたもの）… 手書きメモがあっても消さない。
 //
 // データ取得:
-//   /api/organizations?include=weekly … 団体一覧（会議由来＋週報由来）
+//   /api/organizations?include=weekly … 団体一覧（会議由来＋週報由来＋ジャンル）
 //   /api/organizations/profile        … 現状・課題・施策・基礎データ
 //   /api/organizations/notes          … 手書きメモ（GET / PUT / DELETE）
 //   /api/organizations/timeline       … タイムライン（タブが選ばれるまで取りに行かない）
 
-type Organization = { name: string; count: number; weeklyCount?: number };
+type Organization = {
+  name: string;
+  count: number;
+  weeklyCount?: number;
+  /** 正準8分類のどれか。古い応答（未設定）は「その他」扱いにする。 */
+  category?: string;
+};
 
 type TimelineEntry = {
   id: string;
@@ -118,6 +132,46 @@ const DEFAULT_TAB: TabKey = "status";
 
 function toTabKey(value: string | null): TabKey {
   return TABS.some((t) => t.key === value) ? (value as TabKey) : DEFAULT_TAB;
+}
+
+// ---------------------------------------------------------------------------
+// 大ジャンル（正準8分類）
+// ---------------------------------------------------------------------------
+
+/** ジャンルで絞らない状態。URLには `?genre=all` として残す。 */
+const ALL_GENRE = "all" as const;
+
+type GenreKey = typeof ALL_GENRE | OrgCategory;
+
+/**
+ * 表示するジャンルの並び順は lib/categories.ts の ORG_CATEGORIES そのまま
+ * （＝Notion会議DB `種別` の正準順）。ここで独自の並びを作らない。
+ * 「その他」は判定できなかった団体の受け皿なので、末尾に来るこの順序で都合がよい。
+ */
+const GENRE_ORDER: readonly OrgCategory[] = ORG_CATEGORIES;
+
+function toGenreKey(value: string | null): GenreKey | null {
+  if (!value) return null;
+  if (value === ALL_GENRE) return ALL_GENRE;
+  return isOrgCategory(value) ? value : null;
+}
+
+/** API が返した category を正準8分類に落とす。未設定・未知の値は「その他」。 */
+function orgGenre(o: Organization): OrgCategory {
+  return isOrgCategory(o.category) ? o.category : "その他";
+}
+
+/**
+ * ドロップダウンに出す団体名のラベル。接点件数を必ず添える
+ * （これが並び順の根拠でもあるので、順序と表示を食い違わせない）。
+ */
+function orgOptionLabel(o: Organization): string {
+  const weekly = o.weeklyCount ?? 0;
+  if (o.count > 0 && weekly > 0) {
+    return `${o.name}（会議 ${o.count}件・週報 ${weekly}週）`;
+  }
+  if (o.count > 0) return `${o.name}（会議 ${o.count}件）`;
+  return `${o.name}（週報 ${weekly}週）`;
 }
 
 const KIND_BADGE: Record<TimelineEntry["kind"], string> = {
@@ -641,6 +695,7 @@ function OrganizationsInner() {
   const searchParams = useSearchParams();
   const selected = searchParams.get("org")?.trim() ?? "";
   const activeTab = toTabKey(searchParams.get("tab"));
+  const genreParam = toGenreKey(searchParams.get("genre"));
 
   const [orgs, setOrgs] = useState<Organization[] | null>(null);
   const [orgsError, setOrgsError] = useState<string | null>(null);
@@ -785,13 +840,17 @@ function OrganizationsInner() {
     loadTimeline(selected);
   }, [activeTab, selected, timelineRequestedFor, loadTimeline]);
 
+  // ジャンル・団体・タブの3点をURLに保持する（リロード・共有・戻るで復元できる）。
   const pushQuery = useCallback(
-    (org: string, tab: TabKey) => {
-      if (!org) {
-        router.push("/organizations");
-        return;
+    (genre: GenreKey | null, org: string, tab: TabKey) => {
+      const params = new URLSearchParams();
+      if (genre) params.set("genre", genre);
+      if (org) {
+        params.set("org", org);
+        params.set("tab", tab);
       }
-      router.push(`/organizations?org=${encodeURIComponent(org)}&tab=${tab}`);
+      const qs = params.toString();
+      router.push(qs ? `/organizations?${qs}` : "/organizations");
     },
     [router]
   );
@@ -845,15 +904,46 @@ function OrganizationsInner() {
     [selected]
   );
 
+  // 接点の多い順（会議件数＋週報週数の降順）。APIも同じ順で返すが、順序の根拠を
+  // 画面側にも残しておく（根拠の詳細は lib/organizations.ts の orgContactScore を参照）。
   const sortedOrgs = useMemo(() => {
     if (!orgs) return [];
     return [...orgs].sort(
       (a, b) =>
+        (b.count + (b.weeklyCount ?? 0)) - (a.count + (a.weeklyCount ?? 0)) ||
         b.count - a.count ||
         (b.weeklyCount ?? 0) - (a.weeklyCount ?? 0) ||
         a.name.localeCompare(b.name, "ja")
     );
   }, [orgs]);
+
+  // 団体が1つ以上あるジャンルだけをチップに出す（空振りさせない）。
+  const genreCounts = useMemo(() => {
+    const counts = new Map<OrgCategory, number>();
+    for (const o of sortedOrgs) {
+      const g = orgGenre(o);
+      counts.set(g, (counts.get(g) ?? 0) + 1);
+    }
+    return GENRE_ORDER.filter((g) => (counts.get(g) ?? 0) > 0).map((g) => ({
+      genre: g,
+      count: counts.get(g) as number,
+    }));
+  }, [sortedOrgs]);
+
+  // URLに genre が無いまま ?org=… で来た場合（他ページからのリンク・古いブックマーク）は、
+  // その団体のジャンルを選択済みとして扱い、チップとドロップダウンの表示を揃える。
+  const activeGenre: GenreKey | null = useMemo(() => {
+    if (genreParam) return genreParam;
+    if (!selected) return null;
+    const hit = sortedOrgs.find((o) => o.name === selected);
+    return hit ? orgGenre(hit) : null;
+  }, [genreParam, selected, sortedOrgs]);
+
+  const visibleOrgs = useMemo(() => {
+    if (!activeGenre) return [];
+    if (activeGenre === ALL_GENRE) return sortedOrgs;
+    return sortedOrgs.filter((o) => orgGenre(o) === activeGenre);
+  }, [sortedOrgs, activeGenre]);
 
   // タブの件数バッジ。自動導出の件数を出す（未取得のタイムラインは null＝バッジ無し）。
   const tabCounts: Record<TabKey, number | null> = useMemo(() => {
@@ -957,24 +1047,96 @@ function OrganizationsInner() {
         </p>
       </header>
 
-      {/* 団体セレクタ */}
+      {/* 団体セレクタ（① ジャンル → ② 団体 の2段階） */}
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <label htmlFor="org-select" className="block text-sm font-medium text-gray-600">
-          団体を選択
+        <p className="text-sm font-medium text-gray-600">
+          <span className="mr-1 font-bold text-indigo-600">①</span>ジャンルを選択
+        </p>
+        {/* チップは PC でもスマホでも押しやすいよう、折り返し・十分な余白で並べる */}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {!orgs ? (
+            <span className="text-sm text-gray-400">読み込み中...</span>
+          ) : genreCounts.length === 0 ? (
+            <span className="text-sm text-gray-400">団体がまだ登録されていません</span>
+          ) : (
+            <>
+              {genreCounts.map(({ genre, count }) => {
+                const isActive = activeGenre === genre;
+                return (
+                  <button
+                    key={genre}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => pushQuery(genre, "", activeTab)}
+                    className={`min-h-11 whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition active:opacity-70 ${
+                      isActive
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-gray-300 bg-white text-gray-700"
+                    }`}
+                  >
+                    {genre}
+                    <span
+                      className={`ml-1 text-xs font-bold ${
+                        isActive ? "text-indigo-100" : "text-gray-400"
+                      }`}
+                    >
+                      ({count})
+                    </span>
+                  </button>
+                );
+              })}
+              {/* 逃げ道。ジャンル判定が実データ次第なので、全件から探せる道は残す。 */}
+              <button
+                type="button"
+                aria-pressed={activeGenre === ALL_GENRE}
+                onClick={() => pushQuery(ALL_GENRE, "", activeTab)}
+                className={`min-h-11 whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition active:opacity-70 ${
+                  activeGenre === ALL_GENRE
+                    ? "border-gray-700 bg-gray-700 text-white"
+                    : "border-dashed border-gray-300 bg-white text-gray-500"
+                }`}
+              >
+                すべて
+                <span
+                  className={`ml-1 text-xs font-bold ${
+                    activeGenre === ALL_GENRE ? "text-gray-200" : "text-gray-400"
+                  }`}
+                >
+                  ({sortedOrgs.length})
+                </span>
+              </button>
+            </>
+          )}
+        </div>
+
+        <label
+          htmlFor="org-select"
+          className="mt-4 block text-sm font-medium text-gray-600"
+        >
+          <span className="mr-1 font-bold text-indigo-600">②</span>団体を選択
+          {activeGenre && activeGenre !== ALL_GENRE && (
+            <span className="ml-1 text-xs font-normal text-gray-400">
+              （{activeGenre}・接点の多い順）
+            </span>
+          )}
         </label>
         <select
           id="org-select"
           value={selected}
-          onChange={(e) => pushQuery(e.target.value, activeTab)}
-          disabled={!orgs}
-          className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+          onChange={(e) => pushQuery(activeGenre, e.target.value, activeTab)}
+          disabled={!orgs || !activeGenre}
+          className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-gray-50 disabled:opacity-60"
         >
-          <option value="">{orgs ? "団体を選んでください" : "読み込み中..."}</option>
-          {sortedOrgs.map((o) => (
+          <option value="">
+            {!orgs
+              ? "読み込み中..."
+              : !activeGenre
+                ? "先にジャンルを選んでください"
+                : "団体を選んでください"}
+          </option>
+          {visibleOrgs.map((o) => (
             <option key={o.name} value={o.name}>
-              {o.count > 0
-                ? `${o.name}（会議 ${o.count}件）`
-                : `${o.name}（週報 ${o.weeklyCount ?? 0}週）`}
+              {orgOptionLabel(o)}
             </option>
           ))}
         </select>
@@ -984,7 +1146,9 @@ function OrganizationsInner() {
       {!selected && (
         <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-white/60 p-6 text-center">
           <p className="text-sm leading-relaxed text-gray-600">
-            団体を選んでください。
+            {activeGenre
+              ? "団体を選んでください。"
+              : "まずジャンルを選び、その中から団体を選んでください。"}
             <br />
             現状・課題・施策・基礎データ・タイムラインをタブで切り替えて見られます。
           </p>
@@ -1025,7 +1189,7 @@ function OrganizationsInner() {
                     type="button"
                     role="tab"
                     aria-selected={isActive}
-                    onClick={() => pushQuery(selected, t.key)}
+                    onClick={() => pushQuery(activeGenre, selected, t.key)}
                     className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-semibold transition active:opacity-70 ${
                       isActive
                         ? "border-indigo-600 bg-indigo-600 text-white"

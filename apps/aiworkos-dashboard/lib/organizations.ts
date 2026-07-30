@@ -13,6 +13,7 @@
 
 import { restHeaders } from "@/lib/supabase";
 import { toJstDateString } from "@/lib/date";
+import { normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
 
 export type Meeting = {
   id: string;
@@ -247,6 +248,179 @@ export async function fetchStakeholders(
     console.error("ステークホルダー・マスタ取得エラー（無視して続行）:", error);
     return [];
   }
+}
+
+// ---------------------------------------------------------------------------
+// 団体のジャンル判定（正準8分類へのグルーピング）
+// ---------------------------------------------------------------------------
+//
+// /organizations の団体セレクタを「大ジャンル → 団体」の2段階にするため、
+// 42団体それぞれを lib/categories.ts の正準8分類のどれかに割り当てる。
+// 分類リストを独自に作ってはいけない（正準は lib/categories.ts の ORG_CATEGORIES）。
+//
+// 判定材料は3つあり、確度の高い順に採用する（先に当たったもので確定）:
+//   1. 会議データ（memory_chunks.source_type=会議）の metadata.種別 / metadata.category
+//      … Notion会議DB `種別` 由来。これが正準そのものなので最優先。
+//   2. stakeholders.category … 手で整備したマスタ。DBのCHECK制約が正準8分類と一致済み。
+//   3. weekly_reports.category … 週報の章立て由来で表記ゆれあり（`委託企業` など）。
+//      normalizeOrgCategory で寄せる。`全体`/`支店`/`プロモーション` は
+//      「団体の種類」ではないので null になり、採用されない。
+//   4. どれにも当たらなければ `その他`。推測で自治体などに入れてはいけない。
+//
+// 同じ団体に複数の値がぶら下がっている場合（週をまたいで別カテゴリーで書かれた等）は
+// 最頻値を採る。同数なら正準8分類の並び順（ORG_CATEGORIES）で先に来るものを採る。
+
+/** 何を根拠にジャンルを決めたか。UI で出所を明かすのに使う。 */
+export type OrgCategorySource = "会議" | "マスタ" | "週報" | "未判定";
+
+export type OrgCategoryMap = Map<string, OrgCategory>;
+
+/** (団体名 → カテゴリー → 出現数) の集計を、団体名 → 最頻カテゴリー に畳む。 */
+function pickMajority(
+  tally: Map<string, Map<OrgCategory, number>>,
+  order: readonly OrgCategory[]
+): OrgCategoryMap {
+  const out: OrgCategoryMap = new Map();
+  for (const [name, counts] of tally) {
+    let best: OrgCategory | null = null;
+    let bestCount = -1;
+    for (const cat of order) {
+      const n = counts.get(cat) ?? 0;
+      if (n > bestCount) {
+        best = cat;
+        bestCount = n;
+      }
+    }
+    if (best && bestCount > 0) out.set(name, best);
+  }
+  return out;
+}
+
+function addTally(
+  tally: Map<string, Map<OrgCategory, number>>,
+  name: string,
+  raw: unknown
+): void {
+  const cat = normalizeOrgCategory(raw);
+  if (!cat) return;
+  const counts = tally.get(name) ?? new Map<OrgCategory, number>();
+  counts.set(cat, (counts.get(cat) ?? 0) + 1);
+  tally.set(name, counts);
+}
+
+/**
+ * 会議データの metadata から (団体名 → 正準カテゴリー) を作る。
+ *
+ * memory_chunks は RLS で anon の SELECT を許可していないため serviceCreds() 必須。
+ * `種別` と `category` の2キーが混在している（取込スクリプトの世代差）ため両方見る。
+ * 取得に失敗しても致命ではない（マスタ・週報にフォールバックする）ので空Mapを返す。
+ */
+export async function fetchMeetingOrgCategories(
+  url: string,
+  key: string,
+  order: readonly OrgCategory[]
+): Promise<OrgCategoryMap> {
+  try {
+    const select = encodeURIComponent(
+      "organization,shubetsu:metadata->>種別,cat:metadata->>category"
+    );
+    const sourceParam = encodeURIComponent("会議");
+    const res = await fetch(
+      `${url}/rest/v1/memory_chunks?select=${select}&source_type=eq.${sourceParam}&organization=not.is.null&limit=2000`,
+      { headers: restHeaders(key), cache: "no-store" }
+    );
+    if (!res.ok) return new Map();
+    const rows: unknown = await res.json();
+    if (!Array.isArray(rows)) return new Map();
+
+    const tally = new Map<string, Map<OrgCategory, number>>();
+    for (const row of rows) {
+      if (!isRecord(row)) continue;
+      const name = asString(row.organization)?.trim();
+      if (!name) continue;
+      // 種別を優先。無い世代のチャンクは category を見る。
+      addTally(tally, name, row.shubetsu ?? row.cat);
+    }
+    return pickMajority(tally, order);
+  } catch (error) {
+    console.error("会議データの種別取得エラー（無視して続行）:", error);
+    return new Map();
+  }
+}
+
+/** stakeholders マスタから (団体名 → 正準カテゴリー) を作る。 */
+export function stakeholderCategoryMap(
+  rows: StakeholderRow[],
+  order: readonly OrgCategory[]
+): OrgCategoryMap {
+  const tally = new Map<string, Map<OrgCategory, number>>();
+  for (const r of rows) {
+    const name = typeof r?.name === "string" ? r.name.trim() : "";
+    if (name === "") continue;
+    addTally(tally, name, r.category);
+  }
+  return pickMajority(tally, order);
+}
+
+/** weekly_reports の (organization, category) 行から (団体名 → 正準カテゴリー) を作る。 */
+export function weeklyCategoryMap(
+  rows: { organization: string; category: unknown }[],
+  order: readonly OrgCategory[]
+): OrgCategoryMap {
+  const tally = new Map<string, Map<OrgCategory, number>>();
+  for (const r of rows) {
+    const name = r.organization.trim();
+    if (name === "") continue;
+    addTally(tally, name, r.category);
+  }
+  return pickMajority(tally, order);
+}
+
+/**
+ * 団体名から所属ジャンルを決める。上記の優先順（会議 → マスタ → 週報 → その他）。
+ * 判定できなかった団体は必ず `その他` に落とす（勝手に自治体などへ寄せない）。
+ */
+export function resolveOrgCategory(
+  name: string,
+  sources: {
+    meeting: OrgCategoryMap;
+    master: OrgCategoryMap;
+    weekly: OrgCategoryMap;
+  }
+): { category: OrgCategory; source: OrgCategorySource } {
+  const fromMeeting = sources.meeting.get(name);
+  if (fromMeeting) return { category: fromMeeting, source: "会議" };
+  const fromMaster = sources.master.get(name);
+  if (fromMaster) return { category: fromMaster, source: "マスタ" };
+  const fromWeekly = sources.weekly.get(name);
+  if (fromWeekly) return { category: fromWeekly, source: "週報" };
+  return { category: "その他", source: "未判定" };
+}
+
+/**
+ * 団体の並び順の根拠となる「接点の多さ（アクション数）」。
+ *
+ * 吉井さんの要望は「アクション数（会議など）が多いものから順に」。会議件数と
+ * 週報週数は単位が違うが、どちらも「その団体に1回向き合った記録」なので
+ * 1接点=1点として単純合算する（会議16件＋週報2週＝18点）。
+ * 会議しか無い団体・週報しか無い団体が同じ尺度で並ぶのが狙い。
+ * 同点は「会議件数の多い方」→「週報週数の多い方」→「団体名（日本語順）」で割る。
+ */
+export function orgContactScore(o: { count: number; weeklyCount?: number }): number {
+  return (o.count ?? 0) + (o.weeklyCount ?? 0);
+}
+
+/** 接点の多い順（降順）。同点の割り方は orgContactScore のコメント参照。 */
+export function compareOrgByContact(
+  a: { name: string; count: number; weeklyCount?: number },
+  b: { name: string; count: number; weeklyCount?: number }
+): number {
+  return (
+    orgContactScore(b) - orgContactScore(a) ||
+    b.count - a.count ||
+    (b.weeklyCount ?? 0) - (a.weeklyCount ?? 0) ||
+    a.name.localeCompare(b.name, "ja")
+  );
 }
 
 // ---------------------------------------------------------------------------
