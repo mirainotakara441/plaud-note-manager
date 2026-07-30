@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
-import { serviceCreds } from "@/lib/supabase";
+import { anonCreds, restHeaders, serviceCreds } from "@/lib/supabase";
+import { normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
 
 // 監視ダッシュボード用エンドポイント。
 // Supabase側は集計RPC(dashboard_stats)を service role キーで叩き、件数・最終時刻のみ受け取る
 // （RPC呼び出しのため2026-07-25レビュー対応でservice roleに切替）。
 // Notion側は NOTION_TOKEN が設定されていれば各DBの「最新の更新」を読み、未設定なら休眠のまま返す。
+//
+// org_status（「次に攻める団体」）には RPC 側に種別が無いので、ここで
+// stakeholders / weekly_reports から団体名→正準8分類を引いて付け足す
+// （分類の正は lib/categories.ts。どれにも当たらない団体は「その他」にする）。
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +93,80 @@ function extractNotionTitle(page: Record<string, unknown>): string {
   return "(無題)";
 }
 
+// 団体名の表記ゆれを吸収する突合キー。
+// 例: stakeholders は「アトラス情報サービス」、会議記憶は「アトラス情報サービス株式会社」。
+// 法人格・空白の有無だけの違いは同じ団体として扱う（それ以上の推測はしない）。
+function orgKey(name: string): string {
+  return name
+    .replace(/(株式会社|有限会社|合同会社|一般社団法人|一般財団法人|公益財団法人|公益社団法人)/g, "")
+    .replace(/（株）|\(株\)|（有）|\(有\)/g, "")
+    .replace(/[\s　]/g, "")
+    .toLowerCase();
+}
+
+// 団体名 → 正準8分類の対応表を作る。
+// 優先度は stakeholders（団体マスタ）> weekly_reports（週報の章立て）。
+// weekly_reports の `全体`/`支店`/`プロモーション` は団体の種類ではないため
+// normalizeOrgCategory が null を返す → 採用しない。
+// 分類は滅多に変わらないので直近の成功結果を10分だけ持つ。
+// 取得に失敗したときも古い結果を使い回す（空マップを返すと全団体が「その他」に
+// 落ちて「種別未登録」だと誤解させてしまうため）。
+const CATEGORY_TTL_MS = 10 * 60 * 1000;
+let categoryCache: { at: number; map: Map<string, OrgCategory> } | null = null;
+
+async function fetchOrgCategoryMap(): Promise<Map<string, OrgCategory>> {
+  if (categoryCache && Date.now() - categoryCache.at < CATEGORY_TTL_MS) {
+    return categoryCache.map;
+  }
+  const map = new Map<string, OrgCategory>();
+  const c = anonCreds(); // stakeholders / weekly_reports は anon に SELECT 許可済み
+  if (!c) return categoryCache?.map ?? map;
+
+  // 失敗は null で返す（空配列＝「0件だった」と区別する。片方だけ取れた
+  // 中途半端なマップをキャッシュに焼き付けると、銀行や議員が丸ごと「その他」に
+  // 落ちた状態が10分固定される）。
+  async function rows(path: string): Promise<Array<Record<string, unknown>> | null> {
+    try {
+      const res = await fetch(`${c!.url}/rest/v1/${path}`, {
+        headers: restHeaders(c!.key),
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return null;
+      const json = await res.json();
+      return Array.isArray(json) ? json : null;
+    } catch (err) {
+      console.error(`GET /api/status: 分類の取得失敗 (${path})`, err);
+      return null;
+    }
+  }
+
+  const [weekly, stakeholders] = await Promise.all([
+    rows("weekly_reports?select=organization,category&organization=not.is.null&limit=2000"),
+    rows("stakeholders?select=name,category&limit=2000"),
+  ]);
+
+  // 弱い方（週報）から入れて、強い方（団体マスタ）で上書きする
+  for (const r of weekly ?? []) {
+    const name = typeof r.organization === "string" ? r.organization.trim() : "";
+    const cat = normalizeOrgCategory(r.category);
+    if (name && cat) map.set(orgKey(name), cat);
+  }
+  for (const r of stakeholders ?? []) {
+    const name = typeof r.name === "string" ? r.name.trim() : "";
+    const cat = normalizeOrgCategory(r.category);
+    if (name && cat) map.set(orgKey(name), cat);
+  }
+
+  // 2本とも取れたときだけ「正しい表」としてキャッシュする。
+  if (weekly !== null && stakeholders !== null) {
+    categoryCache = { at: Date.now(), map };
+    return map;
+  }
+  // 取り逃しあり。古くても前回の完全な表を使い、無ければ取れた分で妥協する。
+  return categoryCache?.map ?? map;
+}
+
 export async function GET() {
   const c = serviceCreds();
   if (!c) {
@@ -98,7 +177,7 @@ export async function GET() {
   }
 
   try {
-    const [supaRes, notion] = await Promise.all([
+    const [supaRes, notion, orgCategories] = await Promise.all([
       fetch(`${c.url}/rest/v1/rpc/dashboard_stats`, {
         method: "POST",
         headers: {
@@ -110,6 +189,7 @@ export async function GET() {
         cache: "no-store",
       }),
       fetchNotion(),
+      fetchOrgCategoryMap(),
     ]);
 
     if (!supaRes.ok) {
@@ -121,6 +201,16 @@ export async function GET() {
     }
 
     const stats = await supaRes.json();
+
+    // 「次に攻める団体」に種別を付ける。突合できない団体は「その他」。
+    // 自治体らしい名前だからといって自治体に寄せる推測はしない（捏造防止）。
+    if (stats && Array.isArray(stats.org_status)) {
+      stats.org_status = stats.org_status.map((o: Record<string, unknown>) => {
+        const name = typeof o.name === "string" ? o.name : "";
+        return { ...o, category: orgCategories.get(orgKey(name)) ?? "その他" };
+      });
+    }
+
     return NextResponse.json({ ok: true, stats, notion });
   } catch (e) {
     return NextResponse.json(

@@ -2,6 +2,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { ORG_CATEGORIES, normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
+
+// レイアウト方針（2026-07-30 吉井さん指摘「縦に長すぎる」への対応）:
+//   - スマホ(既定)は1カラムのまま。lg以上で2カラムに段組みし、横幅の余りを使う。
+//   - 監視の主役（稼働状況・記憶の成長・次に攻める団体・取込ジョブ）は開いたまま、
+//     参照用の一覧（提案・ニュース・団体別記憶・Notion）は折りたたみを既定にする。
+//   - 文字サイズは rem / Tailwindのクラスのみ（px直指定はPCで拡大されないため禁止）。
 
 // ── 型定義 ────────────────────────────────────────────────
 type ByType = {
@@ -55,6 +62,9 @@ type OrgStatus = {
   last_meeting: string | null;
   has_proposal: boolean;
   has_refine: boolean;
+  // /api/status が stakeholders / weekly_reports から突合して付ける正準8分類。
+  // 突合できなかった団体は "その他"（APIが必ず入れるが、古いキャッシュ対策で optional）。
+  category?: string;
 };
 type NewsRecent = {
   title: string;
@@ -123,6 +133,7 @@ const KIND_LABEL: Record<string, string> = {
   eight: "Eight",
   plaud: "PLAUD",
   slides: "スライド清書",
+  proposal: "提案書",
 };
 
 function fmtDateTime(iso: string | null | undefined): string {
@@ -178,25 +189,51 @@ function computeAlerts(data: ApiResponse | null, stats: Stats | undefined): stri
 }
 
 // ── 小物コンポーネント ────────────────────────────────────
+// グリッドの1マスぶんのセクション。span で2カラムぶち抜き、fold で折りたたみにできる。
 function Section({
   title,
   hint,
   children,
+  span,
+  fold,
 }: {
   title: string;
   hint?: string;
   children: React.ReactNode;
+  span?: boolean;
+  /** true=折りたたみ可（既定で閉じる）。監視の主役ではない参照用の一覧に使う */
+  fold?: boolean;
 }) {
+  const spanClass = span ? "lg:col-span-2" : "";
+  const card = (
+    <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+      {children}
+    </div>
+  );
+
+  if (!fold) {
+    return (
+      <section className={spanClass}>
+        <div className="mb-1.5 flex items-baseline justify-between gap-2 px-1">
+          <h2 className="text-sm font-semibold text-gray-500">{title}</h2>
+          {hint && <span className="text-xs text-gray-400">{hint}</span>}
+        </div>
+        {card}
+      </section>
+    );
+  }
+
   return (
-    <section className="mt-6">
-      <div className="mb-2 flex items-baseline justify-between px-1">
+    <details className={`group ${spanClass}`}>
+      <summary className="mb-1.5 flex cursor-pointer list-none items-baseline gap-2 px-1 [&::-webkit-details-marker]:hidden">
+        <span className="text-xs text-gray-400 transition group-open:rotate-90" aria-hidden>
+          ▶
+        </span>
         <h2 className="text-sm font-semibold text-gray-500">{title}</h2>
-        {hint && <span className="text-xs text-gray-400">{hint}</span>}
-      </div>
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        {children}
-      </div>
-    </section>
+        {hint && <span className="ml-auto text-xs text-gray-400">{hint}</span>}
+      </summary>
+      {card}
+    </details>
   );
 }
 
@@ -240,8 +277,8 @@ export default function StatusPage() {
   const healthy = data?.ok === true && !!stats;
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
-      <header className="mb-6">
+    <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))] lg:max-w-6xl">
+      <header className="mb-4">
         <Link href="/" className="text-sm font-medium text-indigo-600 active:opacity-70">
           ← ホーム
         </Link>
@@ -328,7 +365,7 @@ export default function StatusPage() {
       )}
 
       {stats && (
-        <>
+        <div className="mt-4 grid gap-4 lg:grid-cols-2 lg:items-start">
           {/* サービス稼働状況 */}
           <Section title="サービス稼働状況" hint="各連携の最終正常稼働">
             <ServicesPanel services={stats.services} />
@@ -336,33 +373,33 @@ export default function StatusPage() {
 
           {/* 記憶の成長 */}
           <Section title="記憶の成長" hint={`合計 ${stats.memory_total} 件`}>
-            {/* 今日/今週どれだけ脳が育ったか */}
-            <div className="mb-3 flex gap-2">
-              <div className="flex-1 rounded-xl bg-indigo-50 p-3 text-center">
-                <p className="text-2xl font-bold text-indigo-700">
+            {/* 今日/今週どれだけ脳が育ったか（横並びにして縦を詰める） */}
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <div className="flex flex-1 items-baseline justify-center gap-1 rounded-xl bg-indigo-50 px-3 py-1.5">
+                <span className="text-xl font-bold text-indigo-700">
                   +{stats.memory_last24h}
-                </p>
-                <p className="mt-0.5 text-xs font-medium text-indigo-500">今日ふえた</p>
+                </span>
+                <span className="text-xs font-medium text-indigo-500">今日</span>
               </div>
-              <div className="flex-1 rounded-xl bg-indigo-50 p-3 text-center">
-                <p className="text-2xl font-bold text-indigo-700">
+              <div className="flex flex-1 items-baseline justify-center gap-1 rounded-xl bg-indigo-50 px-3 py-1.5">
+                <span className="text-xl font-bold text-indigo-700">
                   +{stats.memory_last7d}
-                </p>
-                <p className="mt-0.5 text-xs font-medium text-indigo-500">今週ふえた</p>
+                </span>
+                <span className="text-xs font-medium text-indigo-500">今週</span>
               </div>
+              {/* 今週の動き（記憶→提案の転換） */}
+              <span className="w-full text-center text-xs text-gray-500 sm:w-auto sm:flex-1">
+                今週： 提案{" "}
+                <span className="font-semibold text-gray-700">+{stats.proposal_last7d}</span> ・ 壁打ち{" "}
+                <span className="font-semibold text-gray-700">+{stats.refine_last7d}</span>
+              </span>
             </div>
-            {/* 今週の動き（記憶→提案の転換） */}
-            <p className="mb-3 text-center text-xs text-gray-500">
-              今週の動き： 提案{" "}
-              <span className="font-semibold text-gray-700">+{stats.proposal_last7d}</span> ・ 壁打ち{" "}
-              <span className="font-semibold text-gray-700">+{stats.refine_last7d}</span>
-            </p>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
               {stats.memory_by_type.map((t) => (
                 <div
                   key={t.type}
-                  className="rounded-xl border border-gray-100 bg-gray-50 p-3"
+                  className="rounded-xl border border-gray-100 bg-gray-50 px-2.5 py-2"
                 >
                   <div className="flex items-center gap-2">
                     <span
@@ -372,19 +409,19 @@ export default function StatusPage() {
                     >
                       {t.type}
                     </span>
-                    <span className="ml-auto text-lg font-bold text-gray-900">
+                    <span className="ml-auto text-base font-bold text-gray-900">
                       {t.count}
                     </span>
                   </div>
-                  {/* 成長の差分（増えていれば緑で強調） */}
-                  <div className="mt-2 flex items-center gap-2 text-xs">
+                  {/* 成長の差分と鮮度は1行にまとめる（増えていれば緑で強調） */}
+                  <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[0.6875rem]">
                     <span
                       className={`font-semibold ${
                         t.d1 > 0 ? "text-emerald-600" : "text-gray-300"
                       }`}
                     >
                       {t.d1 > 0 ? `+${t.d1}` : "±0"}
-                      <span className="ml-0.5 font-normal text-gray-400">今日</span>
+                      <span className="font-normal text-gray-400">今日</span>
                     </span>
                     <span
                       className={`font-semibold ${
@@ -392,24 +429,22 @@ export default function StatusPage() {
                       }`}
                     >
                       {t.d7 > 0 ? `+${t.d7}` : "±0"}
-                      <span className="ml-0.5 font-normal text-gray-400">今週</span>
+                      <span className="font-normal text-gray-400">今週</span>
                     </span>
+                    <span className="ml-auto text-gray-400">{agoLabel(t.last)}</span>
                   </div>
-                  <p className="mt-1 text-[0.6875rem] text-gray-400">
-                    最終 {fmtDate(t.last)}（{agoLabel(t.last)}）
-                  </p>
                 </div>
               ))}
             </div>
           </Section>
 
-          {/* 次に攻める団体 */}
-          <Section title="次に攻める団体" hint="記憶はあるが提案がまだ">
+          {/* 次に攻める団体（カテゴリー別。横幅を使うので2カラムぶち抜き） */}
+          <Section title="次に攻める団体" hint="カテゴリー別 ・ 提案がまだの団体を上に" span>
             <OrgPanel orgs={stats.org_status} onAdded={() => load(true)} />
           </Section>
 
           {/* 日次アクティビティ */}
-          <Section title="登録アクティビティ" hint="直近">
+          <Section title="登録アクティビティ" hint="直近14日">
             <DailyChart daily={stats.memory_daily} />
           </Section>
 
@@ -420,6 +455,7 @@ export default function StatusPage() {
 
           {/* 壁打ち */}
           <Section
+            fold
             title="壁打ち"
             hint={`${stats.refine_sessions}件${stats.refine_last7d > 0 ? `（今週 +${stats.refine_last7d}）` : ""} / ${stats.refine_messages} 発言`}
           >
@@ -452,7 +488,7 @@ export default function StatusPage() {
           </Section>
 
           {/* 提案キャッシュ */}
-          <Section title="生成済みの提案">
+          <Section fold title="生成済みの提案" hint={`${stats.proposals.length}件`}>
             {stats.proposals.length === 0 ? (
               <p className="text-sm text-gray-400">まだ提案はありません。</p>
             ) : (
@@ -480,7 +516,7 @@ export default function StatusPage() {
           </Section>
 
           {/* 直近ニュース見出し（営業ネタ） */}
-          <Section title="直近ニュース" hint="新しい順">
+          <Section fold title="直近ニュース" hint="新しい順">
             {stats.news_recent.length === 0 ? (
               <p className="text-sm text-gray-400">ニュースはまだありません。</p>
             ) : (
@@ -508,12 +544,12 @@ export default function StatusPage() {
           </Section>
 
           {/* ニュース収集パイプライン */}
-          <Section title="ニュース収集パイプライン" hint="テーマ別の鮮度">
+          <Section fold title="ニュース収集パイプライン" hint="テーマ別の鮮度">
             <NewsPanel themes={stats.news_by_theme} />
           </Section>
 
           {/* 団体別・ステークホルダー */}
-          <Section title="団体別の記憶">
+          <Section fold title="団体別の記憶" hint={`上位${stats.memory_by_org.length}団体`}>
             <div className="flex flex-wrap gap-1.5">
               {stats.memory_by_org.map((o) => (
                 <span
@@ -539,17 +575,17 @@ export default function StatusPage() {
           </Section>
 
           {/* Notion 連携 */}
-          <Section title="Notion 連携">
+          <Section fold title="Notion 連携">
             <NotionPanel notion={data?.notion} />
           </Section>
 
-          <p className="mt-6 text-center text-xs text-gray-400">
+          <p className="text-center text-xs text-gray-400 lg:col-span-2">
             集計時刻 {fmtDateTime(stats.generated_at)}
           </p>
-        </>
+        </div>
       )}
 
-      <div className="mt-8 text-center">
+      <div className="mt-6 text-center">
         <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
           ← ホーム
         </Link>
@@ -621,7 +657,9 @@ function JobsPanel({
     <>
       <div className="flex flex-wrap gap-2">
         {summary.length === 0 ? (
-          <p className="text-sm text-gray-400">ジョブはまだありません。</p>
+          // 集計(jobs_summary)は直近7日だけ。下の一覧はそれより古いものも出るので、
+          // 「ジョブが一件も無い」と誤読されないよう期間を明示する。
+          <p className="text-sm text-gray-400">直近7日のジョブはありません。</p>
         ) : (
           summary.map((s) => {
             const meta = JOB_STATUS[s.status] ?? { label: s.status, style: "bg-gray-100 text-gray-600" };
@@ -644,8 +682,10 @@ function JobsPanel({
         </p>
       )}
 
+      {/* 直近ジョブは件数が読めればよいので、伸びすぎないよう枠内スクロールにする
+          （段組みの相手側が短いとき、この欄だけで縦が伸びるのを防ぐ） */}
       {recent.length > 0 && (
-        <ul className="mt-3 space-y-2">
+        <ul className="mt-2 max-h-[13rem] space-y-1.5 overflow-y-auto">
           {recent.map((j) => {
             const meta = JOB_STATUS[j.status] ?? { label: j.status, style: "bg-gray-100 text-gray-600" };
             return (
@@ -677,7 +717,91 @@ function JobsPanel({
 }
 
 // ── 次に攻める団体パネル ──────────────────────────────────
+// 追加フォームの選択肢。RPC dashboard_stats の org_status が stakeholders から拾うのは
+// この4種のみ（会議記録がある団体は種別に関わらず拾う）。ここに無い種別で登録すると
+// 一覧に出ず迷子になるため、選択肢は据え置きにしている。
+// ※表示側のカテゴリー分けは lib/categories.ts の正準8分類（ORG_CATEGORIES）を使う。
 const ADD_CATEGORIES = ["自治体", "事業者", "銀行", "議員"] as const;
+
+// 1団体ぶんの行。名前・状態・会議数・最終接点・次の一手を1行に畳む（縦を詰めるため）。
+function OrgRow({ o }: { o: OrgStatus }) {
+  const stale = (() => {
+    const h = hoursSince(o.last_meeting);
+    return h !== null && h > 24 * 30; // 30日超で「間が空いている」
+  })();
+  return (
+    <li
+      className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-2.5 py-1.5 ${
+        o.has_proposal ? "border-gray-100 bg-gray-50" : "border-rose-200 bg-rose-50"
+      }`}
+    >
+      {/* 団体名は最低7remを確保する。狭い画面では名前を潰すのではなく、
+          後ろのバッジ・導線が次の行へ折り返す（「熊...」のような潰れ防止）。 */}
+      <span className="min-w-[7rem] flex-1 basis-[7rem] truncate text-sm font-semibold text-gray-800">
+        {o.name}
+      </span>
+      {o.has_proposal ? (
+        <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[0.6875rem] font-medium text-emerald-700">
+          提案済
+        </span>
+      ) : (
+        <span className="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-rose-700">
+          提案なし
+        </span>
+      )}
+      {o.has_refine && (
+        <span className="shrink-0 rounded-full bg-teal-100 px-1.5 py-0.5 text-[0.6875rem] font-medium text-teal-700">
+          壁打ち済
+        </span>
+      )}
+      <span className="shrink-0 text-[0.6875rem] text-gray-400">会議{o.meetings}</span>
+      <span
+        className={`shrink-0 text-[0.6875rem] ${stale ? "text-amber-600" : "text-gray-400"}`}
+        title={stale ? "最終接点から30日以上空いています" : undefined}
+      >
+        {fmtDate(o.last_meeting)}
+        {stale ? "⚠" : ""}
+      </span>
+      {/* 提案がまだの団体は、その場で次の一手へ */}
+      {!o.has_proposal && (
+        <span className="flex shrink-0 gap-1.5 text-[0.6875rem]">
+          <Link
+            href={`/agent?org=${encodeURIComponent(o.name)}`}
+            className="font-semibold text-indigo-600 active:opacity-70"
+          >
+            提案→
+          </Link>
+          <Link
+            href={`/refine?org=${encodeURIComponent(o.name)}`}
+            className="font-semibold text-teal-600 active:opacity-70"
+          >
+            壁打ち→
+          </Link>
+        </span>
+      )}
+    </li>
+  );
+}
+
+// 団体を正準8分類ごとに束ねる。分類は /api/status が stakeholders / weekly_reports から
+// 突合して付けた値。どれにも当たらなければ「その他」（自治体などへ推測で寄せない）。
+function groupByCategory(orgs: OrgStatus[]): Array<[OrgCategory, OrgStatus[]]> {
+  const groups = new Map<OrgCategory, OrgStatus[]>();
+  for (const o of orgs) {
+    const cat = normalizeOrgCategory(o.category) ?? "その他";
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat)!.push(o);
+  }
+  // 空カテゴリーは出さない。順番は ORG_CATEGORIES の定義順（＝正準の並び）に従う。
+  return ORG_CATEGORIES.filter((c) => groups.has(c)).map((c) => {
+    const list = groups.get(c)!.slice();
+    // 提案がまだの団体を上に、次に会議が多い順（＝攻める優先度）
+    list.sort(
+      (a, b) => Number(a.has_proposal) - Number(b.has_proposal) || b.meetings - a.meetings
+    );
+    return [c, list] as [OrgCategory, OrgStatus[]];
+  });
+}
 
 function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -685,6 +809,7 @@ function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void })
   const [category, setCategory] = useState<string>("自治体");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const groups = groupByCategory(orgs);
 
   async function add() {
     const n = name.trim();
@@ -764,7 +889,7 @@ function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void })
         <button
           type="button"
           onClick={() => setShowAdd(true)}
-          className="mb-3 w-full rounded-xl border border-dashed border-indigo-300 py-2 text-sm font-medium text-indigo-600 active:bg-indigo-50"
+          className="mb-2 w-full rounded-xl border border-dashed border-indigo-300 py-1.5 text-sm font-medium text-indigo-600 active:bg-indigo-50"
         >
           ＋ 提案団体を追加
         </button>
@@ -773,68 +898,36 @@ function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void })
       {orgs.length === 0 ? (
         <p className="text-sm text-gray-400">団体はまだありません。上の「追加」から登録できます。</p>
       ) : (
-    <ul className="space-y-2">
-      {orgs.map((o) => {
-        const stale = (() => {
-          const h = hoursSince(o.last_meeting);
-          return h !== null && h > 24 * 30; // 30日超で「間が空いている」
-        })();
-        return (
-          <li
-            key={o.name}
-            className={`rounded-lg border px-3 py-2 ${
-              o.has_proposal
-                ? "border-gray-100 bg-gray-50"
-                : "border-rose-200 bg-rose-50"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-800">
-                {o.name}
-              </span>
-              {o.has_proposal ? (
-                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
-                  提案済
-                </span>
-              ) : (
-                <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
-                  提案なし
-                </span>
-              )}
-              {o.has_refine && (
-                <span className="shrink-0 rounded-full bg-teal-100 px-2 py-0.5 text-xs font-medium text-teal-700">
-                  壁打ち済
-                </span>
-              )}
-            </div>
-            <div className="mt-1 flex items-center gap-2 text-xs text-gray-400">
-              <span>会議 {o.meetings}</span>
-              <span className={stale ? "text-amber-600" : ""}>
-                ・ 最終 {fmtDate(o.last_meeting)}
-                {stale ? "（間が空いています）" : ""}
-              </span>
-              {/* 提案がまだの団体は、その場で次の一手へ */}
-              {!o.has_proposal && (
-                <span className="ml-auto flex shrink-0 gap-2">
-                  <Link
-                    href={`/agent?org=${encodeURIComponent(o.name)}`}
-                    className="font-medium text-indigo-600 active:opacity-70"
-                  >
-                    提案 →
-                  </Link>
-                  <Link
-                    href={`/refine?org=${encodeURIComponent(o.name)}`}
-                    className="font-medium text-teal-600 active:opacity-70"
-                  >
-                    壁打ち →
-                  </Link>
-                </span>
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+        <div className="space-y-3">
+          {groups.map(([cat, list]) => {
+            const noProposal = list.filter((o) => !o.has_proposal).length;
+            return (
+              <div key={cat}>
+                <div className="mb-1 flex items-baseline gap-2 border-b border-gray-100 pb-0.5">
+                  <h3 className="text-xs font-bold text-gray-600">{cat}</h3>
+                  <span className="text-[0.6875rem] text-gray-400">
+                    {list.length}団体
+                    {noProposal > 0 ? ` ・ 提案なし ${noProposal}` : " ・ 全て提案済"}
+                  </span>
+                </div>
+                {/* 横幅がある画面では団体を横に並べて縦を詰める */}
+                <ul className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+                  {list.map((o) => (
+                    <OrgRow key={o.name} o={o} />
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+          {/* 突合できなかった団体は「その他」に出る。ここが増えたら
+              stakeholders / weekly_reports 側の登録漏れのサイン。 */}
+          {groups.some(([c]) => c === "その他") && (
+            <p className="text-[0.6875rem] leading-relaxed text-gray-400">
+              ※「その他」は stakeholders・週報のどちらにも種別の登録が無い団体です
+              （推測で分類していません）。
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
