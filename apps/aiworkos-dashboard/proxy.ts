@@ -30,6 +30,9 @@ const PUBLIC_PATHS = [
   // Vercel Cron が叩く日々のToDo自動処理。Cronのリクエストには合言葉cookieが無いため
   // ここは通すが、ルート側で CRON_SECRET を照合するので無認証では実行できない。
   /^\/api\/cron\/daily-todo$/,
+  // 同じ理由でNotion→Supabaseの人脈・団体同期も通す。こちらはルート側で
+  // CRON_SECRET または合言葉cookieのどちらかを照合している（手動実行も許すため）。
+  /^\/api\/cron\/notion-sync$/,
 ];
 
 export async function proxy(request: NextRequest) {

@@ -237,8 +237,11 @@ export async function fetchStakeholders(
   key: string
 ): Promise<StakeholderRow[]> {
   try {
+    // 2026-07-30: 団体マスタの正をNotion「顧客CRM」へ移したため、旧 stakeholders から
+    // その写し（notion_organizations）へ切り替えた。列名は name / category のまま同じ形。
+    // 種別未設定（category is null）の団体は分類の材料にならないので除く。
     const res = await fetch(
-      `${url}/rest/v1/stakeholders?select=category,name&limit=500`,
+      `${url}/rest/v1/notion_organizations?select=category,name&category=not.is.null&limit=2000`,
       { headers: restHeaders(key), cache: "no-store" }
     );
     if (!res.ok) return [];
