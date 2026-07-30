@@ -4,8 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import NotificationOptIn from "@/app/components/NotificationOptIn";
 
-// 日々のToDo：一行日記の「やってみよう」「本日のポイント」を週単位で積み上げ、
-// チェックすると「済み」一覧へ移動して未完リストは行詰めされる。データは /api/actions（Supabase）。
+// 日々のToDo：2つの由来のToDoを1画面に束ねる。
+//   ① daily_actions（/api/actions）… 一行日記の「やってみよう」「本日のポイント」。
+//      日付ベース・ジャンルの概念なし。
+//   ② strategic_todos（/api/strategic-todos）… NotionのToDo DBからミラーした
+//      ジャンル別（社内／自治体／議員／事業者／委託会社）の月次営業ToDo。
+//      日付は持たず target_month と created_at がある。
+// テーブルは統合せず、このUIレイヤーで束ねる（由来もデータ形も違うため）。
+// 表示は「カテゴリー別」「時系列」の2モードを切り替えられる。
 
 type Kind = "action" | "point";
 type Item = {
@@ -18,10 +24,44 @@ type Item = {
   source_id: string | null;
 };
 
+// strategic_todos の1行（Notion「ToDo DB」のミラー）
+type StrategicStatus = "未着手" | "進行中" | "完了";
+type Strategic = {
+  id: string;
+  notion_page_id: string | null;
+  task_name: string;
+  genre: string;
+  status: StrategicStatus;
+  target_month: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 const KIND_META: Record<Kind, { label: string; icon: string; klass: string }> = {
   action: { label: "やってみよう", icon: "🎯", klass: "text-emerald-700 bg-emerald-50" },
   point: { label: "本日のポイント", icon: "📌", klass: "text-amber-700 bg-amber-50" },
 };
+
+// ジャンルの並び順と見た目。ここに無いジャンルは末尾にグレーで出す。
+const GENRE_ORDER = ["社内", "自治体", "議員", "事業者", "委託会社"] as const;
+const GENRE_META: Record<string, { icon: string; klass: string }> = {
+  社内: { icon: "🏢", klass: "text-slate-700 bg-slate-100" },
+  自治体: { icon: "🏛️", klass: "text-indigo-700 bg-indigo-50" },
+  議員: { icon: "🎌", klass: "text-rose-700 bg-rose-50" },
+  事業者: { icon: "🤝", klass: "text-sky-700 bg-sky-50" },
+  委託会社: { icon: "🔧", klass: "text-violet-700 bg-violet-50" },
+};
+function genreMeta(g: string) {
+  return GENRE_META[g] ?? { icon: "📁", klass: "text-gray-600 bg-gray-100" };
+}
+function genreRank(g: string) {
+  const i = (GENRE_ORDER as readonly string[]).indexOf(g);
+  return i < 0 ? GENRE_ORDER.length : i;
+}
+
+type ViewMode = "category" | "timeline";
+const VIEW_KEY = "aiworkos:actions:view";
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
 function pad(x: number) {
@@ -65,9 +105,25 @@ function weekLabel(mondayKey: string): string {
 
 export default function ActionsPage() {
   const [items, setItems] = useState<Item[]>([]);
+  const [strategic, setStrategic] = useState<Strategic[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
+
+  // 表示モード（カテゴリー別／時系列）。前回選択を端末に覚えさせる。
+  const [view, setView] = useState<ViewMode>("category");
+  useEffect(() => {
+    const saved = window.localStorage.getItem(VIEW_KEY);
+    if (saved === "category" || saved === "timeline") setView(saved);
+  }, []);
+  function changeView(v: ViewMode) {
+    setView(v);
+    try {
+      window.localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // プライベートブラウズ等で書けなくても表示自体は動く
+    }
+  }
 
   // 追加フォーム
   const [addDate, setAddDate] = useState(todayStr());
@@ -86,14 +142,27 @@ export default function ActionsPage() {
   // 一括完了
   const [bulkBusy, setBulkBusy] = useState(false);
 
+  // daily_actions と strategic_todos を並行で取得する。
+  // 戦略ToDo側だけ落ちても日々のToDoは出したいので、失敗は分けて扱う。
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/actions", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? "取得に失敗しました");
-      setItems(data.items ?? []);
+      const [aRes, sRes] = await Promise.all([
+        fetch("/api/actions", { cache: "no-store" }),
+        fetch("/api/strategic-todos", { cache: "no-store" }),
+      ]);
+      const aData = await aRes.json().catch(() => null);
+      if (!aRes.ok) throw new Error(aData?.error ?? "取得に失敗しました");
+      setItems(aData?.items ?? []);
+
+      if (sRes.ok) {
+        const sData = await sRes.json().catch(() => null);
+        setStrategic(sData?.items ?? []);
+      } else {
+        setStrategic([]);
+        setError("戦略ToDo（カテゴリー別）の取得に失敗しました");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "取得に失敗しました");
     } finally {
@@ -103,6 +172,31 @@ export default function ActionsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  // 戦略ToDoの完了トグル（完了 ⇄ 未着手）。楽観的更新→失敗時はload()で戻す。
+  async function toggleStrategic(t: Strategic) {
+    const next: StrategicStatus = t.status === "完了" ? "未着手" : "完了";
+    setStrategic((prev) => prev.map((x) => (x.id === t.id ? { ...x, status: next } : x)));
+    const res = await fetch("/api/strategic-todos", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id, status: next }),
+    });
+    if (!res.ok) load();
+  }
+
+  // 戦略ToDoの「進行中」トグル（未着手 ⇄ 進行中）。完了済みには効かせない。
+  async function toggleStrategicProgress(t: Strategic) {
+    if (t.status === "完了") return;
+    const next: StrategicStatus = t.status === "進行中" ? "未着手" : "進行中";
+    setStrategic((prev) => prev.map((x) => (x.id === t.id ? { ...x, status: next } : x)));
+    const res = await fetch("/api/strategic-todos", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id, status: next }),
+    });
+    if (!res.ok) load();
+  }
 
   async function toggleDone(it: Item) {
     setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, done: !x.done } : x)));
@@ -241,6 +335,62 @@ export default function ActionsPage() {
     return Array.from(byWeek.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
   }, [items]);
 
+  // ── カテゴリーモード：戦略ToDoをジャンルごとに束ねる（未完→完了の順）
+  const genreGroups = useMemo(() => {
+    const byGenre = new Map<string, Strategic[]>();
+    for (const t of strategic) {
+      if (!byGenre.has(t.genre)) byGenre.set(t.genre, []);
+      byGenre.get(t.genre)!.push(t);
+    }
+    for (const arr of byGenre.values()) {
+      arr.sort((a, b) => {
+        const ad = a.status === "完了" ? 1 : 0;
+        const bd = b.status === "完了" ? 1 : 0;
+        if (ad !== bd) return ad - bd;
+        return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0;
+      });
+    }
+    return Array.from(byGenre.entries()).sort((a, b) => {
+      const r = genreRank(a[0]) - genreRank(b[0]);
+      return r !== 0 ? r : a[0] < b[0] ? -1 : 1;
+    });
+  }, [strategic]);
+
+  const strategicOpen = useMemo(
+    () => strategic.filter((t) => t.status !== "完了").length,
+    [strategic]
+  );
+
+  // ── 時系列モード：両方を1本の時間軸に混ぜて新しい順。
+  // daily_actions は entry_date、strategic_todos は created_at（JSTのローカル日付）を軸にする。
+  type Row =
+    | { key: string; date: string; type: "action"; item: Item }
+    | { key: string; date: string; type: "strategic"; todo: Strategic };
+
+  const timelineGroups = useMemo(() => {
+    const rows: Row[] = [];
+    for (const it of items) {
+      rows.push({ key: `a-${it.id}`, date: it.entry_date, type: "action", item: it });
+    }
+    for (const t of strategic) {
+      const d = new Date(t.created_at);
+      const date = Number.isNaN(d.getTime()) ? (t.target_month ?? "") : keyOf(d);
+      rows.push({ key: `s-${t.id}`, date, type: "strategic", todo: t });
+    }
+    rows.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      // 同じ日付なら 戦略ToDo → 日記由来 の順
+      if (a.type !== b.type) return a.type === "strategic" ? -1 : 1;
+      return 0;
+    });
+    const byDate = new Map<string, Row[]>();
+    for (const r of rows) {
+      if (!byDate.has(r.date)) byDate.set(r.date, []);
+      byDate.get(r.date)!.push(r);
+    }
+    return Array.from(byDate.entries());
+  }, [items, strategic]);
+
   const doneItems = useMemo(
     () => items.filter((x) => x.done).sort((a, b) => (a.entry_date < b.entry_date ? 1 : -1)),
     [items]
@@ -332,6 +482,68 @@ export default function ActionsPage() {
     );
   }
 
+  // 戦略ToDo（strategic_todos）1件のカード。日々のToDoと同じデザイン言語で、
+  // ジャンルバッジ・対象月・メモを足したもの。
+  function renderStrategic(t: Strategic, opts?: { showGenre?: boolean }) {
+    const done = t.status === "完了";
+    const gm = genreMeta(t.genre);
+    return (
+      <div
+        key={t.id}
+        className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition-shadow duration-200"
+      >
+        <button
+          type="button"
+          onClick={() => toggleStrategic(t)}
+          aria-label={done ? "未着手に戻す" : "完了にする"}
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition-all duration-200 ease-out active:scale-90 ${
+            done
+              ? "border-emerald-600 bg-emerald-600 text-white"
+              : "border-gray-300 text-transparent active:border-emerald-400"
+          }`}
+        >
+          ✓
+        </button>
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            {opts?.showGenre !== false && (
+              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${gm.klass}`}>
+                {gm.icon} {t.genre}
+              </span>
+            )}
+            {t.target_month && (
+              <span className="text-[11px] text-gray-400">{t.target_month}</span>
+            )}
+            {!done && (
+              <button
+                type="button"
+                onClick={() => toggleStrategicProgress(t)}
+                className={`rounded-full border px-1.5 py-0.5 text-[11px] font-medium transition active:scale-95 ${
+                  t.status === "進行中"
+                    ? "border-amber-300 bg-amber-50 text-amber-700"
+                    : "border-gray-200 text-gray-400"
+                }`}
+              >
+                {t.status === "進行中" ? "進行中" : "未着手"}
+              </button>
+            )}
+          </div>
+          <p
+            className={`text-sm leading-relaxed transition-colors duration-200 ${
+              done ? "text-gray-400 line-through" : "text-gray-800"
+            }`}
+          >
+            {t.task_name}
+          </p>
+          {t.notes && (
+            <p className="mt-1 text-[11px] leading-relaxed text-gray-400">{t.notes}</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-2xl px-4 pb-20 pt-[max(1.5rem,env(safe-area-inset-top))]">
       <div className="mb-4 flex items-center gap-2">
@@ -368,12 +580,34 @@ export default function ActionsPage() {
           </div>
         </div>
         <p className="mt-1 text-sm text-gray-500">
-          「やってみよう」「本日のポイント」を週単位で積み上げ。チェックすると「済み」へ移動します。
+          ジャンル別の営業ToDoと、一行日記の「やってみよう」「本日のポイント」を1画面に。
         </p>
         {notice && (
           <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>
         )}
       </header>
+
+      {/* 表示モード切替：カテゴリー別 ⇄ 時系列 */}
+      <div className="mb-5 flex overflow-hidden rounded-xl border border-gray-300 bg-white">
+        {(
+          [
+            { key: "category", label: "🗂 カテゴリー別" },
+            { key: "timeline", label: "🕒 時系列" },
+          ] as { key: ViewMode; label: string }[]
+        ).map((m) => (
+          <button
+            key={m.key}
+            type="button"
+            onClick={() => changeView(m.key)}
+            aria-pressed={view === m.key}
+            className={`flex-1 px-3 py-2 text-sm font-semibold transition ${
+              view === m.key ? "bg-emerald-600 text-white" : "bg-white text-gray-500"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
 
       {/* 当日分の進捗バー・達成表示 */}
       <section className="mb-5">
@@ -454,57 +688,126 @@ export default function ActionsPage() {
       </section>
 
       <div className="mb-3 px-1 text-sm text-gray-500">
-        未完 <b className="text-gray-800">{remaining}</b> 件 ・ 済み{" "}
+        営業ToDo 未完 <b className="text-gray-800">{strategicOpen}</b> 件 ・ 日々のToDo 未完{" "}
+        <b className="text-gray-800">{remaining}</b> 件 ・ 済み{" "}
         <b className="text-gray-800">{doneItems.length}</b> 件
       </div>
 
       {loading && <p className="py-10 text-center text-sm text-gray-400">読み込み中…</p>}
       {error && <p className="rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
-      {!loading && !error && activeWeeks.length === 0 && (
+      {!loading && activeWeeks.length === 0 && strategic.length === 0 && (
         <p className="py-10 text-center text-sm text-gray-400">
           未完はありません。上のフォームから追加、または「日記から取込」できます。
         </p>
       )}
 
-      {/* 未完：週単位 */}
-      <div className="space-y-6">
-        {activeWeeks.map(([wk, its]) => (
-          <section key={wk}>
+      {/* ───── カテゴリー別モード ───── */}
+      {!loading && view === "category" && (
+        <>
+          {/* ジャンル別の営業ToDo（strategic_todos） */}
+          <div className="space-y-6">
+            {genreGroups.map(([genre, todos]) => {
+              const gm = genreMeta(genre);
+              const open = todos.filter((t) => t.status !== "完了").length;
+              return (
+                <section key={genre}>
+                  <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
+                    <span className={`rounded px-1.5 py-0.5 text-xs ${gm.klass}`}>{gm.icon}</span>
+                    {genre}
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                      残{open} / 全{todos.length}
+                    </span>
+                  </h2>
+                  <div className="space-y-2">
+                    {todos.map((t) => renderStrategic(t, { showGenre: false }))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+
+          {/* 日記由来の日々のToDoは別枠でまとめる */}
+          <section className="mt-8">
             <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
-              {weekLabel(wk)}
+              <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700">📓</span>
+              日々の気づき
               <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                {its.length}
+                残{remaining}
               </span>
+            </h2>
+            {activeWeeks.length === 0 ? (
+              <p className="px-1 py-4 text-sm text-gray-400">未完はありません。</p>
+            ) : (
+              <div className="space-y-5">
+                {activeWeeks.map(([wk, its]) => (
+                  <div key={wk}>
+                    <h3 className="mb-2 flex items-center gap-2 px-1 text-[13px] font-bold text-gray-500">
+                      {weekLabel(wk)}
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                        {its.length}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => completeWeek(its)}
+                        disabled={bulkBusy}
+                        className="ml-auto shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-400 transition active:bg-gray-100 active:text-emerald-700 disabled:opacity-50"
+                      >
+                        この週をすべて完了
+                      </button>
+                    </h3>
+                    <div className="space-y-2">{its.map(renderItem)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* 済み一覧（日々のToDo・折りたたみ） */}
+          {doneItems.length > 0 && (
+            <section className="mt-8">
               <button
                 type="button"
-                onClick={() => completeWeek(its)}
-                disabled={bulkBusy}
-                className="ml-auto shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-[11px] font-medium text-gray-400 transition active:bg-gray-100 active:text-emerald-700 disabled:opacity-50"
+                onClick={() => setDoneOpen((v) => !v)}
+                className="flex w-full items-center gap-2 rounded-lg px-1 py-2 text-sm font-bold text-gray-500 transition active:bg-gray-50"
               >
-                この週をすべて完了
+                <span>{doneOpen ? "▼" : "▶"}</span>
+                ✓ 済み（日々のToDo）
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  {doneItems.length}
+                </span>
               </button>
-            </h2>
-            <div className="space-y-2">{its.map(renderItem)}</div>
-          </section>
-        ))}
-      </div>
+              {doneOpen && (
+                <div className="mt-2 space-y-2 opacity-80">{doneItems.map(renderItem)}</div>
+              )}
+            </section>
+          )}
+        </>
+      )}
 
-      {/* 済み一覧（折りたたみ） */}
-      {doneItems.length > 0 && (
-        <section className="mt-8">
-          <button
-            type="button"
-            onClick={() => setDoneOpen((v) => !v)}
-            className="flex w-full items-center gap-2 rounded-lg px-1 py-2 text-sm font-bold text-gray-500 transition active:bg-gray-50"
-          >
-            <span>{doneOpen ? "▼" : "▶"}</span>
-            ✓ 済み
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-              {doneItems.length}
-            </span>
-          </button>
-          {doneOpen && <div className="mt-2 space-y-2 opacity-80">{doneItems.map(renderItem)}</div>}
-        </section>
+      {/* ───── 時系列モード ───── */}
+      {!loading && view === "timeline" && (
+        <div className="space-y-6">
+          {timelineGroups.map(([date, rows]) => (
+            <section key={date}>
+              <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold text-gray-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden />
+                {date ? fmtDate(date) : "日付なし"}
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                  {rows.length}
+                </span>
+              </h2>
+              <div className="space-y-2">
+                {rows.map((r) =>
+                  r.type === "strategic" ? (
+                    <div key={r.key}>{renderStrategic(r.todo)}</div>
+                  ) : (
+                    <div key={r.key}>{renderItem(r.item)}</div>
+                  )
+                )}
+              </div>
+            </section>
+          ))}
+        </div>
       )}
 
       <div className="mt-8 text-center">

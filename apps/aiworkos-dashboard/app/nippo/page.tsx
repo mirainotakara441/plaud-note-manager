@@ -37,11 +37,33 @@ const STATUS_META: Record<Status, { label: string; klass: string }> = {
   blocked: { label: "要再実行", klass: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
 
+// daily_work_log への書き込みは Claude Code セッションが直接SQLで行うため、
+// 想定外の status 値が1行でも入り込むと STATUS_META[...] が undefined になり、
+// ページ全体が真っ白になってしまう。未知の値はグレーのバッジにフォールバックする。
+const STATUS_FALLBACK = { label: "不明", klass: "bg-gray-50 text-gray-600 ring-gray-200" };
+function statusMeta(s: Status | string | null) {
+  return (s && STATUS_META[s as Status]) || STATUS_FALLBACK;
+}
+
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
 function fmtDate(d: string) {
   const [y, m, day] = d.split("-").map(Number);
   const wd = WD[new Date(y, m - 1, day).getDay()] ?? "";
   return `${y}年${m}月${day}日（${wd}）`;
+}
+function pad(n: number) {
+  return String(n).padStart(2, "0");
+}
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function daysBetween(a: string, b: string) {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  return Math.round(
+    (new Date(by, bm - 1, bd).getTime() - new Date(ay, am - 1, ad).getTime()) / 86400000
+  );
 }
 
 type Filter = "all" | "open" | Status;
@@ -76,6 +98,14 @@ export default function NippoPage() {
     const completed = items.filter((it) => it.status === "completed").length;
     const open = items.filter((it) => it.status !== "completed").length;
     return { total: items.length, days: days.size, completed, open };
+  }, [items]);
+
+  // 最新の記録日と、そこからの経過日数。集約が止まっているのか
+  // 表示が欠けているのかを画面上で見分けられるようにする。
+  const latest = useMemo(() => {
+    if (items.length === 0) return null;
+    const max = items.reduce((a, b) => (a.work_date > b.work_date ? a : b)).work_date;
+    return { date: max, staleDays: daysBetween(max, todayStr()) };
   }, [items]);
 
   // フィルタ適用
@@ -132,6 +162,14 @@ export default function NippoPage() {
         ))}
       </div>
 
+      {/* 集約の鮮度。2日以上空いていたら未集約であることを明示する。 */}
+      {latest && latest.staleDays >= 2 && (
+        <p className="mb-5 rounded-xl bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">
+          最新の記録は{fmtDate(latest.date)}。以降の{latest.staleDays}
+          日分はまだ集約されていません（表示の不具合ではありません）。
+        </p>
+      )}
+
       {/* フィルタ */}
       <div className="mb-5 flex flex-wrap gap-2">
         {FILTERS.map((f) => (
@@ -182,7 +220,7 @@ export default function NippoPage() {
             </h2>
             <div className="space-y-3">
               {logs.map((it) => {
-                const sm = STATUS_META[it.status];
+                const sm = statusMeta(it.status);
                 return (
                   <article
                     key={it.id}
