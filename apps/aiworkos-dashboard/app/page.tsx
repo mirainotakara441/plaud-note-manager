@@ -74,6 +74,13 @@ const PROPOSE_FEATURES: Feature[] = [
     desc: "目的・聞き手・ゴールを深掘りし、スライド構成と簡易ビジュアルまで作る",
     accent: "bg-pink-100 text-pink-700",
   },
+  {
+    href: "/procedure-refine",
+    icon: "📋",
+    title: "提出文書 壁打ち",
+    desc: "実施理由書・実施要領書を深掘りし、章立て・表・要確認事項まで作る",
+    accent: "bg-lime-100 text-lime-700",
+  },
 ];
 
 const REVIEW_FEATURES: Feature[] = [
