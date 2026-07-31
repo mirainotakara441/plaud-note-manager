@@ -120,6 +120,13 @@ const REVIEW_FEATURES: Feature[] = [
     accent: "bg-fuchsia-100 text-fuchsia-700",
   },
   {
+    href: "/legislators",
+    icon: "🏛️",
+    title: "議員リスト",
+    desc: "会派・議会の階層で議員を辿り、接触履歴とこれからの予定を1画面で確認",
+    accent: "bg-indigo-100 text-indigo-700",
+  },
+  {
     href: "/monthly-report",
     icon: "🗓️",
     title: "月報ドラフト自動生成",
