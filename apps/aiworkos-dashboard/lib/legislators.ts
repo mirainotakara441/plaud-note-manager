@@ -4,11 +4,17 @@
 // 一人ひとりについて「いつアクションを起こしたか（履歴）」と
 // 「いつアクションを起こす予定か（予定）」を1画面で確認できるようにする。
 //
-// データ元（すべて既存テーブル。新規に議員を作るテーブルは持たない）:
-//   - 名簿   : notion_contacts … Notion「人脈DB」の写し
+// データ元:
+//   - 接点あり名簿 : notion_contacts … Notion「人脈DB」の写し（＝既に会った人）
+//   - 候補名簿     : legislators … 吉井さん手製の「DXに強い政令市議員」候補リスト
 //   - 履歴   : weekly_reports（category='議員'）＋ memory_chunks（会議／日記／成果物）
 //   - 予定   : strategic_todos（genre='議員'）
 //   - 手書き : legislator_notes（このページのために新設）
+//
+// 「接点あり」と「候補（未接点）」は性格が違う。前者は既に関係があり履歴・予定が
+// 積み上がっている相手、後者はこれから当たりに行く相手で連絡先しか無い。
+// 同じ一覧に混ぜると「もう会った人」と「まだ会っていない人」の区別が消えて
+// ロビー活動の攻略対象が見えなくなるため、画面上は必ず2つに分けて出す。
 //
 // ★重要★ notion_contacts は app/api/cron/notion-sync が毎時
 // 「Notionに無い行は削除」（mark and sweep）で洗い直している。
@@ -81,6 +87,159 @@ export type LegislatorNote = {
   updated_at: string;
 };
 
+// ---------------------------------------------------------------------------
+// 手書きメモのキー設計
+// ---------------------------------------------------------------------------
+//
+// 旧設計は name_key に notion_contacts.name（氏名そのもの）を入れていた。
+// 候補リスト（legislators）にもメモを書けるようにすると、この設計は2通りで壊れる:
+//
+//   (1) 同姓同名の衝突。候補34名は9自治体にまたがり、氏名だけでは一意にならない
+//       （legislators の UNIQUE も (municipality, name) であって name 単独ではない）。
+//   (2) 同一人物の分裂。札幌市の「熊谷　誠一」は人脈DBでは「くまがい誠一」で、
+//       氏名をキーにすると同じ人のメモが2つのキーに割れてしまう。
+//
+// そこで「どちらの名簿の人か」を接頭辞で名前空間として分ける方式に変更した。
+//
+//   接点あり（notion_contacts 由来）: contact:<notion_page_id>
+//   候補（legislators 由来）        : cand:<municipality>/<name>
+//
+// (2) は名寄せ（contact_page_id）で候補側を接点側に畳んでから採番するため、
+// 熊谷さんのキーは contact:3ad9363c-… の1本だけになり分裂しない。
+//
+// 候補側に uuid ではなく (municipality, name) を使うのは、この候補リストが
+// 吉井さんの手作りで作り直し（全消し→再投入）があり得るため。uuid は再投入で
+// 変わってしまうがこの組は業務上の識別子として保たれる（UNIQUE制約もこの組）。
+// 代償として、氏名や自治体を修正するとメモは繋がらなくなる。
+//
+// ★この変更を入れた時点で legislator_notes は0件だったため、
+//   移行が必要な既存メモは無い（キーの振り直しは発生しない）。
+
+export function contactNoteKey(notionPageId: string): string {
+  return `contact:${notionPageId}`;
+}
+
+export function candidateNoteKey(municipality: string, name: string): string {
+  return `cand:${municipality}/${name}`;
+}
+
+// ---------------------------------------------------------------------------
+// 候補リスト（public.legislators）
+// ---------------------------------------------------------------------------
+
+/** legislators テーブルの1行。 */
+export type CandidateRow = {
+  id: string;
+  municipality: string;
+  party: string;
+  name: string;
+  name_kana: string | null;
+  phone: string | null;
+  email: string | null;
+  party_site: boolean | null;
+  personal_site: boolean | null;
+  assembly_roster_label: string | null;
+  minutes_search_label: string | null;
+  contact_page_id: string | null;
+  memo: string | null;
+};
+
+/**
+ * 候補リスト1名分。
+ *
+ * phone / email は「無い」ことに意味がある（＝まだ取れていない）ので、
+ * null をそのまま持ち上げて画面で「未取得」と出す。空文字に潰さない。
+ */
+export type Candidate = {
+  id: string;
+  name: string;
+  nameKana: string | null;
+  municipality: string;
+  party: string;
+  phone: string | null;
+  email: string | null;
+  /** 会派の公式サイトに本人ページがあるか。URLは持っていないのでリンクにはできない。 */
+  partySite: boolean | null;
+  /** 個人サイトがあるか。同上。 */
+  personalSite: boolean | null;
+  /** 議会HPの名簿ページ名（自治体ごとに共通）。名称のみでURLは無い。 */
+  assemblyRosterLabel: string | null;
+  /** 会議録検索の名称（自治体ごとに共通）。名称のみでURLは無い。 */
+  minutesSearchLabel: string | null;
+  memo: string | null;
+  /** 名寄せ先の notion_contacts.notion_page_id。接点ができていればこれが入る。 */
+  contactPageId: string | null;
+  noteKey: string;
+};
+
+/** 自治体ごとに共通の参照先（議会HPの名簿・会議録検索）。名称のみでURLは無い。 */
+export type MunicipalityRefs = {
+  rosterLabels: string[];
+  minutesLabels: string[];
+};
+
+export function toCandidate(row: CandidateRow): Candidate {
+  return {
+    id: row.id,
+    name: row.name,
+    nameKana: row.name_kana,
+    municipality: row.municipality,
+    party: row.party,
+    phone: row.phone?.trim() || null,
+    email: row.email?.trim() || null,
+    partySite: row.party_site,
+    personalSite: row.personal_site,
+    assemblyRosterLabel: row.assembly_roster_label?.trim() || null,
+    minutesSearchLabel: row.minutes_search_label?.trim() || null,
+    memo: row.memo?.trim() || null,
+    contactPageId: row.contact_page_id?.trim() || null,
+    noteKey: candidateNoteKey(row.municipality, row.name),
+  };
+}
+
+/**
+ * 自治体ごとの参照先名称を集める。
+ *
+ * 同じ自治体なら同じ名称が入っている前提だが、手入力なので表記が割れることがある。
+ * その場合に片方を黙って捨てると嘘になるので、重複を除いた全件を返し、
+ * 画面側で並べて出す（1件なら自治体見出しに1回だけ出る）。
+ */
+export function municipalityRefsOf(members: Candidate[]): MunicipalityRefs {
+  const rosters = new Set<string>();
+  const minutes = new Set<string>();
+  for (const m of members) {
+    if (m.assemblyRosterLabel) rosters.add(m.assemblyRosterLabel);
+    if (m.minutesSearchLabel) minutes.add(m.minutesSearchLabel);
+  }
+  return { rosterLabels: [...rosters], minutesLabels: [...minutes] };
+}
+
+/**
+ * tel: に渡す文字列を作る。
+ *
+ * 数字と先頭の + 以外（ハイフン・全角スペース・括弧など）は落とす。
+ * 落とした結果が数字10桁未満なら電話番号として信用せず null を返し、
+ * 画面には発信リンクを作らない（掛け間違いを作らないため）。
+ */
+export function telHref(phone: string | null): string | null {
+  if (!phone) return null;
+  const compact = phone.replace(/[^\d+]/g, "");
+  const digits = compact.replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return `tel:${compact}`;
+}
+
+/**
+ * mailto: に渡す文字列を作る。
+ * 「@ を挟んでドット付きドメイン」の形でなければ null（リンクにしない）。
+ */
+export function mailtoHref(email: string | null): string | null {
+  if (!email) return null;
+  const value = email.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return null;
+  return `mailto:${value}`;
+}
+
 export type Legislator = {
   id: string;
   name: string;
@@ -97,6 +256,14 @@ export type Legislator = {
   role: LegislatorRole;
   history: HistoryEntry[];
   plans: PlanEntry[];
+  /** 手書きメモのキー（contact:<notion_page_id>） */
+  noteKey: string;
+  /**
+   * 候補リスト（legislators）と contact_page_id で名寄せできた場合の行。
+   * 電話・メール・サイト有無は候補リスト側にしか無いので、ここから借りて表示する。
+   * 名寄せできた候補は「候補（未接点）」の一覧からは外す（重複表示を作らない）。
+   */
+  candidate: Candidate | null;
 };
 
 /** 誰にも紐付かなかった記録。名簿の抜けを見つけるために画面に出す。 */
@@ -110,6 +277,8 @@ export type UnmatchedRecord = {
 
 export type LegislatorPayload = {
   legislators: Legislator[];
+  /** 候補リストのうち、まだ接点が無い人だけ（名寄せ済みの人は含まない） */
+  candidates: Candidate[];
   unmatched: UnmatchedRecord[];
   notes: LegislatorNote[];
   counts: {
@@ -119,6 +288,10 @@ export type LegislatorPayload = {
     todoTotal: number;
     todoMatched: number;
     chunkMatched: number;
+    /** 候補リストの総数（名寄せ済みも含む） */
+    candidateTotal: number;
+    /** そのうち接点あり（人脈DBにも居る）人数 */
+    candidateLinked: number;
   };
 };
 
@@ -475,6 +648,21 @@ export async function fetchLegislatorChunks(
   );
 }
 
+/**
+ * 候補リスト（public.legislators）を取る。
+ * anon に SELECT を許可しているため anonCreds() でよい。書き込みは一切しない。
+ */
+export function fetchCandidates(url: string, key: string): Promise<CandidateRow[]> {
+  const select =
+    "select=id,municipality,party,name,name_kana,phone,email,party_site,personal_site," +
+    "assembly_roster_label,minutes_search_label,contact_page_id,memo";
+  return getJson<CandidateRow[]>(
+    `${url}/rest/v1/legislators?${select}&order=municipality.asc,name.asc`,
+    key,
+    "候補リスト"
+  );
+}
+
 export function fetchLegislatorNotes(url: string, key: string): Promise<LegislatorNote[]> {
   return getJson<LegislatorNote[]>(
     `${url}/rest/v1/legislator_notes?select=name_key,content,updated_at`,
@@ -597,6 +785,8 @@ export function buildLegislators(
       role: deriveRole(c.title, c.department),
       history,
       plans,
+      noteKey: contactNoteKey(c.notion_page_id),
+      candidate: null,
     };
   });
 
@@ -622,4 +812,115 @@ export function buildLegislators(
   ];
 
   return { legislators, unmatched, matchedChunkIds };
+}
+
+// ---------------------------------------------------------------------------
+// 名寄せ（候補リスト × 人脈DB）
+// ---------------------------------------------------------------------------
+//
+// 候補リストの人が実際に会えて人脈DBにも載ると、同じ人が2つの名簿に居ることになる
+// （札幌市の「熊谷　誠一」＝人脈DBの「くまがい誠一」）。氏名の表記が違うので
+// 名前では突き合わせられず、legislators.contact_page_id に
+// notion_contacts.notion_page_id を手で入れて明示的に紐付けている。
+//
+// 紐付いた候補は「接点あり」側のカードへ畳み込み（連絡先を持ち上げる）、
+// 「候補（未接点）」の一覧からは外す。これで同一人物が2箇所に出ない。
+//
+// contact_page_id が入っているのに相手の議員が見つからない場合は畳まずに
+// 候補一覧へ残す。人脈DB側が議員の判定条件から外れた／毎時同期で消えた等が
+// 考えられ、ここで黙って落とすと名簿から人が消えてしまうため。
+export function mergeCandidates(
+  legislators: Legislator[],
+  rows: CandidateRow[]
+): { legislators: Legislator[]; candidates: Candidate[]; linked: number } {
+  const all = rows.map(toCandidate);
+  const byContactId = new Map<string, Candidate>();
+  for (const c of all) {
+    if (c.contactPageId) byContactId.set(c.contactPageId, c);
+  }
+
+  const merged = new Set<string>();
+  const enriched = legislators.map((l) => {
+    const hit = byContactId.get(l.id);
+    if (!hit) return l;
+    merged.add(hit.id);
+    return { ...l, candidate: hit };
+  });
+
+  return {
+    legislators: enriched,
+    candidates: all.filter((c) => !merged.has(c.id)),
+    linked: all.filter((c) => c.contactPageId !== null).length,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 候補リストの階層
+// ---------------------------------------------------------------------------
+
+/** 候補リストを辿る軸。既存の「会派→議会／議会→会派」のトグルと同じ思想。 */
+export type CandidateAxis = "municipality" | "party";
+
+export type CandidateGroup = {
+  key: string;
+  total: number;
+  /** この見出しが自治体のときだけ、議会HPの名簿・会議録検索の名称を出す */
+  refs: MunicipalityRefs | null;
+  children: {
+    key: string;
+    members: Candidate[];
+    refs: MunicipalityRefs | null;
+  }[];
+};
+
+/**
+ * 候補リストを2階層（自治体→会派 ／ 会派→自治体）に組み替える。
+ *
+ * 並び順は人数の多い順（同数なら名前順）。
+ * 「接点の多い順」にしないのは、34名中いま接点があるのは1名だけで、
+ * 33名が0件で並ぶため順序がほぼ決まらないから。人数が多い自治体ほど
+ * 攻めるときの母数が大きく、実際に上から見ていく価値があるので人数順を採る。
+ */
+export function buildCandidateGroups(
+  candidates: Candidate[],
+  axis: CandidateAxis
+): CandidateGroup[] {
+  const primaryOf = (c: Candidate) => (axis === "municipality" ? c.municipality : c.party);
+  const secondaryOf = (c: Candidate) => (axis === "municipality" ? c.party : c.municipality);
+
+  const map = new Map<string, Map<string, Candidate[]>>();
+  for (const c of candidates) {
+    const p = primaryOf(c);
+    const s = secondaryOf(c);
+    if (!map.has(p)) map.set(p, new Map());
+    const inner = map.get(p)!;
+    if (!inner.has(s)) inner.set(s, []);
+    inner.get(s)!.push(c);
+  }
+
+  const groups: CandidateGroup[] = [...map.entries()].map(([key, inner]) => {
+    const members = [...inner.values()].flat();
+    const children = [...inner.entries()]
+      .map(([ck, ms]) => ({
+        key: ck,
+        members: [...ms].sort((a, b) => a.name.localeCompare(b.name, "ja")),
+        // 参照先は自治体ごとの属性。自治体が下の階層に来たときはこちらに出す。
+        refs: axis === "municipality" ? null : municipalityRefsOf(ms),
+      }))
+      .sort((a, b) =>
+        a.members.length !== b.members.length
+          ? b.members.length - a.members.length
+          : a.key.localeCompare(b.key, "ja")
+      );
+    return {
+      key,
+      total: members.length,
+      refs: axis === "municipality" ? municipalityRefsOf(members) : null,
+      children,
+    };
+  });
+
+  return groups.sort((a, b) =>
+    a.total !== b.total ? b.total - a.total : a.key.localeCompare(b.key, "ja")
+  );
 }
