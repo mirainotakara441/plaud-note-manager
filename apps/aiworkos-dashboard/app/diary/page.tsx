@@ -22,11 +22,18 @@ type EntryResult = {
   reason?: string;
 };
 
+// 音声入力の誤変換を辞書で自動修正した内訳。黙って書き換えると
+// 「自分が書いたものと違う」となるため、実際に置換したものだけを控えめに出す。
+type Correction = { wrong: string; correct: string; count: number };
+
 type DiaryResponse = {
   created: number;
   skipped: number;
   errors: number;
   results: EntryResult[];
+  corrections?: Correction[];
+  correctionTotal?: number;
+  correctionMessage?: string | null;
 };
 
 type StatusEntry = {
@@ -276,6 +283,24 @@ export default function DiaryPage() {
               新規 {result.created}件 ／ スキップ {result.skipped}件
               {result.errors > 0 ? ` ／ エラー ${result.errors}件` : ""}
             </p>
+
+            {result.correctionMessage && (
+              <div className="rounded-lg bg-amber-50 px-3 py-2">
+                <p className="text-xs leading-relaxed text-amber-800">
+                  {result.correctionMessage}
+                </p>
+                {result.corrections && result.corrections.length > 0 && (
+                  <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                    {result.corrections.map((c) => (
+                      <li key={`${c.wrong}-${c.correct}`} className="text-xs text-amber-700">
+                        {c.wrong}→{c.correct}
+                        {c.count > 1 ? `（${c.count}回）` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             <ul className="space-y-2">
               {result.results.map((r) => (
                 <li

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { correctTranscriptionMany, summarizeCorrections } from "@/lib/transcriptionDictionary";
 
 // 月報ドラフト自動生成：暦月を選ぶと、その月の週報（weekly_reports）を集計した
 // KPIと、AIが書いた「今月を一言で」「団体別ハイライト」「来月への引き継ぎ」を
@@ -729,10 +730,35 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "monthはYYYY-MM形式で指定してください" }, { status: 400 });
   }
 
+  // ★音声入力の誤変換を、手直し本文が入ってきたこの1か所で直す。
+  // Supabaseへ書く前・Notionへ同期する前の唯一の入口なので、ここで1回だけ通す。
+  // 辞書が取れなければ素通しで、保存自体は止めない。
+  const rawOneLiner = typeof body.oneLiner === "string" ? body.oneLiner : null;
+  const rawHighlights = Array.isArray(body.highlights)
+    ? body.highlights.map((h) => (typeof h === "string" ? h : ""))
+    : null;
+  const rawHandover = Array.isArray(body.handover)
+    ? body.handover.map((h) => (typeof h === "string" ? h : ""))
+    : null;
+  const corrected = await correctTranscriptionMany([
+    rawOneLiner ?? "",
+    ...(rawHighlights ?? []),
+    ...(rawHandover ?? []),
+  ]);
+  const fixedOneLiner = corrected.texts[0];
+  const hlStart = 1;
+  const hoStart = hlStart + (rawHighlights?.length ?? 0);
+  const fixedHighlights = rawHighlights
+    ? corrected.texts.slice(hlStart, hlStart + rawHighlights.length)
+    : null;
+  const fixedHandover = rawHandover
+    ? corrected.texts.slice(hoStart, hoStart + rawHandover.length)
+    : null;
+
   const update: Record<string, unknown> = { edited: true, updated_at: new Date().toISOString() };
-  if (typeof body.oneLiner === "string") update.one_liner = body.oneLiner;
-  if (Array.isArray(body.highlights)) update.highlights = body.highlights;
-  if (Array.isArray(body.handover)) update.handover = body.handover;
+  if (rawOneLiner !== null) update.one_liner = fixedOneLiner;
+  if (fixedHighlights) update.highlights = fixedHighlights;
+  if (fixedHandover) update.handover = fixedHandover;
 
   try {
     const res = await fetch(`${c.url}/rest/v1/${TABLE}?month=eq.${encodeURIComponent(month)}`, {
@@ -774,7 +800,13 @@ export async function PUT(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ saved: true, report: toMonthlyReport({ ...row, notion_url: notionUrl }) });
+    return NextResponse.json({
+      saved: true,
+      report: toMonthlyReport({ ...row, notion_url: notionUrl }),
+      corrections: corrected.replacements,
+      correctionTotal: corrected.total,
+      correctionMessage: summarizeCorrections(corrected.replacements, corrected.total),
+    });
   } catch (err) {
     console.error("PUT /api/monthly-report: 手直しの保存に失敗", err);
     return NextResponse.json({ error: "手直しの保存に失敗しました" }, { status: 502 });

@@ -28,9 +28,13 @@ export default function DeliverablesPage() {
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ stored: number; total: number } | null>(
-    null
-  );
+  // correctionMessage は「音声入力の誤変換を辞書で直した内訳」。
+  // 実際に置換したものがある時だけAPIが文言を返す（無ければ null）。
+  const [result, setResult] = useState<{
+    stored: number;
+    total: number;
+    correctionMessage?: string | null;
+  } | null>(null);
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -105,7 +109,11 @@ export default function DeliverablesPage() {
       if (!res.ok) {
         setError(data?.error ?? "登録に失敗しました");
       } else {
-        setResult({ stored: data.stored, total: data.total });
+        setResult({
+          stored: data.stored,
+          total: data.total,
+          correctionMessage: data.correctionMessage ?? null,
+        });
         // 一覧に無い相手なら次回から選択肢に出す
         rememberStakeholder(category, organization.trim());
       }
@@ -284,6 +292,11 @@ export default function DeliverablesPage() {
           <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
             ✅ {organization}（{category}）の「{title}」を {result.stored}/
             {result.total} チャンク登録しました。提案エージェントで参照されます。
+          </p>
+        )}
+        {result?.correctionMessage && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+            {result.correctionMessage}
           </p>
         )}
       </div>

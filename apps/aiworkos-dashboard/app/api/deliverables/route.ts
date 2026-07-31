@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DELIVERABLE_CATEGORIES } from "@/lib/categories";
+import { correctTranscriptionMany, summarizeCorrections } from "@/lib/transcriptionDictionary";
 
 // 成果物アップロードUIから、ブラウザ側で抽出済みのテキストチャンクを受け取り、
 // store-memory Edge Function 経由で memory_chunks(source_type=成果物) に登録する。
@@ -106,7 +107,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const chunks: InChunk[] = (body.chunks as unknown[])
+  const rawChunks: InChunk[] = (body.chunks as unknown[])
     .filter(
       (c): c is InChunk =>
         !!c &&
@@ -118,12 +119,20 @@ export async function POST(req: NextRequest) {
     .slice(0, MAX_CHUNKS)
     .map((c) => ({ pos: c.pos, content: c.content.slice(0, MAX_CHUNK_CHARS) }));
 
-  if (chunks.length === 0) {
+  if (rawChunks.length === 0) {
     return NextResponse.json(
       { error: "有効なテキストチャンクがありませんでした" },
       { status: 400 }
     );
   }
+
+  // ★音声入力の誤変換を、本文が入ってきたこの1か所で直す（Supabaseへ書く前に1回だけ）。
+  // 辞書の取得はチャンク数によらず1回。取れなければ素通しで取り込みは止めない。
+  const corrected = await correctTranscriptionMany(rawChunks.map((c) => c.content));
+  const chunks: InChunk[] = rawChunks.map((c, i) => ({
+    pos: c.pos,
+    content: corrected.texts[i],
+  }));
 
   let stored = 0;
   for (const c of chunks) {
@@ -159,5 +168,8 @@ export async function POST(req: NextRequest) {
     title,
     stored,
     total: chunks.length,
+    corrections: corrected.replacements,
+    correctionTotal: corrected.total,
+    correctionMessage: summarizeCorrections(corrected.replacements, corrected.total),
   });
 }

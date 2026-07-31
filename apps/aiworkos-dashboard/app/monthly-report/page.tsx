@@ -111,6 +111,9 @@ export default function MonthlyReportPage() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  // 保存時に音声入力の誤変換を辞書で直した場合の控えめな通知。
+  // 実際に置換したものがある時だけAPIが文言を返す（無ければ null）。
+  const [correctionMsg, setCorrectionMsg] = useState<string | null>(null);
 
   const load = useCallback(async (m: string) => {
     setLoading(true);
@@ -187,6 +190,7 @@ export default function MonthlyReportPage() {
     if (!report || !draft) return;
     setSaving(true);
     setError(null);
+    setCorrectionMsg(null);
     try {
       const res = await fetch("/api/monthly-report", {
         method: "PUT",
@@ -203,6 +207,7 @@ export default function MonthlyReportPage() {
       setReport({ ...report, ...draft, edited: true, notionUrl: data.report?.notionUrl ?? report.notionUrl });
       setDraft(null);
       setSavedMsg("手直しを保存しました");
+      setCorrectionMsg((data && data.correctionMessage) ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "手直しの保存に失敗しました");
     } finally {
@@ -400,6 +405,12 @@ export default function MonthlyReportPage() {
                   </span>
                 )}
               </div>
+
+              {correctionMsg && !draft && (
+                <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                  {correctionMsg}
+                </p>
+              )}
 
               <div className="space-y-6">
                 {/* 今月を一言で */}

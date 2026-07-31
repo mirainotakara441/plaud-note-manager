@@ -86,6 +86,9 @@ export default function WeeklyReportPage() {
   const [draft, setDraft] = useState<Draft>({ summary: "", insight: "", tactic: "" });
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  // 保存時に音声入力の誤変換を辞書で直した場合の控えめな通知。
+  // 実際に置換したものがある時だけAPIが文言を返す（無ければ null）。
+  const [correctionMsg, setCorrectionMsg] = useState<string | null>(null);
 
   async function load(week?: string) {
     setLoading(true);
@@ -146,6 +149,7 @@ export default function WeeklyReportPage() {
   async function saveEdit(id: string) {
     setSavingId(id);
     setEditError(null);
+    setCorrectionMsg(null);
     try {
       const res = await fetch("/api/weekly-report", {
         method: "PATCH",
@@ -163,6 +167,7 @@ export default function WeeklyReportPage() {
       if (updated) {
         setRows((prev) => prev.map((r) => (r.id === id ? updated : r)));
       }
+      setCorrectionMsg(data.correctionMessage ?? null);
       setEditingId(null);
     } catch (e) {
       setEditError(e instanceof Error ? e.message : "保存に失敗しました");
@@ -319,6 +324,11 @@ export default function WeeklyReportPage() {
       {error && (
         <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
+        </p>
+      )}
+      {correctionMsg && (
+        <p className="mb-3 rounded-xl bg-amber-50 px-4 py-2 text-xs leading-relaxed text-amber-800">
+          {correctionMsg}
         </p>
       )}
 

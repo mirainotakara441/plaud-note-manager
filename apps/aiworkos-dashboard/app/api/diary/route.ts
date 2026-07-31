@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { correctTranscription, summarizeCorrections } from "@/lib/transcriptionDictionary";
 
 // 一行日記の断絶解消（本命）：
 //   断絶A: Claude Projects → Notion一行日記DB への転記が「週1回まとめて手動」で滞る
@@ -411,10 +412,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
   }
 
-  const text = typeof body.text === "string" ? body.text.trim() : "";
-  if (!text) {
+  const rawText = typeof body.text === "string" ? body.text.trim() : "";
+  if (!rawText) {
     return NextResponse.json({ error: "日記本文を貼り付けてください" }, { status: 400 });
   }
+
+  // ★音声入力の誤変換を、貼り付け本文が入ってきたこの1か所で直す。
+  // ここで直しておけば、Claudeに渡す前・Notionに書く前・Supabaseに書く前の
+  // すべてに効く（下流で二重に通さないこと）。
+  // 辞書が取れなければ素通しで、取り込み自体は止めない。
+  const corrected = await correctTranscription(rawText);
+  const text = corrected.text;
 
   const token = await notionToken();
   if (!token) {
@@ -513,5 +521,14 @@ export async function POST(req: NextRequest) {
   const skipped = results.filter((r) => r.status === "skipped").length;
   const errors = results.filter((r) => r.status === "error").length;
 
-  return NextResponse.json({ created, skipped, errors, results });
+  // 何を書き換えたかは必ず返す。黙って直すと「自分が書いたものと違う」となるため。
+  return NextResponse.json({
+    created,
+    skipped,
+    errors,
+    results,
+    corrections: corrected.replacements,
+    correctionTotal: corrected.total,
+    correctionMessage: summarizeCorrections(corrected.replacements, corrected.total),
+  });
 }

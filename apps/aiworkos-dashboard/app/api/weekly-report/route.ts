@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { correctTranscriptionMany, summarizeCorrections } from "@/lib/transcriptionDictionary";
 
 // 週報ダッシュボード：週次の営業活動（支店・自治体・事業者・議員・委託会社・銀行・
 // プロモーション・全体）をカテゴリー別に構造化した weekly_reports を読む。
@@ -136,15 +137,27 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: "idが必要です" }, { status: 400 });
   }
 
+  // ★音声入力の誤変換を、貼り付け・手直しされた本文が入ってきたこの1か所で直す。
+  // 3フィールドまとめて1回の辞書取得で処理する。辞書が取れなければ素通し。
+  const rawSummary = "summary" in body && typeof body.summary === "string" ? body.summary : null;
+  const rawInsight = "insight" in body && typeof body.insight === "string" ? body.insight : null;
+  const rawTactic = "tactic" in body && typeof body.tactic === "string" ? body.tactic : null;
+  const corrected = await correctTranscriptionMany([
+    rawSummary ?? "",
+    rawInsight ?? "",
+    rawTactic ?? "",
+  ]);
+  const [fixedSummary, fixedInsight, fixedTactic] = corrected.texts;
+
   const update: Record<string, string | null> = {};
-  if ("summary" in body && typeof body.summary === "string") {
-    update.summary = body.summary;
+  if (rawSummary !== null) {
+    update.summary = fixedSummary;
   }
   if ("insight" in body) {
-    update.insight = typeof body.insight === "string" ? body.insight : null;
+    update.insight = rawInsight !== null ? fixedInsight : null;
   }
   if ("tactic" in body) {
-    update.tactic = typeof body.tactic === "string" ? body.tactic : null;
+    update.tactic = rawTactic !== null ? fixedTactic : null;
   }
 
   try {
@@ -165,7 +178,12 @@ export async function PATCH(request: Request) {
       );
     }
     const rows = await res.json();
-    return NextResponse.json({ row: rows?.[0] ?? null });
+    return NextResponse.json({
+      row: rows?.[0] ?? null,
+      corrections: corrected.replacements,
+      correctionTotal: corrected.total,
+      correctionMessage: summarizeCorrections(corrected.replacements, corrected.total),
+    });
   } catch (err) {
     console.error("PATCH /api/weekly-report: 通信エラー", err);
     return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
