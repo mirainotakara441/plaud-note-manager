@@ -2,7 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ORG_CATEGORIES, normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
+import {
+  ORG_CATEGORIES,
+  STAKEHOLDER_CATEGORIES,
+  normalizeOrgCategory,
+  type OrgCategory,
+} from "@/lib/categories";
 
 // レイアウト方針（2026-07-30 吉井さん指摘「縦に長すぎる」への対応）:
 //   - スマホ(既定)は1カラムのまま。lg以上で2カラムに段組みし、横幅の余りを使う。
@@ -717,11 +722,11 @@ function JobsPanel({
 }
 
 // ── 次に攻める団体パネル ──────────────────────────────────
-// 追加フォームの選択肢。RPC dashboard_stats の org_status が stakeholders から拾うのは
-// この4種のみ（会議記録がある団体は種別に関わらず拾う）。ここに無い種別で登録すると
-// 一覧に出ず迷子になるため、選択肢は据え置きにしている。
-// ※表示側のカテゴリー分けは lib/categories.ts の正準8分類（ORG_CATEGORIES）を使う。
-const ADD_CATEGORIES = ["自治体", "事業者", "銀行", "議員"] as const;
+// 追加フォームの選択肢。RPC dashboard_stats の org_status は stakeholders を種別で
+// 絞らずに拾うようになったため（2026-07-31）、8分類どれで登録しても一覧に出る。
+// 以前はRPC側が4種のみを拾っていた都合でここも4種に据え置いていた。
+// 値は stakeholders.category のCHECK制約と一致させる必要があるので lib/categories.ts を使う。
+const ADD_CATEGORIES = STAKEHOLDER_CATEGORIES;
 
 // 1団体ぶんの行。名前・状態・会議数・最終接点・次の一手を1行に畳む（縦を詰めるため）。
 function OrgRow({ o }: { o: OrgStatus }) {

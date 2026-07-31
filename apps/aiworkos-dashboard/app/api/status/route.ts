@@ -94,8 +94,10 @@ function extractNotionTitle(page: Record<string, unknown>): string {
 }
 
 // 団体名の表記ゆれを吸収する突合キー。
-// 例: stakeholders は「アトラス情報サービス」、会議記憶は「アトラス情報サービス株式会社」。
-// 法人格・空白の有無だけの違いは同じ団体として扱う（それ以上の推測はしない）。
+// 例: 会議記憶は「アトラス情報サービス」、stakeholders マスタは「アトラス情報サービス株式会社」。
+// 法人格・空白の有無だけの違いは同じ団体として扱う（それ以上の推測はしない。
+// 語順違い（例:「パーソルプロセスビジネスデザイン」と「パーソルビジネスプロセスデザイン」）は
+// 別物のまま出す。どちらが正しい社名かはデータを見ないと決められないため）。
 function orgKey(name: string): string {
   return name
     .replace(/(株式会社|有限会社|合同会社|一般社団法人|一般財団法人|公益財団法人|公益社団法人)/g, "")
@@ -112,15 +114,21 @@ function orgKey(name: string): string {
 // 取得に失敗したときも古い結果を使い回す（空マップを返すと全団体が「その他」に
 // 落ちて「種別未登録」だと誤解させてしまうため）。
 const CATEGORY_TTL_MS = 10 * 60 * 1000;
-let categoryCache: { at: number; map: Map<string, OrgCategory> } | null = null;
 
-async function fetchOrgCategoryMap(): Promise<Map<string, OrgCategory>> {
+// 突合キー → 分類、および突合キー → 団体マスタ上の正式名。
+// 正式名は名寄せ後の表示名を決めるときの最後の拠り所に使う（mergeDuplicateOrgs 参照）。
+type OrgLookup = { category: Map<string, OrgCategory>; masterName: Map<string, string> };
+
+let categoryCache: { at: number; lookup: OrgLookup } | null = null;
+
+async function fetchOrgLookup(): Promise<OrgLookup> {
   if (categoryCache && Date.now() - categoryCache.at < CATEGORY_TTL_MS) {
-    return categoryCache.map;
+    return categoryCache.lookup;
   }
-  const map = new Map<string, OrgCategory>();
+  const lookup: OrgLookup = { category: new Map(), masterName: new Map() };
+  const map = lookup.category;
   const c = anonCreds(); // stakeholders / weekly_reports は anon に SELECT 許可済み
-  if (!c) return categoryCache?.map ?? map;
+  if (!c) return categoryCache?.lookup ?? lookup;
 
   // 失敗は null で返す（空配列＝「0件だった」と区別する。片方だけ取れた
   // 中途半端なマップをキャッシュに焼き付けると、銀行や議員が丸ごと「その他」に
@@ -156,15 +164,79 @@ async function fetchOrgCategoryMap(): Promise<Map<string, OrgCategory>> {
     const name = typeof r.name === "string" ? r.name.trim() : "";
     const cat = normalizeOrgCategory(r.category);
     if (name && cat) map.set(orgKey(name), cat);
+    if (name) lookup.masterName.set(orgKey(name), name);
   }
 
   // 2本とも取れたときだけ「正しい表」としてキャッシュする。
   if (weekly !== null && stakeholders !== null) {
-    categoryCache = { at: Date.now(), map };
-    return map;
+    categoryCache = { at: Date.now(), lookup };
+    return lookup;
   }
   // 取り逃しあり。古くても前回の完全な表を使い、無ければ取れた分で妥協する。
-  return categoryCache?.map ?? map;
+  return categoryCache?.lookup ?? lookup;
+}
+
+// RPC の org_status は「会議記憶の organization」と「stakeholders.name」を
+// 素の文字列でUNIONしているため、法人格の有無だけが違う同じ団体が2行に割れる
+// （例:「エイジェック」会議5 と「株式会社エイジェック」会議0）。ここで畳む。
+//
+// ★表示名の決め方が肝★
+// 「提案→」「壁打ち→」のリンクは ?org=<団体名> を下流へ渡し、下流は
+// memory_chunks.organization の *完全一致* で記憶を引く（lib/organizations.ts）。
+// そのため会議記録を持っている方の表記を残さないと、提案エージェントが
+// 「記憶0件」で空振りする。会議数が多い表記を正とし、全て0件のときだけ
+// 団体マスタの正式名を使う（どれも空振りしないので、見栄えの良い方を選ぶ）。
+type OrgStatusRow = Record<string, unknown> & { name?: unknown; meetings?: unknown };
+
+function num(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function mergeDuplicateOrgs(list: OrgStatusRow[], masterName: Map<string, string>): OrgStatusRow[] {
+  const groups = new Map<string, OrgStatusRow[]>();
+  for (const row of list) {
+    const name = typeof row.name === "string" ? row.name : "";
+    const key = orgKey(name);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(row);
+  }
+
+  const merged: OrgStatusRow[] = [];
+  for (const [key, rows] of groups) {
+    if (rows.length === 1) {
+      merged.push(rows[0]);
+      continue;
+    }
+    // 会議数が最多の表記を代表にする（同数なら先に出てきた方＝RPCの並び順）
+    const lead = rows.reduce((a, b) => (num(b.meetings) > num(a.meetings) ? b : a));
+    const meetings = rows.reduce((sum, r) => sum + num(r.meetings), 0);
+    // 全部0件なら下流が空振りしないので、マスタの正式名を優先して見せる
+    const name =
+      meetings === 0 ? masterName.get(key) ?? (lead.name as string) : (lead.name as string);
+    // 最終接点は 'YYYY-MM-DD' 文字列。null を除いて辞書順の最大＝最新。
+    const lastMeeting = rows
+      .map((r) => (typeof r.last_meeting === "string" ? r.last_meeting : null))
+      .filter((d): d is string => !!d)
+      .sort()
+      .pop() ?? null;
+
+    merged.push({
+      ...lead,
+      name,
+      meetings,
+      last_meeting: lastMeeting,
+      has_proposal: rows.some((r) => r.has_proposal === true),
+      has_refine: rows.some((r) => r.has_refine === true),
+    });
+  }
+
+  // 畳んだ結果で会議数が変わるので、RPCと同じ「提案がまだ→会議が多い順」に並べ直す。
+  return merged.sort(
+    (a, b) =>
+      Number(a.has_proposal === true) - Number(b.has_proposal === true) ||
+      num(b.meetings) - num(a.meetings)
+  );
 }
 
 export async function GET() {
@@ -177,7 +249,7 @@ export async function GET() {
   }
 
   try {
-    const [supaRes, notion, orgCategories] = await Promise.all([
+    const [supaRes, notion, orgLookup] = await Promise.all([
       fetch(`${c.url}/rest/v1/rpc/dashboard_stats`, {
         method: "POST",
         headers: {
@@ -189,7 +261,7 @@ export async function GET() {
         cache: "no-store",
       }),
       fetchNotion(),
-      fetchOrgCategoryMap(),
+      fetchOrgLookup(),
     ]);
 
     if (!supaRes.ok) {
@@ -202,12 +274,16 @@ export async function GET() {
 
     const stats = await supaRes.json();
 
-    // 「次に攻める団体」に種別を付ける。突合できない団体は「その他」。
-    // 自治体らしい名前だからといって自治体に寄せる推測はしない（捏造防止）。
+    // 「次に攻める団体」を整える。順番に意味がある:
+    //   1. 法人格違いで割れた同一団体を畳む（mergeDuplicateOrgs）
+    //   2. そのうえで種別を付ける。突合できない団体は「その他」。
+    //      自治体らしい名前だからといって自治体に寄せる推測はしない（捏造防止）。
+    // 1→2 の順にするのは、畳んだ後の代表名で分類を引き直すため（同じ突合キーなので
+    // 結果は変わらないが、名前と分類が必ず同じ行の情報で揃う）。
     if (stats && Array.isArray(stats.org_status)) {
-      stats.org_status = stats.org_status.map((o: Record<string, unknown>) => {
+      stats.org_status = mergeDuplicateOrgs(stats.org_status, orgLookup.masterName).map((o) => {
         const name = typeof o.name === "string" ? o.name : "";
-        return { ...o, category: orgCategories.get(orgKey(name)) ?? "その他" };
+        return { ...o, category: orgLookup.category.get(orgKey(name)) ?? "その他" };
       });
     }
 
