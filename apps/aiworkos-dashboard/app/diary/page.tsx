@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 // 一行日記の断絶解消（本命）ページ。
 // Claude Projectsで書いた日記本文を貼るだけで、/api/diary が
@@ -9,6 +9,10 @@ import { useState } from "react";
 //   2) Notion一行日記DBへ登録（重複は日付でスキップ）
 //   3) Supabase memory_chunks(source_type=日記) へ登録
 // を一度にやる。翌朝はpg_cron 06:00→Vercel Cron 06:30の既存自動化で/actionsへ反映される。
+//
+// ページを開いた時点で「過去何日ぶん登録済みか」が分からない、という声を受けて、
+// /api/diary/status（Supabase memory_chunks 直参照）から直近分の登録状況を取得し、
+// 上部に日付ごとの済/未の帯を出す。登録直後も再取得して即座に反映する。
 
 type EntryResult = {
   date: string;
@@ -24,6 +28,35 @@ type DiaryResponse = {
   errors: number;
   results: EntryResult[];
 };
+
+type StatusEntry = {
+  date: string;
+  registered: boolean;
+  isToday: boolean;
+};
+
+type StatusResponse = {
+  today: string;
+  days: number;
+  entries: StatusEntry[];
+  latestDate: string | null;
+  staleDays: number | null;
+  error?: string;
+};
+
+const DAYS_OPTIONS = [
+  { label: "1週間", value: 7 },
+  { label: "2週間", value: 14 },
+  { label: "1か月", value: 30 },
+] as const;
+
+const WEEKDAY_LABELS = ["日", "月", "火", "水", "木", "金", "土"];
+
+function formatDayLabel(dateStr: string): { md: string; weekday: string } {
+  const [, m, d] = dateStr.split("-").map(Number);
+  const weekday = WEEKDAY_LABELS[new Date(`${dateStr}T00:00:00Z`).getUTCDay()];
+  return { md: `${m}/${d}`, weekday };
+}
 
 const PLACEHOLDER = `例:
 7/25 【転】平和地区の座談会、大変に素晴らしかった
@@ -62,6 +95,33 @@ export default function DiaryPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DiaryResponse | null>(null);
 
+  const [statusDays, setStatusDays] = useState<number>(7);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  const fetchStatus = useCallback(async (days: number) => {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const res = await fetch(`/api/diary/status?days=${days}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatusError(data?.error ?? "登録状況の取得に失敗しました");
+      } else {
+        setStatus(data as StatusResponse);
+      }
+    } catch {
+      setStatusError("登録状況の通信エラーが発生しました");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStatus(statusDays);
+  }, [fetchStatus, statusDays]);
+
   async function onSubmit() {
     setError(null);
     if (!text.trim()) {
@@ -84,6 +144,8 @@ export default function DiaryPage() {
         if ((data as DiaryResponse).errors === 0) {
           setText("");
         }
+        // 登録直後に済/未の帯へ反映する（登録したのに「未」のままだと意味が無いため）。
+        fetchStatus(statusDays);
       }
     } catch {
       setError("通信エラーが発生しました");
@@ -103,6 +165,79 @@ export default function DiaryPage() {
           登録すると、Notionの一行日記DBとAIワークOSの記憶に入り、翌朝ToDoに反映されます
         </p>
       </header>
+
+      <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-gray-700">登録状況</h2>
+          <div className="flex shrink-0 gap-1">
+            {DAYS_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setStatusDays(opt.value)}
+                className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                  statusDays === opt.value
+                    ? "bg-indigo-600 text-white"
+                    : "bg-gray-100 text-gray-500 active:bg-gray-200"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {statusError && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+            {statusError}
+          </p>
+        )}
+
+        {!statusError && (
+          <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
+            {statusLoading && !status ? (
+              <p className="py-2 text-sm text-gray-400">読み込み中...</p>
+            ) : (
+              status?.entries.map((entry) => {
+                const { md, weekday } = formatDayLabel(entry.date);
+                return (
+                  <div
+                    key={entry.date}
+                    className={`flex shrink-0 flex-col items-center gap-1 rounded-lg border px-2 py-1.5 ${
+                      entry.isToday
+                        ? "border-indigo-400 bg-indigo-50"
+                        : "border-gray-100 bg-gray-50"
+                    }`}
+                  >
+                    <span
+                      className={`text-xs ${entry.isToday ? "font-semibold text-indigo-700" : "text-gray-500"}`}
+                    >
+                      {md}({weekday})
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        entry.registered
+                          ? "bg-emerald-100 text-emerald-700"
+                          : entry.isToday
+                            ? "bg-gray-200 text-gray-500"
+                            : "bg-red-50 text-red-600"
+                      }`}
+                    >
+                      {entry.registered ? "済" : "未"}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {status && status.staleDays !== null && status.staleDays >= 3 && (
+          <p className="mt-3 text-xs leading-relaxed text-amber-700">
+            最終登録から{status.staleDays}日ほど間が空いています（最終: {status.latestDate}）
+          </p>
+        )}
+      </div>
 
       <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div>
