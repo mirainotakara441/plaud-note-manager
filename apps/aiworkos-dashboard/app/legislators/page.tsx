@@ -746,6 +746,21 @@ function CandidateSection({
   const groups = useMemo(() => buildCandidateGroups(data.candidates, axis), [data, axis]);
   const unlinked = data.counts.candidateTotal - data.counts.candidateLinked;
 
+  // 索引から飛ぶための id。見出し文字（自治体名・会派名）をそのまま id にすると
+  // 記号や空白で壊れるので、並び順の番号で振る。軸を切り替えると並びも変わるが、
+  // 索引とセクションは同じ groups から作るので必ず対応する。
+  const sectionId = (i: number) => `cand-group-${i}`;
+
+  // 実際に当たるときは「北九州市の議員に連絡したい」から入るので、
+  // 上から順に読まなくても目的の自治体（会派）へ直接飛べるようにする。
+  // なめらかスクロールにはしない。一覧は縦に6000px以上あり、端から端まで
+  // アニメーションさせると数秒かかって「探す」動作の邪魔になるため、即座に飛ばす。
+  function jumpTo(i: number) {
+    const el = document.getElementById(sectionId(i));
+    if (!el) return;
+    el.scrollIntoView({ block: "start" });
+  }
+
   return (
     <div className="space-y-4">
       <section className="rounded-2xl border border-rose-200 bg-rose-50 p-4">
@@ -779,9 +794,41 @@ function CandidateSection({
         ))}
       </div>
 
+      {/* 自治体（会派）の索引。押すとその見出しまで飛ぶ。
+          横に長くなるので、狭い画面では折り返す。 */}
+      {groups.length > 1 && (
+        <nav
+          aria-label={axis === "municipality" ? "自治体から探す" : "会派から探す"}
+          className="rounded-2xl border border-gray-200 bg-white p-3"
+        >
+          <p className="mb-2 text-xs font-bold text-gray-500">
+            {axis === "municipality" ? "自治体から探す" : "会派から探す"}
+          </p>
+          <ul className="flex flex-wrap gap-2">
+            {groups.map((g, i) => (
+              <li key={g.key}>
+                <button
+                  type="button"
+                  onClick={() => jumpTo(i)}
+                  className="flex min-h-11 items-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-800 transition active:scale-95 active:bg-indigo-50"
+                >
+                  {g.key}
+                  <span className="text-xs font-normal text-gray-400">{g.total}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+
       <div className="space-y-4">
-        {groups.map((g) => (
-          <section key={g.key} className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+        {groups.map((g, i) => (
+          <section
+            key={g.key}
+            id={sectionId(i)}
+            // 索引から飛んだとき見出しが画面の一番上にへばりつかないよう余白を持たせる
+            className="scroll-mt-4 rounded-2xl border border-gray-200 bg-white shadow-sm"
+          >
             <div className="border-b border-gray-100 px-4 py-2.5">
               <div className="flex items-baseline justify-between">
                 <h2 className="text-base font-bold text-gray-900">{g.key}</h2>
