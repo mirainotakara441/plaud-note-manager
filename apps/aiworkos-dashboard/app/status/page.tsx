@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ORG_CATEGORIES, normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
+import {
+  MUNICIPALITY_SUBCATEGORIES,
+  municipalitySubcategory,
+} from "@/lib/municipalities";
 
 // レイアウト方針（2026-07-30 吉井さん指摘「縦に長すぎる」への対応）:
 //   - スマホ(既定)は1カラムのまま。lg以上で2カラムに段組みし、横幅の余りを使う。
@@ -65,7 +69,19 @@ type OrgStatus = {
   // /api/status が stakeholders / weekly_reports から突合して付ける正準8分類。
   // 突合できなかった団体は "その他"（APIが必ず入れるが、古いキャッシュ対策で optional）。
   category?: string;
+  // Notion「顧客CRM」のページID。/api/status が突合して付ける。
+  // null＝顧客CRMに未登録（会議記録だけがある団体）。この場合は
+  // 更新すべきNotionページが存在しないので「対象外にする」を出さない。
+  notion_page_id?: string | null;
+  // 顧客CRM側の団体名。法人格の有無で行の表示名と食い違うことがあるため、
+  // 確認時に「どのページのステータスを変えるのか」を正直に見せる用。
+  crm_name?: string | null;
+  // 会派の並び順（dashboard_stats が返す）。議員以外は99。
+  party_rank?: number;
 };
+
+// 対象外にした団体（GET /api/status/exclude）。
+type ExcludedOrg = { notion_page_id: string; name: string; category: string | null };
 type NewsRecent = {
   title: string;
   theme: string;
@@ -440,7 +456,7 @@ export default function StatusPage() {
 
           {/* 次に攻める団体（カテゴリー別。横幅を使うので2カラムぶち抜き） */}
           <Section title="次に攻める団体" hint="カテゴリー別 ・ 提案がまだの団体を上に" span>
-            <OrgPanel orgs={stats.org_status} onAdded={() => load(true)} />
+            <OrgPanel orgs={stats.org_status} onChanged={() => load(true)} />
           </Section>
 
           {/* 日次アクティビティ */}
@@ -724,11 +740,30 @@ function JobsPanel({
 const ADD_CATEGORIES = ["自治体", "事業者", "銀行", "議員"] as const;
 
 // 1団体ぶんの行。名前・状態・会議数・最終接点・次の一手を1行に畳む（縦を詰めるため）。
-function OrgRow({ o }: { o: OrgStatus }) {
+//
+// 「対象外にする」は削除ではない。押すとNotion「顧客CRM」のステータスが「対象外」に
+// なり、この一覧から外れるだけ。名刺（人脈DB）も会議記録もそのまま残る。
+// 顧客CRMに未登録の団体（notion_page_id が null）は触るべきNotionページが無いので
+// ボタンを出さず、押せない理由をその場に出す（操作できるように見せかけない）。
+function OrgRow({
+  o,
+  onExclude,
+  busy,
+}: {
+  o: OrgStatus;
+  onExclude: (o: OrgStatus) => void;
+  busy: boolean;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [whyDisabled, setWhyDisabled] = useState(false);
   const stale = (() => {
     const h = hoursSince(o.last_meeting);
     return h !== null && h > 24 * 30; // 30日超で「間が空いている」
   })();
+  // CRM側の名前が行の表示名と違うとき（法人格の有無など）は、どのページを
+  // 触るのかを確認文に出す。黙って別名のページを更新しない。
+  const crmName = o.crm_name && o.crm_name !== o.name ? o.crm_name : null;
+
   return (
     <li
       className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-2.5 py-1.5 ${
@@ -779,13 +814,113 @@ function OrgRow({ o }: { o: OrgStatus }) {
           </Link>
         </span>
       )}
+      {/* 一覧から外す導線。指で押せる幅を確保しつつ、常時は控えめな見た目にする */}
+      {o.notion_page_id ? (
+        <button
+          type="button"
+          onClick={() => setConfirming((v) => !v)}
+          disabled={busy}
+          aria-expanded={confirming}
+          title="この団体を一覧から外す（削除ではありません）"
+          className="shrink-0 rounded-md border border-gray-300 px-1.5 py-0.5 text-[0.6875rem] text-gray-500 active:bg-gray-100 disabled:opacity-40"
+        >
+          {busy ? "処理中" : "対象外にする"}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setWhyDisabled((v) => !v)}
+          title="Notion顧客CRMに未登録のため、ここからは除外できません"
+          className="shrink-0 rounded-md border border-dashed border-gray-300 px-1.5 py-0.5 text-[0.6875rem] text-gray-400"
+        >
+          対象外にできません
+        </button>
+      )}
+
+      {whyDisabled && !o.notion_page_id && (
+        <p className="basis-full rounded-md bg-white px-2 py-1.5 text-[0.6875rem] leading-relaxed text-gray-500">
+          この団体はNotion「顧客CRM」に未登録で、会議記録からだけ一覧に出ています。
+          変更すべきページが無いため、ここからは除外できません。
+          除外したい場合は、先に顧客CRMへ登録してください。
+        </p>
+      )}
+
+      {/* 確認。何が起きて何が起きないかを、実際の挙動どおりに書く */}
+      {confirming && o.notion_page_id && (
+        <div className="basis-full rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5">
+          <p className="text-[0.6875rem] leading-relaxed text-gray-700">
+            <span className="font-semibold">{o.name}</span> を「次に攻める団体」から外します。
+            <span className="font-semibold">削除ではありません。</span>
+            Notion「顧客CRM」
+            {crmName && (
+              <>
+                の<span className="font-semibold">「{crmName}」</span>
+              </>
+            )}
+            のステータスが「対象外」になるだけで、団体ページも名刺（人脈DB）も
+            会議記録もそのまま残ります。下の「対象外にした団体」から、または
+            Notionでステータスを戻せば一覧に復活します。
+          </p>
+          <div className="mt-1.5 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setConfirming(false);
+                onExclude(o);
+              }}
+              disabled={busy}
+              className="rounded-md bg-amber-600 px-2.5 py-1 text-[0.6875rem] font-semibold text-white active:bg-amber-700 disabled:opacity-40"
+            >
+              対象外にする
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-md px-2 py-1 text-[0.6875rem] text-gray-500 active:opacity-70"
+            >
+              やめる
+            </button>
+          </div>
+        </div>
+      )}
     </li>
   );
 }
 
+// ── 並び順 ────────────────────────────────────────────────
+// カテゴリーごとに「見たい順番」が違うので、ここで切り替える。
+//   自治体   … 小分類（政令市/特別区/市役所/その他）に分けたうえで、提案なしを上に
+//   事業者・委託会社・銀行 … あいうえお順（件数が少なくうちに名前で探せるように）
+//   議員     … 会派順（dashboard_stats の party_rank。自由民主党→公明党→…）
+//   それ以外 … 従来どおり 提案なしを上に、次に会議数の多い順
+//
+// 日本語の並びは localeCompare("ja") を使う。単純な文字コード順だと
+// カタカナ・漢字が期待どおりに並ばない。
+function byPriority(a: OrgStatus, b: OrgStatus): number {
+  return Number(a.has_proposal) - Number(b.has_proposal) || b.meetings - a.meetings;
+}
+function byName(a: OrgStatus, b: OrgStatus): number {
+  return a.name.localeCompare(b.name, "ja");
+}
+function byParty(a: OrgStatus, b: OrgStatus): number {
+  return (a.party_rank ?? 99) - (b.party_rank ?? 99) || byPriority(a, b);
+}
+
+const NAME_ORDER_CATEGORIES: ReadonlySet<string> = new Set(["事業者", "委託会社", "銀行"]);
+
+function sorterFor(cat: OrgCategory): (a: OrgStatus, b: OrgStatus) => number {
+  if (cat === "議員") return byParty;
+  if (NAME_ORDER_CATEGORIES.has(cat)) return byName;
+  return byPriority;
+}
+
+// 画面に出す1カテゴリー分。sections は自治体だけ複数になる（小分類）。
+type OrgSection = { label: string | null; list: OrgStatus[] };
+type OrgGroup = { cat: OrgCategory; total: number; noProposal: number; sections: OrgSection[] };
+
 // 団体を正準8分類ごとに束ねる。分類は /api/status が stakeholders / weekly_reports から
 // 突合して付けた値。どれにも当たらなければ「その他」（自治体などへ推測で寄せない）。
-function groupByCategory(orgs: OrgStatus[]): Array<[OrgCategory, OrgStatus[]]> {
+function groupByCategory(orgs: OrgStatus[]): OrgGroup[] {
   const groups = new Map<OrgCategory, OrgStatus[]>();
   for (const o of orgs) {
     const cat = normalizeOrgCategory(o.category) ?? "その他";
@@ -794,22 +929,101 @@ function groupByCategory(orgs: OrgStatus[]): Array<[OrgCategory, OrgStatus[]]> {
   }
   // 空カテゴリーは出さない。順番は ORG_CATEGORIES の定義順（＝正準の並び）に従う。
   return ORG_CATEGORIES.filter((c) => groups.has(c)).map((c) => {
-    const list = groups.get(c)!.slice();
-    // 提案がまだの団体を上に、次に会議が多い順（＝攻める優先度）
-    list.sort(
-      (a, b) => Number(a.has_proposal) - Number(b.has_proposal) || b.meetings - a.meetings
-    );
-    return [c, list] as [OrgCategory, OrgStatus[]];
+    const list = groups.get(c)!.slice().sort(sorterFor(c));
+    const noProposal = list.filter((o) => !o.has_proposal).length;
+
+    // 自治体だけ、政令市/特別区/市役所/その他 に細分する（判定は lib/municipalities.ts）。
+    // 0件の小分類は出さない。
+    const sections: OrgSection[] =
+      c === "自治体"
+        ? MUNICIPALITY_SUBCATEGORIES.map((sub) => ({
+            label: sub,
+            list: list.filter((o) => municipalitySubcategory(o.name) === sub),
+          })).filter((s) => s.list.length > 0)
+        : [{ label: null, list }];
+
+    return { cat: c, total: list.length, noProposal, sections };
   });
 }
 
-function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void }) {
+function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => void }) {
   const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState("");
   const [category, setCategory] = useState<string>("自治体");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const groups = groupByCategory(orgs);
+
+  // 対象外まわり。
+  //   excluded  … 対象外にした団体（GET /api/status/exclude）
+  //   hidden    … 対象外にした直後の楽観的な非表示。/api/status の再取得が
+  //               返ってくるまでの数百msだけ効く（押したのに残る、を防ぐ）
+  const [excluded, setExcluded] = useState<ExcludedOrg[] | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [pending, setPending] = useState<string | null>(null); // 処理中のページID
+  const [exErr, setExErr] = useState<string | null>(null);
+
+  const loadExcluded = useCallback(async () => {
+    try {
+      const res = await fetch("/api/status/exclude", { cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && Array.isArray(json?.orgs)) setExcluded(json.orgs as ExcludedOrg[]);
+    } catch {
+      // 一覧が取れなくても本体の表示は続ける（件数が出ないだけ）
+    }
+  }, []);
+
+  useEffect(() => {
+    loadExcluded();
+  }, [loadExcluded]);
+
+  // exclude=true で対象外へ、false で戻す。どちらもNotionが正。
+  async function setExcludedState(pageId: string, exclude: boolean) {
+    if (pending) return;
+    setPending(pageId);
+    setExErr(null);
+    // 楽観的に画面へ反映（サーバー側もNotion更新→写しへライトスルーで即時化している）
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (exclude) next.add(pageId);
+      else next.delete(pageId);
+      return next;
+    });
+    try {
+      const res = await fetch("/api/status/exclude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notion_page_id: pageId, exclude }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 失敗したら楽観的な表示を取り消す（実態と食い違わせない）
+        setHidden((prev) => {
+          const next = new Set(prev);
+          if (exclude) next.delete(pageId);
+          else next.add(pageId);
+          return next;
+        });
+        setExErr((json && json.error) || "更新に失敗しました");
+        return;
+      }
+      if (json?.warning) setExErr(json.warning);
+      await loadExcluded();
+      onChanged(); // /api/status を取り直して一覧を実態に合わせる
+    } catch {
+      setHidden((prev) => {
+        const next = new Set(prev);
+        if (exclude) next.delete(pageId);
+        else next.add(pageId);
+        return next;
+      });
+      setExErr("通信エラーが発生しました");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  const visible = orgs.filter((o) => !(o.notion_page_id && hidden.has(o.notion_page_id)));
+  const groups = groupByCategory(visible);
 
   async function add() {
     const n = name.trim();
@@ -828,7 +1042,7 @@ function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void })
       } else {
         setName("");
         setShowAdd(false);
-        onAdded(); // 一覧を再取得して新団体を反映
+        onChanged(); // 一覧を再取得して新団体を反映
       }
     } catch {
       setErr("通信エラーが発生しました");
@@ -895,39 +1109,100 @@ function OrgPanel({ orgs, onAdded }: { orgs: OrgStatus[]; onAdded: () => void })
         </button>
       )}
 
-      {orgs.length === 0 ? (
+      {exErr && (
+        <p className="mb-2 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs leading-relaxed text-red-700">
+          {exErr}
+        </p>
+      )}
+
+      {groups.length === 0 ? (
         <p className="text-sm text-gray-400">団体はまだありません。上の「追加」から登録できます。</p>
       ) : (
         <div className="space-y-3">
-          {groups.map(([cat, list]) => {
-            const noProposal = list.filter((o) => !o.has_proposal).length;
-            return (
-              <div key={cat}>
-                <div className="mb-1 flex items-baseline gap-2 border-b border-gray-100 pb-0.5">
-                  <h3 className="text-xs font-bold text-gray-600">{cat}</h3>
-                  <span className="text-[0.6875rem] text-gray-400">
-                    {list.length}団体
-                    {noProposal > 0 ? ` ・ 提案なし ${noProposal}` : " ・ 全て提案済"}
-                  </span>
-                </div>
-                {/* 横幅がある画面では団体を横に並べて縦を詰める */}
-                <ul className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
-                  {list.map((o) => (
-                    <OrgRow key={o.name} o={o} />
-                  ))}
-                </ul>
+          {groups.map((g) => (
+            <div key={g.cat}>
+              <div className="mb-1 flex items-baseline gap-2 border-b border-gray-100 pb-0.5">
+                <h3 className="text-xs font-bold text-gray-600">{g.cat}</h3>
+                <span className="text-[0.6875rem] text-gray-400">
+                  {g.total}団体
+                  {g.noProposal > 0 ? ` ・ 提案なし ${g.noProposal}` : " ・ 全て提案済"}
+                </span>
               </div>
-            );
-          })}
+              {g.sections.map((s, i) => (
+                <div key={s.label ?? i} className={s.label ? "mt-1" : undefined}>
+                  {s.label && (
+                    <p className="mb-0.5 text-[0.6875rem] font-semibold text-gray-500">
+                      {s.label}
+                      <span className="ml-1 font-normal text-gray-400">{s.list.length}</span>
+                    </p>
+                  )}
+                  {/* 横幅がある画面では団体を横に並べて縦を詰める */}
+                  <ul className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+                    {s.list.map((o) => (
+                      <OrgRow
+                        key={o.name}
+                        o={o}
+                        busy={pending === o.notion_page_id}
+                        onExclude={(org) =>
+                          org.notion_page_id && setExcludedState(org.notion_page_id, true)
+                        }
+                      />
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          ))}
           {/* 突合できなかった団体は「その他」に出る。ここが増えたら
               stakeholders / weekly_reports 側の登録漏れのサイン。 */}
-          {groups.some(([c]) => c === "その他") && (
+          {groups.some((g) => g.cat === "その他") && (
             <p className="text-[0.6875rem] leading-relaxed text-gray-400">
               ※「その他」は stakeholders・週報のどちらにも種別の登録が無い団体です
               （推測で分類していません）。
             </p>
           )}
         </div>
+      )}
+
+      {/* 対象外にした団体。ここから元に戻せる（＝一方通行にしない） */}
+      {excluded && excluded.length > 0 && (
+        <details className="group mt-3 rounded-xl border border-gray-200 bg-gray-50 px-2.5 py-2">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
+            <span className="text-xs text-gray-400 transition group-open:rotate-90" aria-hidden>
+              ▶
+            </span>
+            <span className="text-xs font-bold text-gray-600">
+              対象外にした団体（{excluded.length}）
+            </span>
+          </summary>
+          <p className="mt-1.5 text-[0.6875rem] leading-relaxed text-gray-500">
+            一覧から外しているだけで、Notionの団体ページ・名刺・会議記録は残っています。
+            「戻す」を押すとステータスが空欄に戻り、「次に攻める団体」へ復活します。
+          </p>
+          <ul className="mt-1.5 grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
+            {excluded.map((e) => (
+              <li
+                key={e.notion_page_id}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5"
+              >
+                <span className="min-w-[7rem] flex-1 basis-[7rem] truncate text-sm text-gray-700">
+                  {e.name}
+                </span>
+                {e.category && (
+                  <span className="shrink-0 text-[0.6875rem] text-gray-400">{e.category}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setExcludedState(e.notion_page_id, false)}
+                  disabled={pending === e.notion_page_id}
+                  className="shrink-0 rounded-md border border-indigo-300 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-indigo-600 active:bg-indigo-50 disabled:opacity-40"
+                >
+                  {pending === e.notion_page_id ? "処理中" : "戻す"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   );

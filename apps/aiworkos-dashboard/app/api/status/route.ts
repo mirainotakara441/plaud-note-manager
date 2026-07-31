@@ -10,6 +10,11 @@ import { normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
 // org_status（「次に攻める団体」）には RPC 側に種別が無いので、ここで
 // stakeholders / weekly_reports から団体名→正準8分類を引いて付け足す
 // （分類の正は lib/categories.ts。どれにも当たらない団体は「その他」にする）。
+//
+// あわせて Notion「顧客CRM」の写しから notion_page_id を突合して付ける。
+// 画面の「対象外にする」ボタン（POST /api/status/exclude）がこのIDを使う。
+// 突合できなかった団体（＝会議記録だけがあってCRMに未登録）は null のまま返し、
+// 画面側でボタンを出さない。無いIDをでっち上げて操作できるように見せない。
 
 export const dynamic = "force-dynamic";
 
@@ -169,6 +174,43 @@ async function fetchOrgCategoryMap(): Promise<Map<string, OrgCategory>> {
   return categoryCache?.map ?? map;
 }
 
+// 団体名（正規化キー）→ Notion顧客CRMの行。
+//
+// キャッシュしない理由:
+//   「対象外にする」を押した直後にこの索引が古いと、Notionでは外れているのに
+//   画面には残る（＝画面と実態が食い違う）。70件程度のSELECT1回なので毎回引く。
+type CrmOrg = { notion_page_id: string; name: string; status: string | null };
+
+async function fetchNotionOrgIndex(): Promise<Map<string, CrmOrg>> {
+  const map = new Map<string, CrmOrg>();
+  const c = anonCreds();
+  if (!c) return map;
+  try {
+    const res = await fetch(
+      `${c.url}/rest/v1/notion_organizations?select=notion_page_id,name,status&limit=2000`,
+      { headers: restHeaders(c.key), cache: "no-store", signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return map;
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return map;
+    for (const r of rows as CrmOrg[]) {
+      const name = typeof r?.name === "string" ? r.name.trim() : "";
+      if (!name || typeof r?.notion_page_id !== "string") continue;
+      const k = orgKey(name);
+      // 表記ゆれで同じキーに複数当たったら、正確な名前の行を優先する
+      // （「アトラス情報サービス」と「アトラス情報サービス株式会社」のような対）。
+      if (!map.has(k) || map.get(k)!.name.length > name.length) {
+        map.set(k, { notion_page_id: r.notion_page_id, name, status: r.status ?? null });
+      }
+    }
+    return map;
+  } catch (err) {
+    // 索引が引けなくても一覧そのものは出す（ボタンが出ないだけ）。
+    console.error("GET /api/status: 顧客CRM索引の取得失敗", err);
+    return map;
+  }
+}
+
 export async function GET() {
   const c = serviceCreds();
   if (!c) {
@@ -179,7 +221,7 @@ export async function GET() {
   }
 
   try {
-    const [supaRes, notion, orgCategories] = await Promise.all([
+    const [supaRes, notion, orgCategories, crmIndex] = await Promise.all([
       fetch(`${c.url}/rest/v1/rpc/dashboard_stats`, {
         method: "POST",
         headers: {
@@ -192,6 +234,7 @@ export async function GET() {
       }),
       fetchNotion(),
       fetchOrgCategoryMap(),
+      fetchNotionOrgIndex(),
     ]);
 
     if (!supaRes.ok) {
@@ -204,13 +247,35 @@ export async function GET() {
 
     const stats = await supaRes.json();
 
-    // 「次に攻める団体」に種別を付ける。突合できない団体は「その他」。
+    // 「次に攻める団体」に種別とNotionページIDを付ける。突合できない団体は「その他」。
     // 自治体らしい名前だからといって自治体に寄せる推測はしない（捏造防止）。
+    //
+    // 「対象外」の団体はここでも落とす。dashboard_stats はCRM側の枝でしか
+    // 除外していないため、会議記録もある団体は対象外にしても会議側の枝から
+    // 一覧に残ってしまう（＝ボタンを押しても消えない）。表記ゆれで別行になった
+    // 重複（「アトラス情報サービス」と「〜株式会社」）もまとめて落とせる。
     if (stats && Array.isArray(stats.org_status)) {
-      stats.org_status = stats.org_status.map((o: Record<string, unknown>) => {
-        const name = typeof o.name === "string" ? o.name : "";
-        return { ...o, category: orgCategories.get(orgKey(name)) ?? "その他" };
-      });
+      stats.org_status = stats.org_status
+        .map((o: Record<string, unknown>) => {
+          const name = typeof o.name === "string" ? o.name : "";
+          const crm = crmIndex.get(orgKey(name));
+          return {
+            ...o,
+            category: orgCategories.get(orgKey(name)) ?? "その他",
+            // 顧客CRMに載っていない団体は null。画面はこれを見てボタンを出し分ける。
+            notion_page_id: crm?.notion_page_id ?? null,
+            // 行の表示名とCRM上の名前が違うことがある（法人格の有無）。
+            // 確認ダイアログでどのページを触るのか正直に見せるために返す。
+            crm_name: crm?.name ?? null,
+            _excluded: crm?.status === "対象外",
+          };
+        })
+        .filter((o: Record<string, unknown>) => o._excluded !== true)
+        .map((o: Record<string, unknown>) => {
+          const { _excluded, ...rest } = o;
+          void _excluded;
+          return rest;
+        });
     }
 
     return NextResponse.json({ ok: true, stats, notion });
