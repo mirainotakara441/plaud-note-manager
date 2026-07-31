@@ -15,8 +15,25 @@ type Session = {
   organization: string;
   category: string;
   title: string | null;
+  created_at: string;
   updated_at: string;
+  // クローズ＝一覧から引っ込めただけ。会話も成果物も残っている。
+  closed_at: string | null;
+  message_count: number;
+  // 「熟成して登録」で記憶層に成果物が入っているか
+  has_deliverable: boolean;
 };
+
+function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("ja-JP", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 function RefineInner() {
   const searchParams = useSearchParams();
@@ -36,6 +53,11 @@ function RefineInner() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  // 一覧の整理まわり
+  const [showClosed, setShowClosed] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  // 開いているセッションがクローズ済みかどうか
+  const [currentClosed, setCurrentClosed] = useState(false);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -71,6 +93,7 @@ function RefineInner() {
       if (!r.ok) return setError(d?.error ?? "開始に失敗しました");
       setSessionId(d.sessionId);
       setMessages(d.messages ?? []);
+      setCurrentClosed(false);
       rememberStakeholder(category, organization.trim());
       loadSessions();
     } catch {
@@ -90,12 +113,69 @@ function RefineInner() {
       setSessionId(s.id);
       setOrganization(s.organization);
       setCategory((s.category as Category) ?? "自治体");
+      setCurrentClosed(!!s.closed_at);
       setMessages(Array.isArray(d?.messages) ? d.messages : []);
     } catch {
       setError("読み込みに失敗しました");
     } finally {
       setLoading(false);
     }
+  }
+
+  // クローズ／再開／削除。いずれも Claude を呼ばない軽い操作。
+  async function mutateSession(
+    id: string,
+    action: "close" | "reopen" | "delete"
+  ): Promise<boolean> {
+    setError(null);
+    setBusyId(id);
+    try {
+      const r = await fetch("/api/refine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, sessionId: id }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setError(d?.error ?? "操作に失敗しました");
+        return false;
+      }
+      await loadSessions();
+      return true;
+    } catch {
+      setError("通信エラーが発生しました");
+      return false;
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // 削除は戻せないので必ず確認を挟む。
+  // 「消えるのは会話ログだけで、熟成して登録した成果物は残る」ことを文言で明示する。
+  function askDelete(s: Session) {
+    const text = [
+      `「${s.organization}」の壁打ちを削除します。`,
+      "",
+      `・この会話（${s.message_count}発言）が消えます。元には戻せません。`,
+      s.has_deliverable
+        ? "・「熟成して登録」した内容は消えません。記憶に残り、検索や提案でこれまで通り使えます。"
+        : "・このセッションはまだ「熟成して登録」していないため、記憶に残るものはありません。",
+      "",
+      "削除しますか？",
+    ].join("\n");
+    if (!window.confirm(text)) return;
+    void mutateSession(s.id, "delete");
+  }
+
+  // 開いているセッションをクローズして一覧へ戻る
+  async function closeCurrent() {
+    if (!sessionId) return;
+    const ok = await mutateSession(sessionId, "close");
+    if (!ok) return;
+    setSessionId(null);
+    setMessages([]);
+    setSaved(null);
+    setCurrentClosed(false);
   }
 
   async function send() {
@@ -163,6 +243,10 @@ function RefineInner() {
     }
   }
 
+  const openSessions = sessions.filter((s) => !s.closed_at);
+  const closedSessions = sessions.filter((s) => s.closed_at);
+  const visibleSessions = showClosed ? sessions : openSessions;
+
   return (
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
       <header className="mb-6">
@@ -221,21 +305,49 @@ function RefineInner() {
       {/* チャット */}
       {sessionId && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
               {organization}（{category}）
             </span>
+            {currentClosed && (
+              <span className="rounded-full bg-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600">
+                クローズ済み
+              </span>
+            )}
             <button
               type="button"
               onClick={() => {
                 setSessionId(null);
                 setMessages([]);
                 setSaved(null);
+                setCurrentClosed(false);
               }}
               className="ml-auto text-sm font-medium text-gray-500 active:opacity-70"
             >
               対象を変える
             </button>
+            {currentClosed ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!sessionId) return;
+                  if (await mutateSession(sessionId, "reopen")) setCurrentClosed(false);
+                }}
+                disabled={busyId === sessionId}
+                className="text-sm font-medium text-indigo-600 active:opacity-70 disabled:opacity-40"
+              >
+                再開する
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={closeCurrent}
+                disabled={busyId === sessionId}
+                className="text-sm font-medium text-gray-500 active:opacity-70 disabled:opacity-40"
+              >
+                クローズ
+              </button>
+            )}
           </div>
 
           {/* これまでのやり取り。最新の参謀メッセージは下の「問い」欄に展開するのでここでは出さない */}
@@ -364,29 +476,114 @@ function RefineInner() {
         </div>
       )}
 
-      {/* 過去の壁打ち */}
+      {/* 過去の壁打ち：既定ではクローズ済みを隠し、必要なときだけ出す */}
       {!sessionId && sessions.length > 0 && (
         <section className="mt-6">
-          <h2 className="mb-2 px-1 text-sm font-semibold text-gray-500">過去の壁打ち</h2>
-          <div className="space-y-2">
-            {sessions.map((s) => (
+          <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 px-1">
+            <h2 className="text-sm font-semibold text-gray-500">過去の壁打ち</h2>
+            <span className="text-xs text-gray-400">
+              進行中 {openSessions.length}件
+              {closedSessions.length > 0 && `・クローズ済み ${closedSessions.length}件`}
+            </span>
+            {closedSessions.length > 0 && (
               <button
-                key={s.id}
                 type="button"
-                onClick={() => resume(s)}
-                className="flex w-full items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-3 text-left shadow-sm active:bg-gray-50"
+                onClick={() => setShowClosed((v) => !v)}
+                className="ml-auto text-xs font-medium text-indigo-600 active:opacity-70"
               >
-                <span className="text-sm font-medium text-gray-800">
-                  {s.organization}
-                </span>
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                  {s.category}
-                </span>
-                <span className="truncate text-xs text-gray-400">{s.title ?? ""}</span>
-                <span className="ml-auto shrink-0 text-xs text-indigo-600">続きから →</span>
+                {showClosed ? "クローズ済みを隠す" : "クローズ済みも表示"}
               </button>
-            ))}
+            )}
           </div>
+
+          {visibleSessions.length === 0 ? (
+            <p className="rounded-xl border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-400">
+              進行中の壁打ちはありません
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {visibleSessions.map((s) => {
+                const busy = busyId === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    className={`overflow-hidden rounded-xl border bg-white shadow-sm transition ${
+                      s.closed_at ? "border-gray-200 opacity-70" : "border-gray-200"
+                    } ${busy ? "opacity-40" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => resume(s)}
+                      disabled={busy}
+                      className="block w-full px-4 py-3 text-left active:bg-gray-50"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-sm font-medium text-gray-800">
+                          {s.organization}
+                        </span>
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                          {s.category}
+                        </span>
+                        {s.has_deliverable ? (
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                            熟成済み
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                            熟成の登録なし
+                          </span>
+                        )}
+                        {s.closed_at && (
+                          <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-600">
+                            クローズ済み
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 truncate text-xs text-gray-500">
+                        {s.title ?? "（成果物の名前はまだ付いていません）"}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {s.message_count}発言・最終更新 {formatWhen(s.updated_at)}
+                      </p>
+                    </button>
+                    <div className="flex items-center gap-3 border-t border-gray-100 px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => resume(s)}
+                        disabled={busy}
+                        className="text-xs font-medium text-indigo-600 active:opacity-70 disabled:opacity-40"
+                      >
+                        続きから →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void mutateSession(s.id, s.closed_at ? "reopen" : "close")
+                        }
+                        disabled={busy}
+                        className="ml-auto text-xs font-medium text-gray-500 active:opacity-70 disabled:opacity-40"
+                      >
+                        {s.closed_at ? "再開する" : "クローズ"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => askDelete(s)}
+                        disabled={busy}
+                        className="text-xs font-medium text-red-600 active:opacity-70 disabled:opacity-40"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <p className="mt-2 px-1 text-xs leading-relaxed text-gray-400">
+            「クローズ」は一覧から引っ込めるだけで、会話も成果物も残ります。「削除」で消えるのは会話だけで、
+            熟成して登録した内容は記憶に残ります。「熟成の登録なし」は、まだ成果物にしていないやり取りです。
+          </p>
         </section>
       )}
 

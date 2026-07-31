@@ -12,6 +12,20 @@ const MODEL = "claude-sonnet-5";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
+// 一覧に返すセッション1件。message_count / has_deliverable は
+// 「どれを整理してよいか」を画面で判断するための材料。
+type SessionRow = {
+  id: string;
+  organization: string;
+  category: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  message_count: number;
+  has_deliverable: boolean;
+};
+
 type MemoResult = {
   id: string;
   source_type: string;
@@ -167,6 +181,34 @@ async function fetchContext(
   return parts.length > 0 ? parts.join("\n\n") : "（この対象の登録内容はまだありません）";
 }
 
+// 「熟成して登録」済みのセッションIDを集める。
+// 成果物は memory_chunks に source_id = `refine:<sessionId>:<n>` で入っており、
+// このテーブルは anon に SELECT ポリシーが無いので、この参照だけ service キーを使う。
+// 取り出すのは source_id だけで、本文はブラウザに一切返さない（返すのは真偽値のみ）。
+async function fetchDeliverableSessionIds(
+  supabaseUrl: string,
+  serviceKey: string
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  try {
+    const res = await fetch(
+      `${restUrl(supabaseUrl, "memory_chunks")}?select=source_id&source_id=like.${encodeURIComponent("refine:*")}&limit=2000`,
+      { headers: restHeaders(serviceKey), cache: "no-store" }
+    );
+    if (!res.ok) return ids;
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return ids;
+    for (const row of rows) {
+      const m = /^refine:([^:]+):/.exec(String(row?.source_id ?? ""));
+      if (m) ids.add(m[1]);
+    }
+  } catch (err) {
+    // 目印が出せないだけで一覧自体は使える
+    console.error("fetchDeliverableSessionIds: 取得失敗", err);
+  }
+  return ids;
+}
+
 async function loadMessages(
   supabaseUrl: string,
   anonKey: string,
@@ -264,12 +306,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ messages });
   }
 
+  // クローズ済みも含めて返し、既定で隠すかどうかは画面側で切り替える。
+  // 発言数は refine_messages を埋め込みcountで一緒に取る（1往復で済む）。
   const res = await fetch(
-    `${restUrl(supabaseUrl, "refine_sessions")}?select=id,organization,category,title,updated_at&order=updated_at.desc&limit=20`,
+    `${restUrl(supabaseUrl, "refine_sessions")}?select=id,organization,category,title,created_at,updated_at,closed_at,refine_messages(count)&order=updated_at.desc&limit=50`,
     { headers: restHeaders(anonKey), cache: "no-store" }
   );
-  const sessions = res.ok ? await res.json() : [];
-  return NextResponse.json({ sessions: Array.isArray(sessions) ? sessions : [] });
+  const raw = res.ok ? await res.json() : [];
+  if (!Array.isArray(raw)) return NextResponse.json({ sessions: [] });
+
+  const service = serviceCreds();
+  const withDeliverable = service
+    ? await fetchDeliverableSessionIds(supabaseUrl, service.key)
+    : new Set<string>();
+
+  const sessions: SessionRow[] = raw.map((r) => ({
+    id: r.id,
+    organization: r.organization,
+    category: r.category,
+    title: r.title ?? null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    closed_at: r.closed_at ?? null,
+    message_count: Number(r?.refine_messages?.[0]?.count ?? 0),
+    has_deliverable: withDeliverable.has(r.id),
+  }));
+
+  return NextResponse.json({ sessions });
 }
 
 export async function POST(req: NextRequest) {
@@ -282,12 +345,6 @@ export async function POST(req: NextRequest) {
   const supabaseUrl = anon.url;
   const anonKey = anon.key;
   const serviceKey = service.key;
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
-    return NextResponse.json(
-      { error: "ANTHROPIC_APIキーが未設定です" },
-      { status: 500 }
-    );
-  }
 
   let body: {
     action?: unknown;
@@ -305,6 +362,74 @@ export async function POST(req: NextRequest) {
   }
 
   const action = body.action;
+
+  // ── 履歴の整理（クローズ／再開／削除）
+  // Claudeを呼ばないので、この3つは ANTHROPIC_API_KEY の有無に関係なく動く。
+  if (action === "close" || action === "reopen" || action === "delete") {
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+    if (!sessionId) {
+      return NextResponse.json({ error: "セッションIDが不正です" }, { status: 400 });
+    }
+    // 実在確認。存在しないIDでのDELETEはPostgRESTが黙って成功扱いにするため、先に見る。
+    const sres = await fetch(
+      `${restUrl(supabaseUrl, "refine_sessions")}?select=id&id=eq.${sessionId}`,
+      { headers: restHeaders(anonKey), cache: "no-store" }
+    );
+    const srows = sres.ok ? await sres.json() : [];
+    if (!Array.isArray(srows) || srows.length === 0) {
+      return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
+    }
+
+    if (action === "close" || action === "reopen") {
+      // クローズ＝一覧から引っ込めるだけ。会話ログも成果物もそのまま残る。
+      const res = await fetch(
+        `${restUrl(supabaseUrl, "refine_sessions")}?id=eq.${sessionId}`,
+        {
+          method: "PATCH",
+          headers: restHeaders(serviceKey),
+          body: JSON.stringify({
+            closed_at: action === "close" ? new Date().toISOString() : null,
+          }),
+          cache: "no-store",
+        }
+      );
+      if (!res.ok) {
+        return NextResponse.json(
+          { error: action === "close" ? "クローズに失敗しました" : "再開に失敗しました" },
+          { status: 502 }
+        );
+      }
+      return NextResponse.json({ ok: true, closed: action === "close" });
+    }
+
+    // ── 削除＝会話ログだけを消す。
+    // 「熟成して登録」で memory_chunks に入った成果物には絶対に手を出さない。
+    // あれは記憶層の資産で、横断検索・提案エージェント・団体別攻略のタイムラインが
+    // 参照している。セッションの削除は会話ログの削除であって、成果物の削除ではない。
+    // （purge-memory は呼ばない。ここに削除処理を足そうとしたら、まずこの注記を読むこと）
+    const delMsgs = await fetch(
+      `${restUrl(supabaseUrl, "refine_messages")}?session_id=eq.${sessionId}`,
+      { method: "DELETE", headers: restHeaders(serviceKey), cache: "no-store" }
+    );
+    if (!delMsgs.ok) {
+      return NextResponse.json({ error: "会話の削除に失敗しました" }, { status: 502 });
+    }
+    const delSession = await fetch(
+      `${restUrl(supabaseUrl, "refine_sessions")}?id=eq.${sessionId}`,
+      { method: "DELETE", headers: restHeaders(serviceKey), cache: "no-store" }
+    );
+    if (!delSession.ok) {
+      return NextResponse.json({ error: "削除に失敗しました" }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true, deleted: true });
+  }
+
+  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+    return NextResponse.json(
+      { error: "ANTHROPIC_APIキーが未設定です" },
+      { status: 500 }
+    );
+  }
   const client = new Anthropic({ apiKey: anthropicKey });
 
   try {
