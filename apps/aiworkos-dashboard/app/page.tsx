@@ -150,6 +150,20 @@ const LIFESTYLE_HEALTH_FEATURES: Feature[] = [
     desc: "体重・体脂肪率・歩数・摂取カロリー・歩行の質の日次推移を確認",
     accent: "bg-lime-100 text-lime-700",
   },
+  {
+    href: "/ramen",
+    icon: "🍜",
+    title: "ラーメン",
+    desc: "食べログの口コミとXの投稿を一杯ごとにつなぎ、通算杯数と店の履歴を追う",
+    accent: "bg-orange-100 text-orange-700",
+  },
+  {
+    href: "/family",
+    icon: "👨‍👩‍👧‍👦",
+    title: "ファミリー",
+    desc: "子どもたちとどこへ行き何があったかを、写真ごと残して振り返る",
+    accent: "bg-rose-100 text-rose-700",
+  },
 ];
 
 type HomeStats = {
