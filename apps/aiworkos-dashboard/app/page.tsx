@@ -392,6 +392,37 @@ export default function Home() {
         </Link>{" "}
         で確認
       </p>
+
+      {/* 使っているAI・アプリの全体像（2026-08-01作成）。
+          claude.ai のArtifactに置いてあるため、開くには claude.ai のログインが要る
+          （/blueprint のように public/ へ自己完結HTMLを置く手もあるが、
+           全体図は随時更新するのでArtifact側を正としてリンクだけ張る）。 */}
+      <div className="mt-6">
+        <a
+          href="https://claude.ai/code/artifact/1626f997-74d7-4d7b-804f-955e9ca3101e"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-4 rounded-2xl border border-indigo-300 bg-indigo-50 p-4 shadow-sm transition active:bg-indigo-100"
+        >
+          <span
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-2xl text-white"
+            aria-hidden
+          >
+            🗺️
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-bold text-indigo-900">
+              AIワークOS ／ ライフOS 全体図 v1.0
+            </span>
+            <span className="mt-0.5 block text-sm leading-relaxed text-indigo-700">
+              使っているAI・アプリ・連携の全体像（2026年8月時点）。claude.ai で開きます。
+            </span>
+          </span>
+          <span className="shrink-0 text-lg text-indigo-400" aria-hidden>
+            ↗
+          </span>
+        </a>
+      </div>
     </main>
   );
 }
