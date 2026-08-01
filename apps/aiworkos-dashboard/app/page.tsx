@@ -113,6 +113,13 @@ const REVIEW_FEATURES: Feature[] = [
     accent: "bg-cyan-100 text-cyan-700",
   },
   {
+    href: "/retrospective",
+    icon: "🪞",
+    title: "振り返り",
+    desc: "週次・月次の★評価と総括・示唆・次期の予定を溜め、節ごとの推移を追う",
+    accent: "bg-violet-100 text-violet-700",
+  },
+  {
     href: "/organizations",
     icon: "🧭",
     title: "団体別攻略",
