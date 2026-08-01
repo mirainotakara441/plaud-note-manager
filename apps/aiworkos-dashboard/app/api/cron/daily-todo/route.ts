@@ -6,12 +6,20 @@ import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 //   ①一行日記から「やってみよう/本日のポイント」を自動取込（/actionsの手動ボタンと同じRPC）
 //   ②未完のToDo件数を数える
 //   ③日記の途絶検知（memory_chunks(source_type=日記)のmax(event_date)が3日以上前なら通知に含める）
-//   ④購読している端末へPush通知を送る（何も変化が無ければ通知しない＝無音）
+//   ④自動化の途絶検知（定期実行ジョブの心拍と、健康データの新しさ）
+//   ⑤購読している端末へPush通知を送る（何も変化が無ければ通知しない＝無音）
 //
 // ③は2026-07-26追加。/diary ページ＋断絶解消前は「Notion一行日記DB→Supabase」の
 // 転記が完全アドホックで、対象0件のまま①②が無言で終わり、断絶に何日も気づけなかった
 // （2026-07-20を最後に196件で止まっていたのに気づいたのは実測調査時）。
 // 未完ToDoが0件でも、日記が滞っている場合はそれ単体で通知する。
+//
+// ④は2026-08-01追加。日報録のlaunchdジョブが通信断でexit 1のまま止まっても
+// 誰にも知らされず、実測調査で初めて気づいた（③と同じ失敗の再演）。
+// 「データが増えていない」だけでは休日と故障を見分けられないため、
+// ジョブ側が成功のたびに job_heartbeats へ打刻し、ここはその途絶を見る。
+// 健康データは複数の経路（HealthPlanet/カロミル/iPhone）から毎日入るので
+// データそのものの新しさで判定してよい。
 //
 // Vercel Cronのリクエストには合言葉認証のcookieが無いため、proxy.tsでこのパスは
 // 認証をバイパスしている。代わりにここで CRON_SECRET を照合して保護する
@@ -21,6 +29,15 @@ import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 export const dynamic = "force-dynamic";
 
 const DIARY_STALE_THRESHOLD_DAYS = 3;
+const HEALTH_STALE_THRESHOLD_DAYS = 3;
+
+// 監視する定期実行ジョブと、心拍が何時間途絶えたら異常とみなすか。
+// 日報録は1時間おきに回るが、Macを閉じている間は当然打刻できない。
+// 週末に閉じっぱなしでも誤報しないよう48時間まで待つ
+// （Macを開けば次の実行で打刻され、警告はひとりでに消える）。
+const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: number }> = [
+  { job: "nippo-aggregate", label: "日報録の自動集計", staleHours: 48 },
+];
 
 // JST基準の「今日」を YYYY-MM-DD で返す（Vercel Cronの実行環境はUTCのため）。
 function jstTodayStr(): string {
@@ -103,10 +120,64 @@ export async function GET(req: NextRequest) {
   }
   const diaryStale = diaryStaleDays !== null && diaryStaleDays >= DIARY_STALE_THRESHOLD_DAYS;
 
-  // 新規取込も無く、未完も無く、日記も滞っていなければ、静かに終わる
+  // ④自動化の途絶検知。文言はそのまま通知本文に足すので、異常な項目だけを入れる。
+  const staleAlerts: string[] = [];
+
+  // ④-1 ジョブの心拍。行が無い＝一度も成功していない（打刻前の初回だけ起きる）
+  // ので、その場合は警告しない。動いていたものが止まった時だけ鳴らす。
+  try {
+    const res = await fetch(
+      `${service.url}/rest/v1/job_heartbeats?select=job,last_ok_at`,
+      { headers: restHeaders(service.key), cache: "no-store" }
+    );
+    if (res.ok) {
+      const rows: { job: string; last_ok_at: string }[] = await res.json();
+      const beats = new Map(rows.map((r) => [r.job, r.last_ok_at]));
+      for (const w of WATCHED_JOBS) {
+        const last = beats.get(w.job);
+        if (!last) continue;
+        const hours = (Date.now() - new Date(last).getTime()) / (60 * 60 * 1000);
+        if (hours >= w.staleHours) {
+          staleAlerts.push(`${w.label}が${Math.floor(hours / 24)}日止まっています`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("cron/daily-todo: ジョブ心拍の取得失敗", err);
+  }
+
+  // ④-2 健康データの新しさ
+  let healthStaleDays: number | null = null;
+  try {
+    const res = await fetch(
+      `${service.url}/rest/v1/health_metrics?select=day&order=day.desc&limit=1`,
+      { headers: restHeaders(service.key), cache: "no-store" }
+    );
+    if (res.ok) {
+      const rows: { day: string | null }[] = await res.json();
+      const latest = rows[0]?.day ?? null;
+      if (latest) healthStaleDays = daysBetween(jstTodayStr(), latest);
+    }
+  } catch (err) {
+    console.error("cron/daily-todo: 健康データの最終日取得失敗", err);
+  }
+  if (healthStaleDays !== null && healthStaleDays >= HEALTH_STALE_THRESHOLD_DAYS) {
+    staleAlerts.push(`健康データが${healthStaleDays}日ぶん未取込です`);
+  }
+
+  // 新規取込も無く、未完も無く、日記も自動化も滞っていなければ、静かに終わる
   // （毎朝「0件です」を送って邪魔しない）
-  if (added === 0 && remaining === 0 && !diaryStale) {
-    return NextResponse.json({ added, remaining, sent: 0, removed: 0, skipped: true, diaryStaleDays });
+  if (added === 0 && remaining === 0 && !diaryStale && staleAlerts.length === 0) {
+    return NextResponse.json({
+      added,
+      remaining,
+      sent: 0,
+      removed: 0,
+      skipped: true,
+      diaryStaleDays,
+      healthStaleDays,
+      staleAlerts,
+    });
   }
 
   // ④Push送信
@@ -139,6 +210,9 @@ export async function GET(req: NextRequest) {
       if (diaryStale) {
         body += `。日記が${diaryStaleDays}日ぶん未登録です`;
       }
+      for (const a of staleAlerts) {
+        body += `。${a}`;
+      }
       const payload = JSON.stringify({ title: "日々のToDo", body, url: "/actions" });
 
       for (const s of subs) {
@@ -170,5 +244,14 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ added, remaining, sent, removed, errors, diaryStaleDays });
+  return NextResponse.json({
+    added,
+    remaining,
+    sent,
+    removed,
+    errors,
+    diaryStaleDays,
+    healthStaleDays,
+    staleAlerts,
+  });
 }
