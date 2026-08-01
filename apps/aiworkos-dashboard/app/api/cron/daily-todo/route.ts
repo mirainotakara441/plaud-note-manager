@@ -50,6 +50,19 @@ const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: number }> = 
   { job: "aiworkos-backup", label: "週次バックアップ", staleHours: 24 * 8 },
 ];
 
+// Claudeのスケジュールタスク（~/.claude/scheduled-tasks/）側の監視。
+// こちらは launchd ではなく Claude が回すので job_heartbeats を打てないが、
+// 各タスクが自分で service_health を更新する作法になっているため、そこを見る。
+//
+// eight（人脈DBの取込）は月1回の手動運用なので対象外にしている。
+// 毎日走るものだけを入れること。入れ忘れよりも、鳴りっぱなしで
+// 通知そのものを無視するようになる方が怖い。
+const WATCHED_SERVICES: Array<{ service: string; label: string; staleDays: number }> = [
+  { service: "plaud", label: "PLAUD会議の自動登録", staleDays: 3 },
+  { service: "news", label: "ニュース取得", staleDays: 3 },
+  { service: "notion", label: "Notionの記憶同期", staleDays: 3 },
+];
+
 // JST基準の「今日」を YYYY-MM-DD で返す（Vercel Cronの実行環境はUTCのため）。
 function jstTodayStr(): string {
   const now = new Date();
@@ -157,7 +170,33 @@ export async function GET(req: NextRequest) {
     console.error("cron/daily-todo: ジョブ心拍の取得失敗", err);
   }
 
-  // ④-2 健康データの新しさ
+  // ④-2 Claudeスケジュールタスクの自己申告（service_health）。
+  // last_ok_at は「最後に成功した時刻」。失敗した回は各タスクが更新しない作法なので、
+  // 途絶＝実行されていないか、失敗し続けているかのどちらか。
+  try {
+    const res = await fetch(
+      `${service.url}/rest/v1/service_health?select=service,last_ok_at`,
+      { headers: restHeaders(service.key), cache: "no-store" }
+    );
+    if (res.ok) {
+      const rows: { service: string; last_ok_at: string | null }[] = await res.json();
+      const health = new Map(rows.map((r) => [r.service, r.last_ok_at]));
+      for (const w of WATCHED_SERVICES) {
+        const last = health.get(w.service);
+        if (!last) continue;
+        const days = Math.floor(
+          (Date.now() - new Date(last).getTime()) / (24 * 60 * 60 * 1000)
+        );
+        if (days >= w.staleDays) {
+          staleAlerts.push(`${w.label}が${days}日止まっています`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("cron/daily-todo: service_healthの取得失敗", err);
+  }
+
+  // ④-3 健康データの新しさ
   let healthStaleDays: number | null = null;
   try {
     const res = await fetch(
