@@ -32,11 +32,22 @@ const DIARY_STALE_THRESHOLD_DAYS = 3;
 const HEALTH_STALE_THRESHOLD_DAYS = 3;
 
 // 監視する定期実行ジョブと、心拍が何時間途絶えたら異常とみなすか。
-// 日報録は1時間おきに回るが、Macを閉じている間は当然打刻できない。
-// 週末に閉じっぱなしでも誤報しないよう48時間まで待つ
+//
+// Mac上のlaunchdジョブは、Macを閉じている間は当然打刻できない。週末に
+// 閉じっぱなしでも誤報しないよう、毎時・毎日のジョブは48時間まで待つ
 // （Macを開けば次の実行で打刻され、警告はひとりでに消える）。
+// 週次バックアップだけは1回飛ばしても気づけるよう8日にしている。
+//
+// 打刻は各ジョブの成功時のみ。日報録は自前で打ち、それ以外は
+// ~/.local/bin/with-heartbeat.sh が包んで打つ（本体には手を入れていない）。
+// job_heartbeats に行が無いジョブは「まだ一度も成功していない」だけなので
+// 警告しない（動いていたものが止まった時だけ鳴らす）。
 const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: number }> = [
   { job: "nippo-aggregate", label: "日報録の自動集計", staleHours: 48 },
+  { job: "notion-sync", label: "Notion→Supabaseの同期", staleHours: 48 },
+  { job: "giji", label: "議事エージェント", staleHours: 48 },
+  { job: "tanaoroshi", label: "日次営業インテリジェンス", staleHours: 48 },
+  { job: "aiworkos-backup", label: "週次バックアップ", staleHours: 24 * 8 },
 ];
 
 // JST基準の「今日」を YYYY-MM-DD で返す（Vercel Cronの実行環境はUTCのため）。
