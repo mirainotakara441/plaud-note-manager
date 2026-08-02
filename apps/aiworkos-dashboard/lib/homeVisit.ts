@@ -34,11 +34,20 @@ export type VisitLog = {
   next_action: string | null;
 };
 
-// 名簿にある部。ここが実質の正の一覧（DBにCHECK制約は付けていない）。
-export const DIVISIONS = ["壮年部", "男子部"] as const;
+// 部と地区の候補。DBにCHECK制約は付けておらず、入力欄も自由に打てるようにしてあるので、
+// これは「よく使う順に並べた候補」であって制限ではない。
+// 地区名簿は壮年部・男子部しか無いが、家庭訪問は女性部にも行くのでここに入れる。
+export const DIVISIONS = ["壮年部", "男子部", "女性部", "その他"] as const;
 
 // 地区の並び。城西支部の名簿の並びに合わせる。
 export const DISTRICTS = ["要希望地区", "旭日地区", "平和地区"] as const;
+
+// 候補（DIVISIONS等）と、実際にDBに入っている値を混ぜた一覧を作る。
+// 自由入力で増えた部・地区も、次からは候補と絞り込みチップに出したいため。
+export function mergeOptions(known: readonly string[], found: (string | null)[]): string[] {
+  const extra = found.filter((v): v is string => !!v && !known.includes(v));
+  return [...known, ...Array.from(new Set(extra))];
+}
 
 // 年齢は生年月日から都度計算する（登録時の値を持つと毎年ズレるため）。
 // 生年月日が分からない人は age_manual をそのまま使う。どちらも無ければ null。

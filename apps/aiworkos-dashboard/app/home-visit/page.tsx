@@ -15,6 +15,7 @@ import {
   byRoster,
   daysBetween,
   fmtDate,
+  mergeOptions,
   fmtDateWithYear,
   mapsRouteUrl,
   mapsSearchUrl,
@@ -282,12 +283,12 @@ function draftOf(m?: VisitMember): MemberDraft {
 // 生年月日を入れた時点で手入力の年齢は使わなくなる。
 function MemberForm({
   member,
-  blocks,
+  options,
   onSaved,
   onCancel,
 }: {
   member?: VisitMember;
-  blocks: string[];
+  options: { divisions: string[]; districts: string[]; blocks: string[] };
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -332,37 +333,38 @@ function MemberForm({
             className={`${inputClass} bg-white`}
           />
         </label>
-        <label className="w-28">
+        <label className="w-32">
           <span className={labelClass}>部</span>
-          <select
+          <input
+            list="home-visit-divisions"
             value={draft.division}
             onChange={(e) => set({ division: e.target.value })}
+            placeholder="壮年部"
             className={`${inputClass} bg-white`}
-          >
-            {DIVISIONS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
+          />
+          <datalist id="home-visit-divisions">
+            {options.divisions.map((d) => (
+              <option key={d} value={d} />
             ))}
-          </select>
+          </datalist>
         </label>
       </div>
 
       <div className="flex gap-2">
         <label className="flex-1">
           <span className={labelClass}>地区</span>
-          <select
+          <input
+            list="home-visit-districts"
             value={draft.district}
             onChange={(e) => set({ district: e.target.value })}
+            placeholder="平和地区"
             className={`${inputClass} bg-white`}
-          >
-            <option value="">—</option>
-            {DISTRICTS.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
+          />
+          <datalist id="home-visit-districts">
+            {options.districts.map((d) => (
+              <option key={d} value={d} />
             ))}
-          </select>
+          </datalist>
         </label>
         <label className="flex-1">
           <span className={labelClass}>ブロック</span>
@@ -373,12 +375,15 @@ function MemberForm({
             className={`${inputClass} bg-white`}
           />
           <datalist id="home-visit-blocks">
-            {blocks.map((b) => (
+            {options.blocks.map((b) => (
               <option key={b} value={b} />
             ))}
           </datalist>
         </label>
       </div>
+      <p className="text-[0.625rem] leading-relaxed text-gray-400">
+        部・地区・ブロックは候補から選べますが、そのまま打ち込んでも構いません（女性部、その他 など）。
+      </p>
 
       <label className="block">
         <span className={labelClass}>役職（任意）</span>
@@ -589,14 +594,14 @@ function LogRow({
 
 function MemberCard({
   state,
-  blocks,
+  options,
   open,
   onToggle,
   onChanged,
   today,
 }: {
   state: MemberState;
-  blocks: string[];
+  options: { divisions: string[]; districts: string[]; blocks: string[] };
   open: boolean;
   onToggle: () => void;
   onChanged: () => void;
@@ -699,7 +704,7 @@ function MemberCard({
             <div className="mt-3 space-y-3">
               <MemberForm
                 member={member}
-                blocks={blocks}
+                options={options}
                 onSaved={() => {
                   setEditing(false);
                   onChanged();
@@ -809,10 +814,27 @@ export default function HomeVisitPage() {
     [data, today]
   );
 
-  const blocks = useMemo(
-    () => Array.from(new Set(states.map((s) => s.member.block).filter((b): b is string => !!b))),
+  const options = useMemo(
+    () => ({
+      divisions: mergeOptions(DIVISIONS, states.map((s) => s.member.division)),
+      districts: mergeOptions(DISTRICTS, states.map((s) => s.member.district)),
+      blocks: mergeOptions([], states.map((s) => s.member.block)),
+    }),
     [states]
   );
+
+  // 絞り込みチップは実際に人がいる部・地区だけを、候補と同じ並びで出す。
+  const chips = useMemo(() => {
+    const live = states.filter((s) => s.member.active || showInactive);
+    const present = (pick: (m: VisitMember) => string | null, all: string[]) => {
+      const found = new Set(live.map((s) => pick(s.member)).filter(Boolean));
+      return all.filter((v) => found.has(v));
+    };
+    return {
+      divisions: present((m) => m.division, options.divisions),
+      districts: present((m) => m.district, options.districts),
+    };
+  }, [states, options, showInactive]);
 
   const stats = useMemo(() => {
     const live = states.filter((s) => s.member.active);
@@ -1004,7 +1026,7 @@ export default function HomeVisitPage() {
             />
             <div className="flex flex-wrap gap-1.5">
               <Chip label="全地区" active={district === null} onClick={() => setDistrict(null)} />
-              {DISTRICTS.map((d) => (
+              {chips.districts.map((d) => (
                 <Chip
                   key={d}
                   label={d.replace("地区", "")}
@@ -1013,7 +1035,7 @@ export default function HomeVisitPage() {
                 />
               ))}
               <span className="mx-1 w-px bg-gray-200" />
-              {DIVISIONS.map((d) => (
+              {chips.divisions.map((d) => (
                 <Chip
                   key={d}
                   label={d}
@@ -1044,7 +1066,7 @@ export default function HomeVisitPage() {
               <MemberCard
                 key={s.member.id}
                 state={s}
-                blocks={blocks}
+                options={options}
                 open={openId === s.member.id}
                 onToggle={() => setOpenId(openId === s.member.id ? null : s.member.id)}
                 onChanged={load}
@@ -1061,7 +1083,7 @@ export default function HomeVisitPage() {
           <div className="mt-4">
             {adding ? (
               <MemberForm
-                blocks={blocks}
+                options={options}
                 onSaved={() => {
                   setAdding(false);
                   load();
