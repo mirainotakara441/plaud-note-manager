@@ -164,6 +164,13 @@ const LIFESTYLE_HEALTH_FEATURES: Feature[] = [
     desc: "子どもたちとどこへ行き何があったかを、写真ごと残して振り返る",
     accent: "bg-rose-100 text-rose-700",
   },
+  {
+    href: "/home-visit",
+    icon: "🏠",
+    title: "家庭訪問",
+    desc: "壮年部・男子部を人ごとに、いつ訪ね会えたか・何を話したかと次の予定を残す",
+    accent: "bg-violet-100 text-violet-700",
+  },
 ];
 
 type HomeStats = {
