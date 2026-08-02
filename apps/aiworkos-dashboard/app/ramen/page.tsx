@@ -529,18 +529,19 @@ export default function RamenPage() {
     return Array.from(map.values()).sort((a, b) => (a.ym < b.ym ? 1 : -1));
   }, [items]);
 
+  // 食べログの「何回目」は行ったカレンダー経由では取れないため、
+  // ここに溜まっている記録そのものを数える＝今年の訪問回数。通算ではない。
   const repeats = useMemo(() => {
     const map = new Map<string, { shop: string; count: number; url: string | null }>();
     for (const i of items ?? []) {
-      if (i.visit_count == null) continue;
       const cur = map.get(i.shop);
-      if (!cur || i.visit_count > cur.count) {
-        map.set(i.shop, { shop: i.shop, count: i.visit_count, url: i.tabelog_shop_url });
-      }
+      if (cur) cur.count += 1;
+      else map.set(i.shop, { shop: i.shop, count: 1, url: i.tabelog_shop_url });
     }
     return Array.from(map.values())
+      .filter((r) => r.count > 1)
       .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
+      .slice(0, 6);
   }, [items]);
 
   // 未処理（文章まち・投稿まち）はいつでも最上段。埋もれると運用が止まるため。
@@ -636,7 +637,7 @@ export default function RamenPage() {
 
           {repeats.length > 0 && (
             <Section>
-              <ChartTitle color={C_BOWL} title="通っている店" hint="通算訪問回数" />
+              <ChartTitle color={C_BOWL} title="通っている店" hint="2026年の訪問回数" />
               <ol className="space-y-2">
                 {repeats.map((r, i) => (
                   <li key={r.shop} className="flex items-center gap-3">
@@ -656,7 +657,7 @@ export default function RamenPage() {
                       </span>
                     )}
                     <span className="shrink-0 text-sm text-gray-500">
-                      <span className="font-bold text-gray-900">{r.count}</span>回目
+                      <span className="font-bold text-gray-900">{r.count}</span>回
                     </span>
                   </li>
                 ))}

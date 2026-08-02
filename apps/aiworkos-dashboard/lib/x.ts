@@ -14,8 +14,8 @@ import crypto from "node:crypto";
 const TWEETS_URL = "https://api.x.com/2/tweets";
 const MEDIA_URL = "https://api.x.com/2/media/upload";
 
-// APPENDの1チャンクは5MB未満という制約があるため、余裕を見て4MBで切る。
-const CHUNK_BYTES = 4 * 1024 * 1024;
+// 画像1枚の上限。これを超えるものは投稿前に弾く（縮小は呼び出し側の責任）。
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 export type XCreds = {
   apiKey: string;
@@ -77,73 +77,58 @@ function authHeader(
   );
 }
 
-function withQuery(url: string, params: Record<string, string>): string {
-  const qs = Object.entries(params)
-    .map(([k, v]) => `${pct(k)}=${pct(v)}`)
-    .join("&");
-  return qs ? `${url}?${qs}` : url;
-}
-
 async function readError(res: Response): Promise<string> {
   const text = await res.text().catch(() => "");
   return `${res.status} ${text.slice(0, 300)}`;
 }
 
-// INIT → APPEND(分割) → FINALIZE の3段。単発アップロードの口は用意されていない。
+// 画像1枚のアップロード。
+//
+// /2/media/upload は multipart/form-data のみを受け付ける。クエリ文字列に積むと
+// 400（"query parameter [total_bytes] is not one of []"）、フォームURLエンコードでも
+// 同じく弾かれる。2026-08-01の実機確認で確定した仕様。
+// multipartのボディは OAuth 1.0a の署名対象外なので、署名は oauth_* だけで作る。
+//
+// 画像は media フィールドに丸ごと入れて1回で送る。INIT/APPEND/FINALIZE の分割方式は
+// 動画や大きいファイル向けで、画像に使うと "Missing media field in JSON" で落ちる。
 export async function uploadMedia(
   bytes: Buffer,
   contentType: string,
   c: XCreds
 ): Promise<string> {
-  const initParams = {
-    command: "INIT",
-    total_bytes: String(bytes.byteLength),
-    media_type: contentType,
-    media_category: "tweet_image",
-  };
-  const initRes = await fetch(withQuery(MEDIA_URL, initParams), {
-    method: "POST",
-    headers: { Authorization: authHeader("POST", MEDIA_URL, initParams, c) },
-  });
-  if (!initRes.ok) throw new Error(`media INIT 失敗: ${await readError(initRes)}`);
-  const initJson = await initRes.json();
-  const mediaId: string | undefined = initJson?.data?.id ?? initJson?.media_id_string;
-  if (!mediaId) throw new Error("media INIT の応答に media_id がありません");
-
-  for (let i = 0, seg = 0; i < bytes.byteLength; i += CHUNK_BYTES, seg += 1) {
-    const chunk = bytes.subarray(i, Math.min(i + CHUNK_BYTES, bytes.byteLength));
-    const appendParams = {
-      command: "APPEND",
-      media_id: mediaId,
-      segment_index: String(seg),
-    };
-    const boundary = `----aiworkos${crypto.randomBytes(8).toString("hex")}`;
-    const head = Buffer.from(
-      `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="media"; filename="chunk"\r\n` +
-        `Content-Type: application/octet-stream\r\n\r\n`
+  if (bytes.byteLength >= MAX_IMAGE_BYTES) {
+    throw new Error(
+      `画像が大きすぎます（${(bytes.byteLength / 1024 / 1024).toFixed(1)}MB / 上限5MB）`
     );
-    const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
-    const body = Buffer.concat([head, chunk, tail]);
-
-    const appendRes = await fetch(withQuery(MEDIA_URL, appendParams), {
-      method: "POST",
-      headers: {
-        Authorization: authHeader("POST", MEDIA_URL, appendParams, c),
-        "Content-Type": `multipart/form-data; boundary=${boundary}`,
-      },
-      body: new Uint8Array(body),
-    });
-    if (!appendRes.ok) throw new Error(`media APPEND 失敗: ${await readError(appendRes)}`);
   }
 
-  const finParams = { command: "FINALIZE", media_id: mediaId };
-  const finRes = await fetch(withQuery(MEDIA_URL, finParams), {
-    method: "POST",
-    headers: { Authorization: authHeader("POST", MEDIA_URL, finParams, c) },
-  });
-  if (!finRes.ok) throw new Error(`media FINALIZE 失敗: ${await readError(finRes)}`);
+  const boundary = `----aiworkos${crypto.randomBytes(8).toString("hex")}`;
+  const body = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="media_category"\r\n\r\ntweet_image\r\n`
+    ),
+    Buffer.from(
+      `--${boundary}\r\n` +
+        `Content-Disposition: form-data; name="media"; filename="image"\r\n` +
+        `Content-Type: ${contentType}\r\n\r\n`
+    ),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
 
+  const res = await fetch(MEDIA_URL, {
+    method: "POST",
+    headers: {
+      Authorization: authHeader("POST", MEDIA_URL, {}, c),
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+    },
+    body: new Uint8Array(body),
+  });
+  if (!res.ok) throw new Error(`画像のアップロードに失敗: ${await readError(res)}`);
+
+  const json = await res.json();
+  const mediaId: string | undefined = json?.data?.id ?? json?.media_id_string ?? json?.id;
+  if (!mediaId) throw new Error("アップロードの応答に media_id がありません");
   return mediaId;
 }
 
