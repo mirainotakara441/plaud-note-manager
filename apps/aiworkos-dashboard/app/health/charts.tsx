@@ -11,6 +11,16 @@ import { useMemo, useRef, useState } from "react";
 
 export type Point = { day: string; value: number | null };
 
+/**
+ * 日付に印を付けるための指定（ラーメンを食べた日など）。
+ * days は "2026-08-03" の集合。グラフの下端に小さな三角を描く。
+ */
+export type DayMarks = {
+  days: Set<string>;
+  color: string;
+  label: string;
+};
+
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
 
 export function fmtDay(d: string, withWeekday = false): string {
@@ -95,6 +105,7 @@ export function LineChart({
   gapLabel = "データなし",
   goal,
   goalLabel = "目標",
+  marks,
 }: {
   points: Point[];
   color: string;
@@ -106,6 +117,8 @@ export function LineChart({
   /** 目標値。渡すと水平の破線を引く。未設定なら何も描かない。 */
   goal?: number | null;
   goalLabel?: string;
+  /** 特定の日に印を付ける（ラーメンを食べた日など）。 */
+  marks?: DayMarks;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -263,6 +276,21 @@ export function LineChart({
           />
         ))}
 
+        {/* 日付の印（ラーメンを食べた日など）。線そのものは汚さず、軸のすぐ上に小さく置く。 */}
+        {marks &&
+          points.map((p, i) =>
+            marks.days.has(p.day) ? (
+              <circle
+                key={`mk-${i}`}
+                cx={xOf(i)}
+                cy={PAD.top + plotH + 4}
+                r={2.4}
+                fill={marks.color}
+                fillOpacity={0.9}
+              />
+            ) : null
+          )}
+
         {/* X軸ラベル */}
         {points.map((p, i) =>
           i % labelEvery === 0 || i === n - 1 ? (
@@ -324,6 +352,12 @@ export function LineChart({
           ) : (
             <p className="text-gray-400">記録なし</p>
           )}
+          {marks && marks.days.has(hoverPoint.day) && (
+            <p className="flex items-center gap-1 text-gray-500">
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: marks.color }} />
+              {marks.label}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -337,6 +371,9 @@ export function BarChart({
   unit = "",
   valueFormat,
   gapLabel = "データなし",
+  goal,
+  goalLabel = "目標",
+  marks,
 }: {
   points: Point[];
   color: string;
@@ -344,13 +381,25 @@ export function BarChart({
   unit?: string;
   valueFormat?: (v: number) => string;
   gapLabel?: string;
+  /**
+   * 目標値。渡すと水平の破線を引き、達成した日の棒を濃く・未達の日を薄く塗り分ける。
+   * 体重グラフ（LineChart の goal）と同じ見せ方に揃えている。
+   */
+  goal?: number | null;
+  goalLabel?: string;
+  /** 特定の日に印を付ける（ラーメンを食べた日など）。 */
+  marks?: DayMarks;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
   const values = points.map((p) => p.value);
   const defined = values.filter((v): v is number => v != null);
-  const max = defined.length ? Math.max(...defined) : 1;
+  const hasGoal = typeof goal === "number" && Number.isFinite(goal);
+  // 目標線が棒の最大値より上にあるとグラフ外に出て見えなくなるので、
+  // 目標値も縦軸のスケールに含める（LineChart と同じ考え方）。
+  const scaleValues = hasGoal ? [...defined, goal as number] : defined;
+  const max = scaleValues.length ? Math.max(...scaleValues) : 1;
 
   const plotW = WIDTH - PAD.left - PAD.right;
   const plotH = height - PAD.top - PAD.bottom;
@@ -413,6 +462,10 @@ export function BarChart({
           if (p.value == null) return null;
           const h = Math.max(1, plotH - (yOf(p.value) - PAD.top));
           const isHover = hoverIdx === i;
+          // 目標があるときは、達成した日だけ濃く塗る。棒の高さだけでは
+          // 「線を越えたかどうか」がひと目で分からないため。
+          const achieved = !hasGoal || p.value >= (goal as number);
+          const opacity = isHover ? 1 : achieved ? 0.9 : 0.3;
           return (
             <rect
               key={i}
@@ -422,10 +475,50 @@ export function BarChart({
               height={h}
               rx={2}
               fill={color}
-              fillOpacity={isHover ? 1 : 0.85}
+              fillOpacity={opacity}
             />
           );
         })}
+
+        {/* 目標線。実測の棒と混同しないよう破線で、色も分ける（体重グラフと同じ流儀）。 */}
+        {hasGoal && (
+          <g>
+            <line
+              x1={PAD.left}
+              x2={WIDTH - PAD.right}
+              y1={yOf(goal as number)}
+              y2={yOf(goal as number)}
+              stroke="#d4537e"
+              strokeWidth={1.5}
+              strokeDasharray="5 4"
+            />
+            <text
+              x={WIDTH - PAD.right}
+              y={yOf(goal as number) - 4}
+              textAnchor="end"
+              fontSize={9}
+              fill="#993556"
+            >
+              {goalLabel} {fmt(goal as number)}
+              {unit}
+            </text>
+          </g>
+        )}
+
+        {/* 日付の印（ラーメンを食べた日など） */}
+        {marks &&
+          points.map((p, i) =>
+            marks.days.has(p.day) ? (
+              <circle
+                key={`mk-${i}`}
+                cx={xCenter(i)}
+                cy={PAD.top + plotH + 4}
+                r={2.4}
+                fill={marks.color}
+                fillOpacity={0.9}
+              />
+            ) : null
+          )}
 
         {points.map((p, i) =>
           i % labelEvery === 0 || i === n - 1 ? (
@@ -458,7 +551,22 @@ export function BarChart({
             {hoverPoint.value != null ? `${fmt(hoverPoint.value)}${unit}` : (
               <span className="font-normal text-gray-400">記録なし</span>
             )}
+            {hasGoal && hoverPoint.value != null && (
+              <span
+                className={`ml-1 font-medium ${
+                  hoverPoint.value >= (goal as number) ? "text-emerald-600" : "text-gray-400"
+                }`}
+              >
+                {hoverPoint.value >= (goal as number) ? "達成" : "未達"}
+              </span>
+            )}
           </p>
+          {marks && marks.days.has(hoverPoint.day) && (
+            <p className="flex items-center gap-1 text-gray-500">
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: marks.color }} />
+              {marks.label}
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -502,10 +610,16 @@ export function ChartTitle({ color, title, hint }: { color: string; title: strin
 // このアプリはダークモード非対応（既存ページも全てライト固定）のためライト値のみ使用。
 export const HEALTH_COLORS = {
   weight: "#2a78d6", // slot1 blue
-  bodyFat: "#1baf7a", // slot5 aqua
-  steps: "#008300", // slot2 green
-  kcal: "#eb6834", // slot6 orange
+  bodyFat: "#1baf7a", // slot3 aqua
+  steps: "#008300", // slot6 green
+  kcal: "#eb6834", // slot2 orange
   walking: "#4a3aa7", // slot7 violet
+  // 睡眠は棒グラフ専用。黄はコントラストが低いので細い線には使えないが、
+  // 面で塗る棒なら読める（同じ図の中にオレンジは出ないので混同もしない）。
+  sleep: "#eda100", // slot4 yellow
+  // ラーメンは軸下の小さな点。小さい印はコントラストが要るので赤を当てている。
+  // 目標線（#d4537e）と同じ図に同時に出ないよう、印を出すのは目標線の無いグラフだけ。
+  ramen: "#e34948", // slot8 red
 };
 
 export function average(values: (number | null)[]): number | null {
