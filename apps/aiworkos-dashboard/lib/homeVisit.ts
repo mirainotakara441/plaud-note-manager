@@ -19,6 +19,7 @@ export type VisitMember = {
   role: string | null;
   birth_date: string | null; // YYYY-MM-DD
   age_manual: number | null; // 生年月日が分からない人だけ手入力
+  address: string | null; // 名簿の表記そのまま（地図用の整形は mapsQuery で行う）
   note: string | null;
   active: boolean;
   sort_order: number;
@@ -64,6 +65,66 @@ export function daysBetween(from: string, to: string): number {
   const b = Date.parse(`${to}T00:00:00Z`);
   if (Number.isNaN(a) || Number.isNaN(b)) return 0;
   return Math.round((b - a) / 86_400_000);
+}
+
+// ── Googleマップ連携 ───────────────────────────────────────────────
+//
+// 名簿の住所は「要町2-25-1」「千早2-41-1コーシャハイム千早306」のように
+// 市区町村が省かれ、建物名・部屋番号がくっついた形で書かれている。
+// そのまま地図に投げると別の土地に飛ぶので、地図に渡す時だけ整形する。
+// DBには名簿の表記のまま持たせておく（表示は短い方が読みやすいため）。
+
+// 城西支部の地元。町名だけで書かれている住所はここを補う。
+const HOME_WARD = "東京都豊島区";
+const LOCAL_TOWNS = ["要町", "千早"];
+
+// 町名だけの住所以外に、「練馬区田柄…」のように区から始まる書き方も多い。
+const TOKYO_WARD = /^[^\s]{1,4}区/;
+
+// 都道府県から始まっていれば、そのまま地図に渡して良い。
+const PREFECTURE = /^(北海道|東京都|(京都|大阪)府|.{2,3}県)/;
+
+// 「千早2-41-1コーシャハイム千早306」から「千早2-41-1」までを取り出す。
+// 建物名・部屋番号は地図の精度をむしろ落とすので、番地までで切る。
+const STREET = /^[^\s]*?[0-9]+(?:[-‐−ー－][0-9]+)*/;
+
+// 地図に渡せる住所を組み立てる。番地が無い（「埼玉県」「板橋区」だけ等）住所は
+// 地図に出しても意味が無いので null を返し、UI側でリンクを出さない。
+export function mapsQuery(address: string | null | undefined): string | null {
+  const raw = address?.trim();
+  if (!raw) return null;
+
+  const head = raw.split(/\s/)[0] ?? raw;
+  const street = STREET.exec(head)?.[0];
+  if (!street) return null; // 番地が無い＝地図では特定できない
+
+  if (PREFECTURE.test(street)) return street;
+  if (TOKYO_WARD.test(street)) return `東京都${street}`;
+  if (LOCAL_TOWNS.some((t) => street.startsWith(t))) return `${HOME_WARD}${street}`;
+  // どれにも当てはまらない書き方は地元とみなす（名簿の大半が地元のため）
+  return `${HOME_WARD}${street}`;
+}
+
+// 1軒を地図で開く。iPhoneではGoogleマップアプリがあればそちらが開く。
+export function mapsSearchUrl(address: string | null | undefined): string | null {
+  const q = mapsQuery(address);
+  return q ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}` : null;
+}
+
+// その日に回る先をまとめて1本の経路にする。出発地は指定せず現在地からにして、
+// 最後の1軒を目的地、途中を経由地にする（Googleマップの経由地は9件まで）。
+export function mapsRouteUrl(addresses: (string | null | undefined)[]): string | null {
+  const stops = addresses
+    .map((a) => mapsQuery(a))
+    .filter((q): q is string => q !== null)
+    .slice(0, 10);
+  if (stops.length === 0) return null;
+
+  const destination = stops[stops.length - 1];
+  const waypoints = stops.slice(0, -1);
+  const params = new URLSearchParams({ api: "1", destination, travelmode: "walking" });
+  if (waypoints.length > 0) params.set("waypoints", waypoints.join("|"));
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];

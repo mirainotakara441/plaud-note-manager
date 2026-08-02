@@ -20,6 +20,7 @@ type Body = {
   role?: string;
   birth_date?: string | null;
   age_manual?: number | string | null;
+  address?: string;
   note?: string;
   active?: boolean;
 };
@@ -72,6 +73,7 @@ export async function POST(req: NextRequest) {
     // 生年月日が入っていれば年齢は都度計算するので、手入力の年齢は捨てる
     birth_date: birth && DAY_RE.test(birth) ? birth : null,
     age_manual: birth && DAY_RE.test(birth) ? null : age != null && age >= 0 && age < 130 ? age : null,
+    address: text(body.address),
     note: text(body.note),
     active: body.active !== false,
   };

@@ -16,6 +16,7 @@ const MEMBER_COLUMNS = [
   "role",
   "birth_date",
   "age_manual",
+  "address",
   "note",
   "active",
   "sort_order",

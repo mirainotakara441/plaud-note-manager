@@ -16,6 +16,8 @@ import {
   daysBetween,
   fmtDate,
   fmtDateWithYear,
+  mapsRouteUrl,
+  mapsSearchUrl,
   todayJst,
 } from "@/lib/homeVisit";
 
@@ -63,6 +65,58 @@ function Chip({
     >
       {label}
     </button>
+  );
+}
+
+// 住所を地図で開くリンク。番地まで書かれていない住所（「埼玉県」だけ等）は
+// 地図に出しても意味が無いので、その時は文字だけ出してリンクにしない。
+function MapLinks({ address, compact }: { address: string | null; compact?: boolean }) {
+  if (!address) return null;
+  const search = mapsSearchUrl(address);
+  const route = mapsRouteUrl([address]);
+
+  if (compact) {
+    return search ? (
+      <a
+        href={search}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="shrink-0 text-xs font-bold text-indigo-500 active:opacity-70"
+      >
+        🗺
+      </a>
+    ) : null;
+  }
+
+  return (
+    <div className="rounded-xl bg-gray-50 px-3 py-2">
+      <p className="text-sm leading-relaxed text-gray-700">📍 {address}</p>
+      {search ? (
+        <div className="mt-1.5 flex gap-3">
+          <a
+            href={search}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-bold text-indigo-600 active:opacity-70"
+          >
+            🗺 地図で見る
+          </a>
+          <a
+            href={route ?? search}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-bold text-indigo-600 active:opacity-70"
+          >
+            🚶 ここへの道順
+          </a>
+        </div>
+      ) : (
+        <p className="mt-1 text-xs text-gray-400">
+          番地が分からないので地図では開けません（メンバー情報を編集から足せます）
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -204,6 +258,7 @@ type MemberDraft = {
   role: string;
   birth_date: string;
   age_manual: string;
+  address: string;
   note: string;
   active: boolean;
 };
@@ -217,6 +272,7 @@ function draftOf(m?: VisitMember): MemberDraft {
     role: m?.role ?? "",
     birth_date: m?.birth_date ?? "",
     age_manual: m?.age_manual != null ? String(m.age_manual) : "",
+    address: m?.address ?? "",
     note: m?.note ?? "",
     active: m?.active ?? true,
   };
@@ -354,6 +410,19 @@ function MemberForm({
           />
         </label>
       </div>
+
+      <label className="block">
+        <span className={labelClass}>住所</span>
+        <input
+          value={draft.address}
+          onChange={(e) => set({ address: e.target.value })}
+          placeholder="例：千早2-13-16"
+          className={`${inputClass} bg-white`}
+        />
+        <span className="mt-1 block text-[0.625rem] leading-relaxed text-gray-400">
+          町名から書けば地図で開けます（豊島区は「要町」「千早」だけでOK）
+        </span>
+      </label>
 
       <label className="block">
         <span className={labelClass}>備考（任意）</span>
@@ -624,8 +693,10 @@ function MemberCard({
             </button>
           </div>
 
+          <MapLinks address={member.address} />
+
           {editing ? (
-            <div className="space-y-3">
+            <div className="mt-3 space-y-3">
               <MemberForm
                 member={member}
                 blocks={blocks}
@@ -666,7 +737,9 @@ function MemberCard({
               </div>
             </div>
           ) : (
-            <VisitForm memberId={member.id} onSaved={onChanged} />
+            <div className="mt-3">
+              <VisitForm memberId={member.id} onSaved={onChanged} />
+            </div>
           )}
 
           {plans.length > 0 && (
@@ -760,6 +833,15 @@ export default function HomeVisitPage() {
     return rows.sort((a, b) => (a.log.visit_date > b.log.visit_date ? 1 : -1));
   }, [states]);
 
+  // 同じ日の予定は1本の経路にまとめて地図へ渡したいので、日付で括る。
+  const upcomingByDate = useMemo(() => {
+    const map = new Map<string, typeof upcoming>();
+    for (const row of upcoming) {
+      map.set(row.log.visit_date, [...(map.get(row.log.visit_date) ?? []), row]);
+    }
+    return Array.from(map.entries());
+  }, [upcoming]);
+
   const shown = useMemo(() => {
     const q = query.trim();
     const filtered = states.filter((s) => {
@@ -767,7 +849,13 @@ export default function HomeVisitPage() {
       if (!m.active && !showInactive) return false;
       if (district && m.district !== district) return false;
       if (division && m.division !== division) return false;
-      if (q && !m.name.includes(q) && !(m.block ?? "").includes(q) && !(m.role ?? "").includes(q))
+      if (
+        q &&
+        !m.name.includes(q) &&
+        !(m.block ?? "").includes(q) &&
+        !(m.role ?? "").includes(q) &&
+        !(m.address ?? "").includes(q)
+      )
         return false;
       return true;
     });
@@ -848,34 +936,59 @@ export default function HomeVisitPage() {
                 下の一覧から人を開いて「📅 これから」で入れられます。
               </p>
             ) : (
-              <div className="space-y-1.5">
-                {upcoming.map(({ log, member }) => {
-                  const overdue = daysBetween(log.visit_date, today) > 0;
+              <div className="space-y-3">
+                {upcomingByDate.map(([date, rows]) => {
+                  const overdue = daysBetween(date, today) > 0;
+                  // その日に回る先を、一覧に並んでいる順のまま1本の経路にする
+                  const route = mapsRouteUrl(rows.map((r) => r.member.address));
                   return (
-                    <button
-                      key={log.id}
-                      type="button"
-                      onClick={() => openMember(member.id)}
-                      className="flex w-full items-center gap-2 rounded-xl bg-gray-50 px-3 py-2 text-left active:bg-gray-100"
-                    >
-                      <span
-                        className="w-20 shrink-0 text-xs font-bold"
-                        style={{ color: overdue ? "#c2417f" : C_PLAN }}
-                      >
-                        {fmtDate(log.visit_date)}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="text-sm font-bold text-gray-900">{member.name}</span>
-                        {log.topics && (
-                          <span className="ml-2 text-xs text-gray-500">{log.topics}</span>
-                        )}
-                      </span>
-                      {overdue && (
-                        <span className="shrink-0 text-[0.625rem] font-bold text-rose-600">
-                          未記録
+                    <div key={date}>
+                      <div className="mb-1 flex items-baseline gap-2">
+                        <span
+                          className="text-xs font-bold"
+                          style={{ color: overdue ? "#c2417f" : C_PLAN }}
+                        >
+                          {fmtDate(date)}
                         </span>
-                      )}
-                    </button>
+                        <span className="text-[0.625rem] text-gray-400">{rows.length}軒</span>
+                        {overdue && (
+                          <span className="text-[0.625rem] font-bold text-rose-600">未記録</span>
+                        )}
+                        {route && (
+                          <a
+                            href={route}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="ml-auto text-xs font-bold text-indigo-600 active:opacity-70"
+                          >
+                            🚶 この日の順路
+                          </a>
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        {rows.map(({ log, member }) => (
+                          <div
+                            key={log.id}
+                            className="flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openMember(member.id)}
+                              className="min-w-0 flex-1 text-left active:opacity-70"
+                            >
+                              <span className="text-sm font-bold text-gray-900">{member.name}</span>
+                              {member.address && (
+                                <span className="ml-2 text-xs text-gray-500">{member.address}</span>
+                              )}
+                              {log.topics && (
+                                <span className="ml-2 text-xs text-gray-400">{log.topics}</span>
+                              )}
+                            </button>
+                            <MapLinks address={member.address} compact />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
@@ -886,7 +999,7 @@ export default function HomeVisitPage() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="名前・ブロック・役職で絞り込む"
+              placeholder="名前・住所・ブロック・役職で絞り込む"
               className={inputClass}
             />
             <div className="flex flex-wrap gap-1.5">
