@@ -68,7 +68,9 @@ export async function POST(req: NextRequest) {
   try {
     const msg = await client.messages.create({
       model: MODEL,
-      max_tokens: 2000,
+      // 食べログ本文とX本文の2本立てなので2000だと途中で切れ、
+      // 区切り行の ===X=== に届かないまま止まることがある（2026-08-01）。
+      max_tokens: 4000,
       messages: [{ role: "user", content: draftPrompt(target, samples) }],
     });
     text = msg.content
@@ -82,15 +84,18 @@ export async function POST(req: NextRequest) {
 
   const draft = parseDraft(text);
   if (!draft) {
+    // 何が返ってきたか分からないと直しようがないので、末尾だけログに残す。
+    console.error("下書きの読み取り失敗。生成文の長さ:", text.length, "末尾:", text.slice(-200));
     return NextResponse.json(
-      { error: "生成結果を読み取れませんでした。もう一度お試しください。" },
+      { error: "生成結果を読み取れませんでした。もう一度お試しください。", chars: text.length },
       { status: 502 }
     );
   }
 
   const patch = {
     title: draft.title || target.title,
-    draft_tabelog: draft.tabelog,
+    // 食べログ本文が生成されなかった一杯（既に書き終えているもの）は既存を残す。
+    draft_tabelog: draft.tabelog ?? target.draft_tabelog ?? target.excerpt,
     draft_x: draft.x,
     drafted_at: new Date().toISOString(),
     status: "drafted",

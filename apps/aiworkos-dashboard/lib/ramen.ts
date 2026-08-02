@@ -60,9 +60,18 @@ export const STYLE_GUIDE = `# 吉井さんのラーメン投稿の型
 - 絵文字は✨だけを使う。多用しない。段落間は1行空ける。
 
 ## X用（短文・リズム重視）
-- 1行目は必ずフック。事実ではなく引きで始める
-  （例：「今年No.1の麺に出会ったかもしれない。」「暑すぎて、今日は冷やし一択。」
-  「”経営”としてのラーメン屋」「◯◯杯目」）。
+- 1行目は、食べログ本文に既にある一文か、そこから素直に引ける事実で始める。
+  **本文に無い驚き（「〜とは思わなかった」「ハマるとは」等）を創作して
+  フックにしない**（2026-08-01 吉井さん指摘）。本文自体が強い一文で始まっているなら
+  それをそのまま1行目に使う。
+- **問いかけで締めない。**「どちら派ですか？」のような読者への質問は食べログ側の作法で、
+  X用には入れない（同上）。
+- **読者に行動を促さない。**「ぜひ」「提供終了前に」「〜する価値あり」のような
+  呼びかけ・宣伝調の締めを書かない。締めは吉井さん自身の感想で終える
+  （2026-08-01 吉井さん指摘）。
+- **会社の同僚が読んでも違和感のない文章にする。** これが文体の最終判定基準。
+  インフルエンサー的な煽り、大げさな断定、内輪ノリの語尾は入れない。
+  仕事仲間に見られて困る書き方になっていないか、書いたあとに一度読み返すこと。
 - 「↓」だけの行で場面を区切り、畳みかける。1ブロックは1〜3行。
 - 体言止めと短文を多用。説明しすぎない。価格の羅列はしない。
 - 最後の1行で効かせる（例：「「辛い」じゃなく「また食べたい」が勝つ一杯。」）。
@@ -94,6 +103,12 @@ export function fewShot(samples: RamenRow[]): string {
 }
 
 export function draftPrompt(row: RamenRow, samples: RamenRow[]): string {
+  // 既に書いてある食べログ本文があるなら、それが一次情報。
+  // これを渡さずに店名と注文だけで書かせると、モデルが隙間を埋めようとして
+  // 事実と逆のことを書く（2026-08-01に「じんわり系煮干し」を「ガツン系」と
+  // 真逆に書かせてしまった）。
+  const source = row.draft_tabelog ?? row.excerpt ?? null;
+
   const facts = [
     `店名: ${row.shop}`,
     row.area ? `エリア: ${row.area}` : null,
@@ -103,7 +118,8 @@ export function draftPrompt(row: RamenRow, samples: RamenRow[]): string {
     row.menu ? `注文: ${row.menu}` : null,
     row.price != null ? `価格: ${row.price}円` : null,
     `食べた日: ${row.eaten_on}`,
-    row.memo ? `その場のメモ（一次情報・最重要）:\n${row.memo}` : null,
+    row.memo ? `その場のメモ（一次情報）:\n${row.memo}` : null,
+    source ? `すでに書いた食べログ本文（一次情報・最重要）:\n${source}` : null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -116,28 +132,46 @@ ${facts}
 
 # 指示
 
-上の「その場のメモ」を一次情報として、食べログ用とX用の文章を1本ずつ書いてください。
-メモに書かれていない事実（同行者・時刻・値段・店の由来）は創作せず、書かずに済ませてください。
+上の一次情報から、食べログ用とX用の文章を1本ずつ書いてください。
 
-次のJSONだけを返してください。前後に説明文を付けないこと。
+**すでに食べログ本文がある場合、それが事実の唯一の出典です。**
+X用はその内容を短く組み直すだけで、味の評価・感想・回数・同行者を変えないこと。
+たとえば「じんわり広がるバランス型」と書いてあるものを「ガツンと来る」に
+言い換えるのは、文体の調整ではなく事実の改変です。絶対にしないこと。
+本文に書かれていない出来事（過去に避けていた、初めて頼んだ等）も足さないこと。
+食べログ本文が既にあるときは ===TABELOG=== の中身は空のままでかまいません。
 
-{"title":"食べログのタイトル","tabelog":"食べログ本文","x":"X投稿本文"}`;
+次の形式ちょうどで返してください。区切り行はそのまま、前後に説明文を付けないこと。
+
+===TITLE===
+食べログのタイトル
+===TABELOG===
+食べログ本文
+===X===
+X投稿本文
+===END===`;
 }
 
-// JSONだけ返せと言っても前後に文が付くことがあるので、最初の { 〜 最後の } を拾う。
-export function parseDraft(text: string): { title: string; tabelog: string; x: string } | null {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-  try {
-    const obj = JSON.parse(text.slice(start, end + 1));
-    if (typeof obj.tabelog !== "string" || typeof obj.x !== "string") return null;
-    return {
-      title: typeof obj.title === "string" ? obj.title : "",
-      tabelog: obj.tabelog,
-      x: obj.x,
-    };
-  } catch {
-    return null;
-  }
+// 出力はJSONにしない。本文が複数行の日本語なので、JSONだと改行のエスケープが崩れて
+// 丸ごと読み取れなくなる（2026-08-01に実際に踏んだ）。区切り行で切り出す。
+//
+// 食べログ本文が既にある一杯（取り込み済みのもの）では、モデルがX用だけを返すことがある。
+// 必須はX用だけにして、食べログ用が無ければ既存を残す。
+export function parseDraft(
+  text: string
+): { title: string; tabelog: string | null; x: string } | null {
+  const pick = (from: string, to: string): string | null => {
+    const i = text.indexOf(from);
+    if (i === -1) return null;
+    const j = text.indexOf(to, i + from.length);
+    const v = text.slice(i + from.length, j === -1 ? undefined : j).trim();
+    return v === "" ? null : v;
+  };
+  const x = pick("===X===", "===END===");
+  if (!x) return null;
+  return {
+    title: pick("===TITLE===", "===TABELOG===") ?? "",
+    tabelog: pick("===TABELOG===", "===X==="),
+    x,
+  };
 }
