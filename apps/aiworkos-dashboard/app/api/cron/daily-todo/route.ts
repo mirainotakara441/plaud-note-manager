@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import webpush from "web-push";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import {
+  WATCHED_JOBS,
+  WATCHED_SERVICES,
+  DIARY_STALE_THRESHOLD_DAYS,
+  HEALTH_STALE_THRESHOLD_DAYS,
+} from "@/lib/advisor/watchlist";
 
 // 毎朝、Vercel Cronから叩かれるエンドポイント。
 //   ①一行日記から「やってみよう/本日のポイント」を自動取込（/actionsの手動ボタンと同じRPC）
@@ -28,40 +34,20 @@ import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
-const DIARY_STALE_THRESHOLD_DAYS = 3;
-const HEALTH_STALE_THRESHOLD_DAYS = 3;
-
-// 監視する定期実行ジョブと、心拍が何時間途絶えたら異常とみなすか。
-//
-// Mac上のlaunchdジョブは、Macを閉じている間は当然打刻できない。週末に
-// 閉じっぱなしでも誤報しないよう、毎時・毎日のジョブは48時間まで待つ
-// （Macを開けば次の実行で打刻され、警告はひとりでに消える）。
-// 週次バックアップだけは1回飛ばしても気づけるよう8日にしている。
+// 監視対象と閾値は lib/advisor/watchlist.ts に集約した（2026-08-03）。
+// ホームの「今朝の気づき」(/api/advisor) も同じ定義を読む。ここと2か所に
+// 書いていると片方だけ直したときに言い分が食い違い、どちらが正しいのか
+// 分からなくなる。
 //
 // 打刻は各ジョブの成功時のみ。日報録は自前で打ち、それ以外は
 // ~/.local/bin/with-heartbeat.sh が包んで打つ（本体には手を入れていない）。
 // job_heartbeats に行が無いジョブは「まだ一度も成功していない」だけなので
 // 警告しない（動いていたものが止まった時だけ鳴らす）。
-const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: number }> = [
-  { job: "nippo-aggregate", label: "日報録の自動集計", staleHours: 48 },
-  { job: "notion-sync", label: "Notion→Supabaseの同期", staleHours: 48 },
-  { job: "giji", label: "議事エージェント", staleHours: 48 },
-  { job: "tanaoroshi", label: "日次営業インテリジェンス", staleHours: 48 },
-  { job: "aiworkos-backup", label: "週次バックアップ", staleHours: 24 * 8 },
-];
-
-// Claudeのスケジュールタスク（~/.claude/scheduled-tasks/）側の監視。
-// こちらは launchd ではなく Claude が回すので job_heartbeats を打てないが、
-// 各タスクが自分で service_health を更新する作法になっているため、そこを見る。
 //
-// eight（人脈DBの取込）は月1回の手動運用なので対象外にしている。
-// 毎日走るものだけを入れること。入れ忘れよりも、鳴りっぱなしで
-// 通知そのものを無視するようになる方が怖い。
-const WATCHED_SERVICES: Array<{ service: string; label: string; staleDays: number }> = [
-  { service: "plaud", label: "PLAUD会議の自動登録", staleDays: 3 },
-  { service: "news", label: "ニュース取得", staleDays: 3 },
-  { service: "notion", label: "Notionの記憶同期", staleDays: 3 },
-];
+// service_health 側は notify=true のものだけ通知に含める。eight（人脈DBの取込）は
+// 月1回の手動運用なので毎朝鳴らすと邪魔になり、通知そのものを無視するようになる。
+// 代わりにホームのカードには7日で出す。
+const NOTIFIED_SERVICES = WATCHED_SERVICES.filter((s) => s.notify);
 
 // JST基準の「今日」を YYYY-MM-DD で返す（Vercel Cronの実行環境はUTCのため）。
 function jstTodayStr(): string {
@@ -181,7 +167,7 @@ export async function GET(req: NextRequest) {
     if (res.ok) {
       const rows: { service: string; last_ok_at: string | null }[] = await res.json();
       const health = new Map(rows.map((r) => [r.service, r.last_ok_at]));
-      for (const w of WATCHED_SERVICES) {
+      for (const w of NOTIFIED_SERVICES) {
         const last = health.get(w.service);
         if (!last) continue;
         const days = Math.floor(

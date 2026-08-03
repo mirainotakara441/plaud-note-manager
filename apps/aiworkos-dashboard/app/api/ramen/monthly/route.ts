@@ -155,37 +155,66 @@ ${examples || "（手本なし。型は以下の指示に従うこと）"}
 - 本文にURLを入れない。
 - 殿堂は1店だけ。迷ったら再訪回数と点数の両方が高い店を選ぶ。
 
-次のJSONだけを返してください。前後に説明文を付けないこと。
+次の形式ちょうどで返してください。区切り行はそのまま、前後に説明文を付けないこと。
+JSONにはしないこと（本文が複数行なので改行で壊れる）。
 
-{"summary":"…","feature":"…","awards":"…","memories":"…"}`;
+===SUMMARY===
+1本目の全文
+===FEATURE===
+2本目の全文
+===AWARDS===
+3本目の全文
+===MEMORIES===
+4本目の全文
+===END===`;
 
   const client = new Anthropic({ apiKey });
   let text = "";
   try {
+    // effort を指定しないと、このモデルは推論だけで max_tokens を使い切り、
+    // 本文が1文字も返らないことがある（2026-08-01: stop=max_tokens / blocks=thinking / chars=0）。
+    // 4本ぶんの長文を出す枠を確保するため、思考は控えめにして上限も広げておく。
     const msg = await client.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 16000,
+      output_config: { effort: "medium" },
       messages: [{ role: "user", content: prompt }],
     });
     text = msg.content
       .filter((b) => b.type === "text")
       .map((b) => (b as { text: string }).text)
       .join("");
+    console.log(
+      "月次生成:",
+      "stop=", msg.stop_reason,
+      "blocks=", msg.content.map((b) => b.type).join(","),
+      "in=", msg.usage?.input_tokens,
+      "out=", msg.usage?.output_tokens,
+      "chars=", text.length
+    );
   } catch (e) {
     console.error("月次振り返り生成エラー:", e);
     return NextResponse.json({ error: "月次振り返りの生成に失敗しました" }, { status: 502 });
   }
 
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  let drafts: Partial<Record<Kind, string>> = {};
-  try {
-    drafts = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return NextResponse.json({ error: "生成結果を読み取れませんでした" }, { status: 502 });
-  }
+  // JSONにしない理由は上の指示文と同じ。4本とも複数行の日本語なので、
+  // JSONだと改行のエスケープが崩れて全部読めなくなる（2026-08-01に実際に踏んだ）。
+  const pick = (from: string, to: string): string | undefined => {
+    const i = text.indexOf(from);
+    if (i === -1) return undefined;
+    const j = text.indexOf(to, i + from.length);
+    const v = text.slice(i + from.length, j === -1 ? undefined : j).trim();
+    return v === "" ? undefined : v;
+  };
+  const drafts: Partial<Record<Kind, string>> = {
+    summary: pick("===SUMMARY===", "===FEATURE==="),
+    feature: pick("===FEATURE===", "===AWARDS==="),
+    awards: pick("===AWARDS===", "===MEMORIES==="),
+    memories: pick("===MEMORIES===", "===END==="),
+  };
   const missing = KINDS.filter((k) => !drafts[k]);
   if (missing.length > 0) {
+    console.error("月次の読み取り失敗。生成文の長さ:", text.length, "末尾:", text.slice(-200));
     return NextResponse.json(
       { error: `生成結果が揃いませんでした（${missing.join("・")}）`, drafts },
       { status: 502 }

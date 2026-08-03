@@ -35,8 +35,16 @@ const SOURCE_DROP_GAP_DAYS = 7;
 // 人の1日の値として、あきらかに範囲外と言い切れるものだけを入れる。
 // 「少ない/多い」ではなく「1日の値として説明がつかない」レベルに限定する。
 // ここに無い指標は値の妥当性を判定しない（判定できないものを判定しない）。
+// 「1日ぶんの合計」であるはずの指標には下限を必ず置く。2026-08-03に見つけた
+// 歩数の件（取り込み側が1日の合計でなく1サンプルあたりの平均を保存していて、
+// 4,874歩の日が42.4として入っていた）は、この下限があったから気づけた。
+// 同じ壊れ方をしても値そのものは残るので、止まった検知だけでは拾えない。
 const PLAUSIBLE_RANGE: Record<string, { min: number; max: number; note: string }> = {
   step_count: { min: 500, max: 80000, note: "1日の合計歩数" },
+  walking_running_distance: { min: 0.2, max: 60, note: "1日の合計移動距離(km)" },
+  active_energy: { min: 100, max: 30000, note: "1日の活動エネルギー(kJ)" },
+  basal_energy_burned: { min: 3000, max: 15000, note: "1日の基礎代謝(kJ)" },
+  dietary_energy: { min: 400, max: 25000, note: "1日の摂取エネルギー(kJ)" },
   body_mass: { min: 30, max: 200, note: "体重(kg)" },
   weight_body_mass: { min: 30, max: 200, note: "体重(kg)" },
   body_fat_percentage: { min: 3, max: 60, note: "体脂肪率(%)" },
