@@ -306,13 +306,34 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
   );
 }
 
+const MAX_PHOTOS = 4;
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("読み込みに失敗しました"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function CaptureForm({ onSaved }: { onSaved: () => void }) {
   const [open, setOpen] = useState(false);
   const [shop, setShop] = useState("");
   const [menu, setMenu] = useState("");
   const [memo, setMemo] = useState("");
+  const [photos, setPhotos] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  function onPickPhotos(files: FileList | null) {
+    if (!files) return;
+    setPhotos((prev) => [...prev, ...Array.from(files)].slice(0, MAX_PHOTOS));
+  }
+
+  function removePhoto(i: number) {
+    setPhotos((prev) => prev.filter((_, idx) => idx !== i));
+  }
 
   async function save() {
     if (!shop.trim()) {
@@ -322,16 +343,32 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
     setSaving(true);
     setErr(null);
     try {
+      // 写真は先にStorageへ上げてパスだけ受け取り、その後の記録本体にpathを渡す
+      // （Xへの投稿時にはこのpathからサーバーが写真を取り出す）。
+      const photo_urls: string[] = [];
+      for (const file of photos) {
+        const dataUrl = await fileToDataUrl(file);
+        const up = await fetch("/api/ramen/photo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: dataUrl, content_type: file.type || "image/jpeg" }),
+        });
+        const upJson = await up.json();
+        if (!up.ok) throw new Error(upJson?.error ?? "写真の保存に失敗しました");
+        photo_urls.push(upJson.path);
+      }
+
       const res = await fetch("/api/ramen/capture", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shop, menu, memo }),
+        body: JSON.stringify({ shop, menu, memo, photo_urls }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "記録に失敗しました");
       setShop("");
       setMenu("");
       setMemo("");
+      setPhotos([]);
       setOpen(false);
       onSaved();
     } catch (e) {
@@ -376,6 +413,47 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
           placeholder="その場の一言（音声入力でOK）。ここが文章の一次情報になります"
           className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm"
         />
+
+        <div className="space-y-1">
+          <label className="block">
+            <span className="inline-block w-full cursor-pointer rounded-xl border border-dashed border-gray-300 px-3 py-2 text-center text-sm text-gray-500 active:bg-gray-50">
+              📷 写真を選ぶ（最大{MAX_PHOTOS}枚・Xに添付されます）
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              capture="environment"
+              className="hidden"
+              disabled={photos.length >= MAX_PHOTOS}
+              onChange={(e) => {
+                onPickPhotos(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {photos.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {photos.map((f, i) => (
+                <span
+                  key={i}
+                  className="flex items-center gap-1 rounded-lg bg-orange-50 px-2 py-1 text-xs text-orange-700"
+                >
+                  {f.name.slice(0, 14)}
+                  <button
+                    type="button"
+                    onClick={() => removePhoto(i)}
+                    className="font-bold text-orange-400"
+                    aria-label="この写真を外す"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
         {err && <p className="text-xs text-rose-600">{err}</p>}
         <div className="flex gap-2">
           <button
