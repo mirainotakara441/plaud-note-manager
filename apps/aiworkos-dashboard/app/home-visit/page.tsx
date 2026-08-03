@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartTitle, StatTile } from "@/app/health/charts";
+import { ChartTitle } from "@/app/health/charts";
 import {
   DISTRICTS,
   DIVISIONS,
@@ -118,6 +118,65 @@ function MapLinks({ address, compact }: { address: string | null; compact?: bool
         </p>
       )}
     </div>
+  );
+}
+
+// 上の集計タイル。/health などと共用の StatTile は数字が先に来る作りなので、
+// 「何の数なのか」を先に読ませたいここでは専用のものを使う。
+// 数を押すと、その数に入っている人だけが下の一覧に出る。
+function Tile({
+  label,
+  value,
+  unit,
+  caption,
+  color,
+  active,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  unit: string;
+  caption?: string;
+  color?: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const body = (
+    <>
+      <p className="flex items-center gap-1 text-xs font-medium leading-snug text-gray-500">
+        {color && (
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+        )}
+        {label}
+      </p>
+      <p className="mt-1 text-2xl font-bold text-gray-900">
+        {value}
+        <span className="ml-0.5 text-sm font-medium text-gray-500">{unit}</span>
+      </p>
+      {caption && (
+        <p
+          className="mt-0.5 text-[0.625rem] leading-snug"
+          style={{ color: onClick ? C_VISIT : undefined }}
+        >
+          {caption}
+        </p>
+      )}
+    </>
+  );
+
+  const base = "rounded-xl p-3 text-left";
+  if (!onClick) return <div className={`${base} bg-gray-50`}>{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${base} transition active:scale-[0.98] ${
+        active ? "bg-white ring-2" : "bg-gray-50 ring-1 ring-gray-100"
+      }`}
+      style={active ? { ["--tw-ring-color" as string]: C_VISIT } : undefined}
+    >
+      {body}
+    </button>
   );
 }
 
@@ -788,9 +847,12 @@ export default function HomeVisitPage() {
   const [query, setQuery] = useState("");
   const [order, setOrder] = useState<"neglected" | "roster">("neglected");
   const [showInactive, setShowInactive] = useState(false);
+  // 上のタイルから来た絞り込み。null＝全員
+  const [focus, setFocus] = useState<null | "visited" | "met" | "stale">(null);
   const [openId, setOpenId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const today = useRef(todayJst()).current;
+  const scrollAfterRender = useRef(false);
 
   const load = useCallback(() => {
     fetch("/api/home-visit", { cache: "no-store" })
@@ -839,12 +901,26 @@ export default function HomeVisitPage() {
   const stats = useMemo(() => {
     const live = states.filter((s) => s.member.active);
     const ym = today.slice(0, 7);
-    const monthLogs = live.flatMap((s) => s.logs.filter((l) => l.visit_date.startsWith(ym)));
+
+    const visited = new Set<number>();
+    const met = new Set<number>();
+    let monthVisits = 0;
+    for (const s of live) {
+      for (const l of s.logs) {
+        if (!l.visit_date.startsWith(ym)) continue;
+        monthVisits += 1; // 訪問は回数で数える（同じ人に2回行けば2回）
+        visited.add(s.member.id);
+        if (l.met === true) met.add(s.member.id); // 会えたのは人数で数える
+      }
+    }
+    const stale = live.filter((s) => s.daysSinceVisit === null || s.daysSinceVisit >= STALE_DAYS);
+
     return {
       members: live.length,
-      monthVisits: monthLogs.length,
-      monthMet: monthLogs.filter((l) => l.met === true).length,
-      stale: live.filter((s) => s.daysSinceVisit === null || s.daysSinceVisit >= STALE_DAYS).length,
+      monthVisits,
+      visitedIds: visited,
+      metIds: met,
+      staleIds: new Set(stale.map((s) => s.member.id)),
       neverVisited: live.filter((s) => s.daysSinceVisit === null).length,
     };
   }, [states, today]);
@@ -866,9 +942,19 @@ export default function HomeVisitPage() {
 
   const shown = useMemo(() => {
     const q = query.trim();
+    const focusIds =
+      focus === "visited"
+        ? stats.visitedIds
+        : focus === "met"
+        ? stats.metIds
+        : focus === "stale"
+        ? stats.staleIds
+        : null;
+
     const filtered = states.filter((s) => {
       const m = s.member;
       if (!m.active && !showInactive) return false;
+      if (focusIds && !focusIds.has(m.id)) return false;
       if (district && m.district !== district) return false;
       if (division && m.division !== division) return false;
       if (
@@ -882,7 +968,15 @@ export default function HomeVisitPage() {
       return true;
     });
     return filtered.sort(order === "neglected" ? byNeglected : byRoster);
-  }, [states, district, division, query, order, showInactive]);
+  }, [states, district, division, query, order, showInactive, focus, stats]);
+
+  // タイルを押したら、その絞り込みを効かせて一覧の先頭まで送る。
+  // 絞り込むと一覧が一気に短くなり、描画前にスクロールしても行き先が消えて
+  // 先頭に戻ってしまう。そのため実際のスクロールは描画後（useEffect）に回す。
+  const showList = (next: null | "visited" | "met" | "stale") => {
+    setFocus(next);
+    scrollAfterRender.current = true;
+  };
 
   const openMember = (id: number) => {
     setOpenId(id);
@@ -892,6 +986,12 @@ export default function HomeVisitPage() {
       document.getElementById(`member-${id}`)?.scrollIntoView({ block: "center" });
     });
   };
+
+  useEffect(() => {
+    if (!scrollAfterRender.current) return;
+    scrollAfterRender.current = false;
+    document.getElementById("member-list")?.scrollIntoView({ block: "start" });
+  }, [focus, shown.length]);
 
   const loading = !data && !error;
 
@@ -932,15 +1032,43 @@ export default function HomeVisitPage() {
               title="いまの状況"
               hint={`${today.slice(5, 7)}月の集計`}
             />
-            <div className="flex gap-2">
-              <StatTile label="人数" value={`${stats.members}`} sub="人" color={C_VISIT} />
-              <StatTile label="今月" value={`${stats.monthVisits}`} sub="回訪問" />
-              <StatTile label="会えた" value={`${stats.monthMet}`} sub="回" color={C_MET} />
-              <StatTile
-                label="ご無沙汰"
-                value={`${stats.stale}`}
-                sub={`人／未訪問${stats.neverVisited}`}
+            <div className="grid grid-cols-2 gap-2">
+              <Tile
+                label="人数"
+                value={stats.members}
+                unit="人"
+                caption={focus === null ? "一覧に全員が出ています" : "全員を見る"}
+                color={C_VISIT}
+                active={focus === null}
+                onClick={() => showList(null)}
+              />
+              <Tile
+                label="今月の訪問回数"
+                value={stats.monthVisits}
+                unit="回"
+                caption={stats.visitedIds.size > 0 ? `訪問した${stats.visitedIds.size}人を見る` : undefined}
+                active={focus === "visited"}
+                onClick={stats.visitedIds.size > 0 ? () => showList("visited") : undefined}
+              />
+              <Tile
+                label="今月 会えた人数"
+                value={stats.metIds.size}
+                unit="人"
+                caption={stats.metIds.size > 0 ? "会えた人を見る" : undefined}
+                color={C_MET}
+                active={focus === "met"}
+                onClick={stats.metIds.size > 0 ? () => showList("met") : undefined}
+              />
+              <Tile
+                label="3ヶ月以上ご無沙汰"
+                value={stats.staleIds.size}
+                unit="人"
+                caption={
+                  stats.staleIds.size > 0 ? `うち未訪問${stats.neverVisited}人。見る` : undefined
+                }
                 color="#c2417f"
+                active={focus === "stale"}
+                onClick={stats.staleIds.size > 0 ? () => showList("stale") : undefined}
               />
             </div>
           </Section>
@@ -1061,7 +1189,28 @@ export default function HomeVisitPage() {
             </div>
           </div>
 
-          <div className="mt-3 space-y-2">
+          <div id="member-list" className="mt-3 space-y-2">
+            {focus && (
+              <div
+                className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-white"
+                style={{ backgroundColor: focus === "stale" ? "#c2417f" : focus === "met" ? C_MET : C_VISIT }}
+              >
+                <span>
+                  {focus === "met"
+                    ? "今月 会えた人"
+                    : focus === "visited"
+                    ? "今月 訪問した人"
+                    : "3ヶ月以上ご無沙汰の人"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setFocus(null)}
+                  className="ml-auto rounded-full bg-white/25 px-2 py-0.5 active:opacity-70"
+                >
+                  全員に戻す
+                </button>
+              </div>
+            )}
             {shown.map((s) => (
               <MemberCard
                 key={s.member.id}
