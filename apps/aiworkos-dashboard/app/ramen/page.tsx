@@ -423,7 +423,6 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
               type="file"
               accept="image/*"
               multiple
-              capture="environment"
               className="hidden"
               disabled={photos.length >= MAX_PHOTOS}
               onChange={(e) => {
