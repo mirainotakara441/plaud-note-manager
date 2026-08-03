@@ -63,8 +63,25 @@ export async function POST(req: NextRequest) {
       ? body.eaten_on
       : toJstDateString(new Date().toISOString());
 
-  const bowlNo = toInt(body.bowl_no);
   const isRamen = body.is_ramen ?? true;
+
+  // 杯数は年ごとの通し番号。指定がなければ、その年の最大値＋1を自動で振る。
+  // 画面のフォームには杯数の入力欄が無いため、ここで振らないと空のまま残る。
+  let bowlNo = toInt(body.bowl_no);
+  if (isRamen && bowlNo == null) {
+    const year = eatenOn.slice(0, 4);
+    const maxRes = await fetch(
+      `${c.url}/rest/v1/ramen_logs?select=bowl_no&is_ramen=is.true&bowl_no=not.is.null` +
+        `&eaten_on=gte.${year}-01-01&eaten_on=lte.${year}-12-31&order=bowl_no.desc&limit=1`,
+      { headers: restHeaders(c.key), cache: "no-store" }
+    );
+    if (maxRes.ok) {
+      const [top] = (await maxRes.json()) as { bowl_no: number | null }[];
+      if (top?.bowl_no != null) bowlNo = top.bowl_no + 1;
+      else bowlNo = 1;
+    }
+    // 取得に失敗したときは番号を振らない（誤った番号を残すより空のほうが直しやすい）。
+  }
 
   const row = {
     eaten_on: eatenOn,
