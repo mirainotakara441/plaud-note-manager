@@ -423,7 +423,9 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
               type="file"
               accept="image/*"
               multiple
-              className="hidden"
+              // display:noneだとiOS Safariでchangeイベントが発火しないことがあるため、
+              // 要素としては存在させたまま見た目だけ消す（sr-only）。
+              className="sr-only"
               disabled={photos.length >= MAX_PHOTOS}
               onChange={(e) => {
                 onPickPhotos(e.target.files);
