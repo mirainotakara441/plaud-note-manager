@@ -323,12 +323,22 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
   const [menu, setMenu] = useState("");
   const [memo, setMemo] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  function onPickPhotos(files: FileList | null) {
-    if (!files) return;
-    setPhotos((prev) => [...prev, ...Array.from(files)].slice(0, MAX_PHOTOS));
+  // 選んだ写真をその場で見せる。反映されたことが目で分かるようにするため。
+  useEffect(() => {
+    const urls = photos.map((f) => URL.createObjectURL(f));
+    setPreviews(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
+  }, [photos]);
+
+  // 受け取るのは File[]。FileList のまま渡すと、onChange で入力欄を空にした時点で
+  // 中身が消え、後から走る setState が空を見てしまう（iOS Safariで実際に発生）。
+  function onPickPhotos(picked: File[]) {
+    if (picked.length === 0) return;
+    setPhotos((prev) => [...prev, ...picked].slice(0, MAX_PHOTOS));
   }
 
   function removePhoto(i: number) {
@@ -428,23 +438,33 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
               className="sr-only"
               disabled={photos.length >= MAX_PHOTOS}
               onChange={(e) => {
-                onPickPhotos(e.target.files);
+                // value を空にすると FileList の中身も消える。setState は後から走るので、
+                // 実体をここで配列に写しておかないと空を渡すことになる。
+                const picked = Array.from(e.target.files ?? []);
                 e.target.value = "";
+                onPickPhotos(picked);
               }}
             />
           </label>
           {photos.length > 0 && (
             <div className="flex flex-wrap gap-2">
+              <span className="w-full text-xs font-bold text-orange-700">
+                写真 {photos.length}枚を添付します
+              </span>
               {photos.map((f, i) => (
-                <span
-                  key={i}
-                  className="flex items-center gap-1 rounded-lg bg-orange-50 px-2 py-1 text-xs text-orange-700"
-                >
-                  {f.name.slice(0, 14)}
+                <span key={i} className="relative">
+                  {previews[i] && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={previews[i]}
+                      alt={f.name}
+                      className="h-16 w-16 rounded-lg object-cover"
+                    />
+                  )}
                   <button
                     type="button"
                     onClick={() => removePhoto(i)}
-                    className="font-bold text-orange-400"
+                    className="absolute -right-1 -top-1 h-5 w-5 rounded-full bg-gray-900 text-xs font-bold text-white"
                     aria-label="この写真を外す"
                   >
                     ×
