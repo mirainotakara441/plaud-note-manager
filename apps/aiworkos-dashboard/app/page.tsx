@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import IntegrationPanel from "@/app/components/IntegrationPanel";
 import AdvisorCard from "@/app/components/AdvisorCard";
+import CodeSessionBoard from "@/app/components/CodeSessionBoard";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
@@ -364,6 +365,11 @@ export default function Home() {
       {/* 「今朝の気づき」は作戦盤のすぐ下。各ダッシュボードは見に行けば分かるが、
           見に行かなければ分からない。溜まったデータ側から声をかける役をここに置く。 */}
       <AdvisorCard />
+
+      {/* セッションの鮮度。並行して抱えている本数が多く、どれがどこまで進んだか
+          分からなくなる。進捗率は測れない（セッションに「完了」の定義が無い）ので、
+          出すのは動きの鮮度と詰まり方だけ。放置されている帯が薄い塊として浮かぶ。 */}
+      <CodeSessionBoard />
 
       <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
       <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
