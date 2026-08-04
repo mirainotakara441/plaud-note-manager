@@ -1,11 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { STAKEHOLDER_CATEGORIES } from "@/lib/categories";
+import {
+  STAKEHOLDER_CATEGORIES,
+  categoryWideName,
+  parseCategoryWideName,
+} from "@/lib/categories";
 
 // ステークホルダーの2段階選択：カテゴリーを選ぶ → そのカテゴリーの具体名を選ぶ。
 // 一覧に無い相手（新しい議員など）は「その他（直接入力）」で追加でき、
 // 登録時にマスタへ反映されるので次回から選択肢に出る。
+//
+// allowCategoryWide を立てた画面だけ、先頭に「〇〇全般（相手を特定しない）」が出る。
+// 相手を1つに決めずカテゴリー全体を扱いたい壁打ち用で、団体マスタには登録しない。
 
 // 値は stakeholders.category のCHECK制約と一致していなければならないため、
 // lib/categories.ts の一箇所で管理する（正準8分類との差分もそちらに記載）。
@@ -21,6 +28,8 @@ type Props = {
   name: string;
   onNameChange: (n: string) => void;
   disabled?: boolean;
+  /** 「〇〇全般」（相手を特定しない）を選べるようにする。既定は不可。 */
+  allowCategoryWide?: boolean;
 };
 
 export default function StakeholderPicker({
@@ -29,9 +38,11 @@ export default function StakeholderPicker({
   name,
   onNameChange,
   disabled,
+  allowCategoryWide,
 }: Props) {
   const [byCategory, setByCategory] = useState<Record<string, string[]>>({});
   const [custom, setCustom] = useState(false);
+  const wideName = categoryWideName(category);
 
   useEffect(() => {
     fetch("/api/stakeholders", { cache: "no-store" })
@@ -42,8 +53,10 @@ export default function StakeholderPicker({
 
   const names = useMemo(() => byCategory[category] ?? [], [byCategory, category]);
 
-  // 選択中の名前が一覧に無ければ直接入力扱いにする
+  // 選択中の名前が一覧に無ければ直接入力扱いにする。
+  // 「〇〇全般」は団体マスタに載らないので、ここで直接入力に落としてはいけない。
   useEffect(() => {
+    if (parseCategoryWideName(name)) return;
     if (name && names.length > 0 && !names.includes(name)) setCustom(true);
   }, [name, names]);
 
@@ -77,7 +90,7 @@ export default function StakeholderPicker({
         </label>
         {!custom ? (
           <select
-            value={names.includes(name) ? name : ""}
+            value={names.includes(name) || name === wideName ? name : ""}
             onChange={(e) => {
               if (e.target.value === CUSTOM) {
                 setCustom(true);
@@ -92,6 +105,9 @@ export default function StakeholderPicker({
             <option value="">
               {names.length > 0 ? `${category}を選んでください` : "（候補なし・直接入力へ）"}
             </option>
+            {allowCategoryWide && (
+              <option value={wideName}>{wideName}（相手を特定しない）</option>
+            )}
             {names.map((n) => (
               <option key={n} value={n}>
                 {n}

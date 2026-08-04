@@ -7,6 +7,7 @@ import StakeholderPicker, {
   rememberStakeholder,
   type Category,
 } from "@/app/components/StakeholderPicker";
+import { parseCategoryWideName } from "@/lib/categories";
 import { composeReply, parseQuestions, stripBold } from "@/lib/parseQuestions";
 
 type Msg = { role: "user" | "assistant"; content: string };
@@ -94,7 +95,11 @@ function RefineInner() {
       setSessionId(d.sessionId);
       setMessages(d.messages ?? []);
       setCurrentClosed(false);
-      rememberStakeholder(category, organization.trim());
+      // 「自治体全般」は実在の団体ではないので団体マスタへ入れない。
+      // 入れると次回から本物の候補に混ざって見分けがつかなくなる。
+      if (!parseCategoryWideName(organization)) {
+        rememberStakeholder(category, organization.trim());
+      }
       loadSessions();
     } catch {
       setError("通信エラーが発生しました");
@@ -268,6 +273,7 @@ function RefineInner() {
             name={organization}
             onNameChange={setOrganization}
             disabled={loading}
+            allowCategoryWide
           />
 
           {/* テーマ出し：自分で決める／AIに任せる の両方に対応 */}
@@ -307,7 +313,10 @@ function RefineInner() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-semibold text-indigo-700">
-              {organization}（{category}）
+              {/* 「自治体全般（自治体）」は同じことを二度言っていて読みにくい */}
+              {parseCategoryWideName(organization)
+                ? organization
+                : `${organization}（${category}）`}
             </span>
             {currentClosed && (
               <span className="rounded-full bg-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600">

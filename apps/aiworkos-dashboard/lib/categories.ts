@@ -51,11 +51,51 @@ const CATEGORY_ALIASES: Record<string, OrgCategory> = {
   自治体様: "自治体",
 };
 
+/**
+ * 読み取り時に、この分類として扱ってよい表記の一覧（正準＋別名）。
+ * 既存データに残る表記ゆれを取りこぼさず拾うためのもの。書き込みには使わない。
+ */
+export function categoryReadAliases(c: OrgCategory): string[] {
+  return [
+    c,
+    ...Object.keys(CATEGORY_ALIASES).filter((k) => CATEGORY_ALIASES[k] === c),
+  ];
+}
+
 export function normalizeOrgCategory(v: unknown): OrgCategory | null {
   if (typeof v !== "string") return null;
   const s = v.trim();
   if (isOrgCategory(s)) return s;
   return CATEGORY_ALIASES[s] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// 「相手を特定しない」対象の表し方
+// ---------------------------------------------------------------------------
+
+/**
+ * 壁打ちで「A市について」ではなく「自治体という区分全体について」を扱いたい場面が
+ * ある。そのときの対象名を `<正準8分類>全般`（例: `自治体全般`・`議員全般`）という
+ * 決まった形に固定する。
+ *
+ * 団体マスタには入れない（実在しない団体なので、選択肢に混ぜると次から本物と
+ * 見分けがつかなくなる）。判定は必ず parseCategoryWideName() を通すこと。
+ * 文字列比較を各所に散らすと、片方だけ直したときに全般セッションが普通の団体として
+ * 扱われ、存在しない団体名で記憶層を検索しにいく。
+ */
+export const CATEGORY_WIDE_SUFFIX = "全般";
+
+export function categoryWideName(c: OrgCategory): string {
+  return `${c}${CATEGORY_WIDE_SUFFIX}`;
+}
+
+/** 「自治体全般」のような全般指定ならその分類を返す。通常の団体名なら null。 */
+export function parseCategoryWideName(v: unknown): OrgCategory | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (!s.endsWith(CATEGORY_WIDE_SUFFIX)) return null;
+  const base = s.slice(0, -CATEGORY_WIDE_SUFFIX.length);
+  return isOrgCategory(base) ? base : null;
 }
 
 // ---------------------------------------------------------------------------

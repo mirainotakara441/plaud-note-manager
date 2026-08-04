@@ -3,6 +3,11 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { isLlmConfigured, structured, text } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { windowChunks } from "@/lib/chunks";
+import {
+  categoryReadAliases,
+  parseCategoryWideName,
+  type OrgCategory,
+} from "@/lib/categories";
 
 // 壁打ち（熟成ループ）。対象の登録内容を土台に Claude が深掘り質問 → 吉井さんが回答 →
 // 内容を熟成 → 成果物として記憶層へ保存し直す。会話は refine_sessions / refine_messages に残す。
@@ -38,6 +43,14 @@ type Meeting = {
   title: string;
   content: string;
   event_date: string | null;
+};
+
+type WeeklyRow = {
+  week_start: string;
+  organization: string | null;
+  summary: string | null;
+  insight: string | null;
+  tactic: string | null;
 };
 
 const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
@@ -94,8 +107,117 @@ function restHeaders(anonKey: string, extra?: Record<string, string>) {
   };
 }
 
-// 対象の登録内容（成果物・会議・メモ）を集めて壁打ちの土台にする。
+// 壁打ちの土台を集める。対象が「自治体全般」のような全般指定かどうかで集め方が変わる。
 async function fetchContext(
+  supabaseUrl: string,
+  anonKey: string,
+  organization: string
+): Promise<string> {
+  const wide = parseCategoryWideName(organization);
+  return wide
+    ? fetchCategoryContext(supabaseUrl, anonKey, wide)
+    : fetchOrgContext(supabaseUrl, anonKey, organization);
+}
+
+// 分類全体の土台。特定の団体に絞らないので、団体タグでの検索と会議履歴は使えない。
+// 代わりに週報（分類ごとの章立てがそのまま入っている唯一のテーブル）を横串で読む。
+// ここを入れないと土台が空同然になり、全般の壁打ちはAIが何も知らないまま始まる。
+async function fetchCategoryContext(
+  supabaseUrl: string,
+  anonKey: string,
+  category: OrgCategory
+): Promise<string> {
+  const parts: string[] = [];
+
+  // 分類を問わず横断で成果物を拾う（organization を渡さない＝団体で絞らない）
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `${category} 向けの提案 論点 打ち手 判断軸`,
+        source_type: "成果物",
+        match_count: 20,
+      }),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const rows: MemoResult[] = Array.isArray(data?.results) ? data.results : [];
+      if (rows.length > 0) {
+        parts.push(
+          `==== 登録済みの成果物（${category}まわりを横断） ====\n` +
+            rows.map((r) => `- ${r.title}: ${r.content}`).join("\n")
+        );
+      }
+    }
+  } catch (err) {
+    console.error("fetchCategoryContext: 成果物検索失敗", err);
+  }
+
+  // 週報の該当カテゴリー。表記ゆれの残っている行も拾う。
+  try {
+    const cats = categoryReadAliases(category)
+      .map((c) => `"${c}"`)
+      .join(",");
+    const res = await fetch(
+      `${restUrl(supabaseUrl, "weekly_reports")}?select=week_start,organization,summary,insight,tactic&category=in.(${encodeURIComponent(cats)})&order=week_start.desc&limit=60`,
+      { headers: restHeaders(anonKey), cache: "no-store" }
+    );
+    if (res.ok) {
+      const rows: WeeklyRow[] = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        parts.push(
+          `==== 週報（${category}） ====\n` +
+            rows
+              .map((r) =>
+                [
+                  `- ${r.week_start}週 ${r.organization ?? ""}: ${r.summary ?? ""}`,
+                  r.insight ? `  気づき: ${r.insight}` : "",
+                  r.tactic ? `  打ち手: ${r.tactic}` : "",
+                ]
+                  .filter(Boolean)
+                  .join("\n")
+              )
+              .join("\n")
+        );
+      }
+    }
+  } catch (err) {
+    // 週報が取れなくても成果物だけで壁打ちは成立する
+    console.error("fetchCategoryContext: 週報取得失敗", err);
+  }
+
+  // 関連メモ（日記・学び）
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: category, match_count: 6 }),
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const rows: MemoResult[] = Array.isArray(data?.results) ? data.results : [];
+      const memos = rows.filter((r) => r.source_type !== "成果物");
+      if (memos.length > 0) {
+        parts.push(
+          `==== 関連メモ（日記・学び） ====\n` +
+            memos.map((r) => `- [${r.source_type}] ${r.title}: ${r.content}`).join("\n")
+        );
+      }
+    }
+  } catch (err) {
+    console.error("fetchCategoryContext: 関連メモ検索失敗", err);
+  }
+
+  return parts.length > 0
+    ? parts.join("\n\n")
+    : `（${category}に紐づく登録内容はまだありません）`;
+}
+
+// 特定の団体の登録内容（成果物・会議・メモ）を集めて壁打ちの土台にする。
+async function fetchOrgContext(
   supabaseUrl: string,
   anonKey: string,
   organization: string
@@ -256,10 +378,17 @@ async function askClaude(
 【テーマ】${theme}`
     : `テーマは指定されていません。土台を読み、まだ言語化されていない前提・急所・判断軸のうち、最も重要なものを自分で選んで深掘りしてください。`;
 
+  // 全般指定は「相手が決まっていない」のではなく「相手を特定しないのが狙い」。
+  // これを書いておかないと、AIが最初の質問で必ず「どの自治体ですか」と聞き返してくる。
+  const wide = parseCategoryWideName(organization);
+  const target = wide
+    ? `${organization}（特定の相手ではなく、${wide}という区分全体についての壁打ちです。個別の団体名を特定しようとせず、${wide}に共通して効く論点・型・判断軸を扱ってください）`
+    : organization;
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
-      content: `対象: ${organization}
+      content: `対象: ${target}
 
 以下が、この対象についてこれまでに登録された内容（壁打ちの土台）です。
 ${context}
@@ -504,6 +633,7 @@ export async function POST(req: NextRequest) {
       if (!organization) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
+      const wideCategory = parseCategoryWideName(organization);
 
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       if (history.length === 0) {
@@ -520,7 +650,7 @@ export async function POST(req: NextRequest) {
       // 応答が空・拒否のときは structured() が投げ、下の catch で 502 になる。
       const parsed = await structured<{ title: string; content: string }>({
         system: SYSTEM_PROMPT,
-        prompt: `対象: ${organization}
+        prompt: `対象: ${organization}${wideCategory ? `（特定の相手ではなく、${wideCategory}という区分全体についての壁打ち）` : ""}
 
 ==== 既存の土台 ====
 ${context}
@@ -562,13 +692,16 @@ ${transcript}
             body: JSON.stringify({
               source_type: "成果物",
               source_id: `refine:${sessionId}:${i + 1}`,
-              organization,
+              // 全般の壁打ちは実在の団体に紐づかない。「自治体全般」という団体が
+              // あるかのように記録すると、団体別タイムラインに幽霊が1つ増える。
+              organization: wideCategory ? null : organization,
               title: `${parsed.title}｜壁打ち熟成｜${today}｜${i + 1}/${chunks.length}`,
               content: chunk,
               event_date: today,
               metadata: {
                 種別: "メモ",
                 カテゴリ: category,
+                ...(wideCategory ? { 対象範囲: organization } : {}),
                 資料名: parsed.title,
                 出所: "壁打ち",
                 セッション: sessionId,
