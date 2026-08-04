@@ -12,7 +12,12 @@
 // フリーワード検索用に一緒に持たせる。
 // 正規化列が無い旧JSON（salt2_members.json）を渡しても動く（3系統は空配列になる）。
 //
+// team はSlackのチームチャンネル20本から起こしたチーム配属（例「8月ビジネスチーム6」）。
+// SALT2側の配属が未完のため空文字の人がいる（空文字はnullで入る）。
+// track は team から補正済みなので、この2つは必ずセットで流すこと。
+//
 // キーは slack_display。同じ人をもう一度流せば上書き、新しい人は追加される。
+// 氏名の修正（「矢幡」→「矢幡 康祐」など）も slack_display が変わらない限り上書きで通る。
 // 名簿全体は136名で、いま入っているのは自己紹介を投稿した56名。
 // 未投稿の人ぶんを後から取れたら、同じ形のJSONにしてこのスクリプトを流せば足せる。
 //
@@ -74,6 +79,7 @@ const rows = members.map((m) => ({
   personal: s(m.personal),
   note: s(m.note),
   track: s(m.track),
+  team: s(m.team),
   tags: list(m.tags),
   industry_tags: list(m.industry_tags),
   stance_tags: list(m.stance_tags),

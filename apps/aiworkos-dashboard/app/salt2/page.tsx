@@ -16,8 +16,11 @@ import {
   hasAnyFilter,
   hobbyFacets,
   industryFacets,
+  selfTeam,
   stanceFacets,
   summaryLine,
+  teamFacets,
+  teamSize,
   toggle,
   trackFacets,
 } from "@/lib/salt2";
@@ -35,6 +38,11 @@ import {
 //
 // データは56行と小さいので /api/salt2 で全件を受け取り、絞り込みは全てこの中で行う
 // （家庭訪問と同じ流儀。打つたびに問い合わせないぶん取り消しが速い）。
+//
+// 絞り込みの枠は既定で全部畳んである。以前は6枠のチップを開きっぱなしにしていて、
+// iPhone（375px）だと絞り込みだけで4画面ぶん縦に伸び、1人目のカードに届くまで
+// スクロールが要った。畳んだままでも何を絞っているかが分かるよう、
+// 見出しに選択中の件数を出す（FacetAccordion）。
 
 const C_SALT = "#2a78d6"; // SALT2の色（家庭訪問の菫・ラーメンの橙と混ざらない青）
 const C_AI = "#1baf7a"; // AI活用
@@ -42,6 +50,7 @@ const C_GOAL = "#c77700"; // 学びたいこと
 const C_INDUSTRY = "#4a3aa7"; // 業界
 const C_STANCE = "#2a78d6"; // 立場・関心
 const C_HOBBY = "#c2417f"; // 趣味
+const C_TEAM = "#0d7c8a"; // チーム（同じチームの動線を目で追える色）
 
 type ApiResponse = { members: Salt2Member[]; error?: string };
 
@@ -191,6 +200,14 @@ function MemberCard({
                 {member.track}
               </span>
             )}
+            {member.team?.trim() && (
+              <span
+                className="rounded-full border px-2 py-0.5 text-xs font-medium"
+                style={{ color: C_TEAM, borderColor: C_TEAM }}
+              >
+                👥 {member.team}
+              </span>
+            )}
           </div>
           {sub && <p className="mt-0.5 text-sm text-gray-600">{sub}</p>}
 
@@ -338,6 +355,64 @@ function FacetChips({
   );
 }
 
+// 絞り込みの1枠。既定は畳んである。
+//
+// 畳んだままでも「何を絞っているか」が分かることが要件なので、見出しには
+// 選択中の件数を出し、選択があれば枠ごと色を付ける（開かないと分からない、を無くす）。
+// 開閉はこの中の state だけで持つ（保存しない）。絞り込み自体は親が持っているので、
+// 閉じても絞り込みは効いたまま。
+function FacetAccordion({
+  label,
+  color = C_SALT,
+  selectedCount,
+  optionCount,
+  children,
+}: {
+  label: string;
+  color?: string;
+  selectedCount: number;
+  optionCount: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = selectedCount > 0;
+
+  return (
+    <div
+      className={`mt-2 overflow-hidden rounded-xl border ${
+        active ? "bg-gray-50/50" : "border-gray-200"
+      }`}
+      style={active ? { borderColor: color } : undefined}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left active:bg-gray-50"
+      >
+        <span
+          className={`text-xs ${active ? "font-bold" : "font-medium text-gray-600"}`}
+          style={active ? { color } : undefined}
+        >
+          {label}
+        </span>
+        {active ? (
+          <span
+            className="rounded-full px-2 py-0.5 text-[0.625rem] font-bold text-white"
+            style={{ backgroundColor: color }}
+          >
+            {selectedCount}件選択中
+          </span>
+        ) : (
+          <span className="text-[0.625rem] text-gray-400">{optionCount}</span>
+        )}
+        <span className="ml-auto text-[0.625rem] text-gray-400">{open ? "▲ 畳む" : "▼ 開く"}</span>
+      </button>
+      {open && <div className="border-t border-gray-100 px-3 py-2">{children}</div>}
+    </div>
+  );
+}
+
 const inputClass =
   "w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400";
 
@@ -389,9 +464,16 @@ export default function Salt2Page() {
       hobbies: hobbyFacets(facetBase(all, filters, "hobbies")),
       companies: companyFacets(facetBase(all, filters, "companies")),
       tracks: trackFacets(facetBase(all, filters, "tracks")),
+      teams: teamFacets(facetBase(all, filters, "teams")),
     }),
     [all, filters]
   );
+
+  // 自分のチームは名簿から引く（メールアドレスだけが固定で、チーム名は持たない）。
+  // 本人が名簿に居ない・配属が未定なら null になり、ボタンは出さない。
+  const myTeam = useMemo(() => selfTeam(all), [all]);
+  const myTeamCount = myTeam ? teamSize(all, myTeam) : 0;
+  const myTeamOn = myTeam != null && filters.teams.includes(myTeam);
 
   const setQuery = (query: string) => setFilters((f) => ({ ...f, query }));
   const toggleTag = (group: TagGroup, value: string) =>
@@ -399,6 +481,7 @@ export default function Salt2Page() {
   const toggleCompany = (v: string) =>
     setFilters((f) => ({ ...f, companies: toggle(f.companies, v) }));
   const toggleTrack = (v: string) => setFilters((f) => ({ ...f, tracks: toggle(f.tracks, v) }));
+  const toggleTeam = (v: string) => setFilters((f) => ({ ...f, teams: toggle(f.teams, v) }));
 
   const loading = !members && !error;
   const filtered = hasAnyFilter(filters);
@@ -451,8 +534,31 @@ export default function Salt2Page() {
               下のタグに無い語（社名・製品名・業界用語）も、自己紹介の原文から拾えます
             </p>
 
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-medium text-gray-500">業界</p>
+            {/* 自分のチームは一番よく使う導線なので、枠を開かずに一発で押せる位置に置く。
+                中身はチームの絞り込みそのものなので、他の枠と普通に掛け合わせられる。 */}
+            {myTeam && (
+              <button
+                type="button"
+                onClick={() => toggleTeam(myTeam)}
+                aria-pressed={myTeamOn}
+                className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-bold transition active:scale-[0.99] ${
+                  myTeamOn ? "text-white" : "bg-white text-gray-700 ring-1 ring-gray-200"
+                }`}
+                style={myTeamOn ? { backgroundColor: C_TEAM } : { color: C_TEAM }}
+              >
+                {/* 押されている時は絵文字だけ差し替える。文字数が変わらないので
+                    375px でも1行に収まる（「解除」を足すと2行に折れる）。
+                    もう一度押せば外れるのは、下のチップと同じ挙動。 */}
+                {myTeamOn ? "✅" : "👥"} 同じチーム（{myTeam}）{myTeamCount}名
+              </button>
+            )}
+
+            <FacetAccordion
+              label="業界"
+              color={C_INDUSTRY}
+              selectedCount={filters.industries.length}
+              optionCount={facets.industries.length}
+            >
               <FacetChips
                 facets={facets.industries}
                 selected={filters.industries}
@@ -461,10 +567,14 @@ export default function Salt2Page() {
                 previewCount={facets.industries.length}
                 moreLabel="業界"
               />
-            </div>
+            </FacetAccordion>
 
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-medium text-gray-500">立場・関心</p>
+            <FacetAccordion
+              label="立場・関心"
+              color={C_STANCE}
+              selectedCount={filters.stances.length}
+              optionCount={facets.stances.length}
+            >
               <FacetChips
                 facets={facets.stances}
                 selected={filters.stances}
@@ -473,10 +583,14 @@ export default function Salt2Page() {
                 previewCount={facets.stances.length}
                 moreLabel="立場・関心"
               />
-            </div>
+            </FacetAccordion>
 
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-medium text-gray-500">趣味</p>
+            <FacetAccordion
+              label="趣味"
+              color={C_HOBBY}
+              selectedCount={filters.hobbies.length}
+              optionCount={facets.hobbies.length}
+            >
               <FacetChips
                 facets={facets.hobbies}
                 selected={filters.hobbies}
@@ -485,11 +599,36 @@ export default function Salt2Page() {
                 previewCount={facets.hobbies.length}
                 moreLabel="趣味"
               />
-            </div>
+            </FacetAccordion>
+
+            {facets.teams.length > 0 && (
+              <FacetAccordion
+                label="チーム"
+                color={C_TEAM}
+                selectedCount={filters.teams.length}
+                optionCount={facets.teams.length}
+              >
+                <FacetChips
+                  facets={facets.teams}
+                  selected={filters.teams}
+                  onToggle={toggleTeam}
+                  color={C_TEAM}
+                  previewCount={facets.teams.length}
+                  moreLabel="チーム"
+                />
+                <p className="mt-1.5 text-[0.625rem] leading-relaxed text-gray-400">
+                  出典はSlackのチームチャンネル。SALT2側の配属が未完のため、
+                  チームが分かっているのは{all.filter((m) => m.team?.trim()).length}名ぶんです
+                </p>
+              </FacetAccordion>
+            )}
 
             {facets.tracks.length > 1 && (
-              <div className="mt-3">
-                <p className="mb-1 text-xs font-medium text-gray-500">トラック</p>
+              <FacetAccordion
+                label="トラック"
+                selectedCount={filters.tracks.length}
+                optionCount={facets.tracks.length}
+              >
                 <FacetChips
                   facets={facets.tracks}
                   selected={filters.tracks}
@@ -497,11 +636,14 @@ export default function Salt2Page() {
                   previewCount={facets.tracks.length}
                   moreLabel="トラック"
                 />
-              </div>
+              </FacetAccordion>
             )}
 
-            <div className="mt-3">
-              <p className="mb-1 text-xs font-medium text-gray-500">会社</p>
+            <FacetAccordion
+              label="会社"
+              selectedCount={filters.companies.length}
+              optionCount={facets.companies.length}
+            >
               <FacetChips
                 facets={facets.companies}
                 selected={filters.companies}
@@ -509,7 +651,7 @@ export default function Salt2Page() {
                 previewCount={8}
                 moreLabel="会社をもっと見る"
               />
-            </div>
+            </FacetAccordion>
 
             <p className="mt-2 text-[0.625rem] leading-relaxed text-gray-400">
               同じ枠で複数選ぶと「どれか」、枠をまたいで選ぶと「すべて」に当てはまる人が残ります

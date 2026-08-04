@@ -34,6 +34,7 @@ export type Salt2Member = {
   personal: string | null;
   note: string | null;
   track: string | null;
+  team: string | null; // 例「8月ビジネスチーム6」。配属未完のため未定の人は null / 空文字
   tags: string[]; // 生タグ（検索用。絞り込みには出さない）
   industry_tags: string[];
   stance_tags: string[];
@@ -45,6 +46,32 @@ export type Salt2Member = {
 // 自己紹介にトラックが書かれていない人はこの値が入っている（DBの実データ）。
 // 絞り込みチップでは最後に回す。
 export const TRACK_UNKNOWN = "不明";
+
+// ── 「自分」の起点 ────────────────────────────────────────────────
+//
+// 「同じチームの人だけ見る」を出すために、名簿の中のどれが吉井さん本人かを知る必要がある。
+// チーム名をここに書くとチーム替えのたびにコードを直すことになるので、
+// 変わらない値（メールアドレス）だけを持ち、チーム名はデータから引く。
+// 名簿が更新されればボタンの中身も自動で追従する。
+export const SELF_EMAIL = "mirainotakara441@gmail.com";
+
+function sameEmail(a: string | null, b: string): boolean {
+  return (a ?? "").trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+// 本人が名簿に居ない・チーム未配属なら null。呼ぶ側は null を「ボタンを出さない」に使う。
+export function selfTeam(members: Salt2Member[]): string | null {
+  const self = members.find((m) => sameEmail(m.email, SELF_EMAIL));
+  const team = self?.team?.trim();
+  return team ? team : null;
+}
+
+// そのチームで名簿に載っている人数。
+// 自己紹介を投稿した人しかDBに居ないので、実際のチーム人数より少ないのが普通
+// （8月ビジネスチーム6は5名だが、載っているのは本人と矢幡さんの2名）。
+export function teamSize(members: Salt2Member[], team: string): number {
+  return members.filter((m) => (m.team ?? "").trim() === team).length;
+}
 
 // ── 検索のための正規化 ────────────────────────────────────────────
 //
@@ -79,6 +106,7 @@ export function haystack(m: Salt2Member): string {
       m.personal,
       m.note,
       m.track,
+      m.team,
       m.raw_intro,
       ...m.hobbies,
       ...m.tags,
@@ -132,6 +160,15 @@ export function companyFacets(members: Salt2Member[]): Facet[] {
   return tally(members.map((m) => m.company ?? ""));
 }
 
+// チームは「開発チーム1」「8月ビジネスチーム6」のような連番なので、
+// 件数順ではなく名前順に並べる（探すときは番号で目で追うため）。
+// 未配属（空文字）は tally が落とすのでチップには出ない。
+export function teamFacets(members: Salt2Member[]): Facet[] {
+  return tally(members.map((m) => m.team ?? "")).sort((a, b) =>
+    a.value.localeCompare(b.value, "ja", { numeric: true })
+  );
+}
+
 // トラックは「不明」を必ず末尾へ（未記入は絞り込みの主役ではないため）。
 export function trackFacets(members: Salt2Member[]): Facet[] {
   const all = tally(members.map((m) => m.track ?? ""));
@@ -153,6 +190,7 @@ export type Filters = {
   hobbies: string[]; // hobby_tags（正準セット19種）に対する絞り込み
   companies: string[];
   tracks: string[];
+  teams: string[];
 };
 
 export const EMPTY_FILTERS: Filters = {
@@ -162,6 +200,7 @@ export const EMPTY_FILTERS: Filters = {
   hobbies: [],
   companies: [],
   tracks: [],
+  teams: [],
 };
 
 function matchesGroup(selected: string[], values: string[]): boolean {
@@ -175,6 +214,7 @@ export function filterMembers(members: Salt2Member[], f: Filters): Salt2Member[]
     if (!matchesGroup(f.hobbies, m.hobby_tags)) return false;
     if (f.companies.length > 0 && !f.companies.includes(m.company ?? "")) return false;
     if (f.tracks.length > 0 && !f.tracks.includes(m.track ?? "")) return false;
+    if (f.teams.length > 0 && !f.teams.includes((m.team ?? "").trim())) return false;
     if (f.query.trim() && !matchesQuery(haystack(m), f.query)) return false;
     return true;
   });
@@ -190,7 +230,7 @@ export function filterMembers(members: Salt2Member[], f: Filters): Salt2Member[]
 export function facetBase(
   members: Salt2Member[],
   f: Filters,
-  group: "industries" | "stances" | "hobbies" | "companies" | "tracks"
+  group: "industries" | "stances" | "hobbies" | "companies" | "tracks" | "teams"
 ): Salt2Member[] {
   return filterMembers(members, { ...f, [group]: [] });
 }
@@ -202,7 +242,8 @@ export function hasAnyFilter(f: Filters): boolean {
     f.stances.length > 0 ||
     f.hobbies.length > 0 ||
     f.companies.length > 0 ||
-    f.tracks.length > 0
+    f.tracks.length > 0 ||
+    f.teams.length > 0
   );
 }
 

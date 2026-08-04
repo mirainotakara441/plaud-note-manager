@@ -28,6 +28,8 @@ const COLUMNS = [
   "personal",
   "note",
   "track",
+  // チーム配属（Slackのチームチャンネル20本が出典）。SALT2側の配属が未完で38/56だけ埋まっている
+  "team",
   // 絞り込みに使う正準タグ3系統（Notionと同じ語彙）
   "industry_tags",
   "stance_tags",
