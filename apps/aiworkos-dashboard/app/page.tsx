@@ -77,6 +77,13 @@ const PROPOSE_FEATURES: Feature[] = [
     accent: "bg-pink-100 text-pink-700",
   },
   {
+    href: "/legislators",
+    icon: "🏛️",
+    title: "議員リスト",
+    desc: "会派・議会の階層で議員を辿り、接触履歴とこれからの予定を1画面で確認",
+    accent: "bg-indigo-100 text-indigo-700",
+  },
+  {
     href: "/procedure-refine",
     icon: "📋",
     title: "提出文書 壁打ち",
@@ -85,6 +92,7 @@ const PROPOSE_FEATURES: Feature[] = [
   },
 ];
 
+// 並びは「日々 → 週 → 月 → 団体」。手前ほど頻繁に開くものを置く。
 const REVIEW_FEATURES: Feature[] = [
   {
     href: "/actions",
@@ -93,6 +101,39 @@ const REVIEW_FEATURES: Feature[] = [
     desc: "日記の「やってみよう」「本日のポイント」を積み上げてチェック消し込み",
     accent: "bg-emerald-100 text-emerald-700",
   },
+  {
+    href: "/retrospective",
+    icon: "🪞",
+    title: "振り返り",
+    desc: "週次・月次の★評価と総括・示唆・次期の予定を溜め、節ごとの推移を追う",
+    accent: "bg-violet-100 text-violet-700",
+  },
+  {
+    href: "/weekly-report",
+    icon: "🗂️",
+    title: "週報ダッシュボード",
+    desc: "自治体・事業者・議員・委託会社の週次活動をカテゴリー別に一枚で確認",
+    accent: "bg-cyan-100 text-cyan-700",
+  },
+  {
+    href: "/monthly-report",
+    icon: "🗓️",
+    title: "月報ドラフト自動生成",
+    desc: "暦月を選ぶと週報のKPI集計とAI月報ドラフトを生成し、サイト・Notionへ登録",
+    accent: "bg-orange-100 text-orange-700",
+  },
+  {
+    href: "/organizations",
+    icon: "🧭",
+    title: "団体別攻略",
+    desc: "団体ごとの状態・課題・施策と、会議・週報・成果物の時系列を1画面に",
+    accent: "bg-fuchsia-100 text-fuchsia-700",
+  },
+];
+
+// 仕事の振り返りではなく、AIワークOSそのものが健全に回っているかを見る群。
+// 見る目的が違うものを「振り返る」に混ぜると、毎日開く場所が薄まる。
+const SYSTEM_FEATURES: Feature[] = [
   {
     href: "/status",
     icon: "📊",
@@ -106,41 +147,6 @@ const REVIEW_FEATURES: Feature[] = [
     title: "日報録",
     desc: "各セッションで何をどこまで進めたかを日付ごとに記録・一覧",
     accent: "bg-sky-100 text-sky-700",
-  },
-  {
-    href: "/weekly-report",
-    icon: "🗂️",
-    title: "週報ダッシュボード",
-    desc: "自治体・事業者・議員・委託会社の週次活動をカテゴリー別に一枚で確認",
-    accent: "bg-cyan-100 text-cyan-700",
-  },
-  {
-    href: "/retrospective",
-    icon: "🪞",
-    title: "振り返り",
-    desc: "週次・月次の★評価と総括・示唆・次期の予定を溜め、節ごとの推移を追う",
-    accent: "bg-violet-100 text-violet-700",
-  },
-  {
-    href: "/organizations",
-    icon: "🧭",
-    title: "団体別攻略",
-    desc: "団体ごとの状態・課題・施策と、会議・週報・成果物の時系列を1画面に",
-    accent: "bg-fuchsia-100 text-fuchsia-700",
-  },
-  {
-    href: "/legislators",
-    icon: "🏛️",
-    title: "議員リスト",
-    desc: "会派・議会の階層で議員を辿り、接触履歴とこれからの予定を1画面で確認",
-    accent: "bg-indigo-100 text-indigo-700",
-  },
-  {
-    href: "/monthly-report",
-    icon: "🗓️",
-    title: "月報ドラフト自動生成",
-    desc: "暦月を選ぶと週報のKPI集計とAI月報ドラフトを生成し、サイト・Notionへ登録",
-    accent: "bg-orange-100 text-orange-700",
   },
 ];
 
@@ -393,6 +399,7 @@ export default function Home() {
       <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
       <FeatureGroup title="🎓 学ぶ" features={LEARN_FEATURES} />
       <FeatureGroup title="🌱 ライフスタイル・ヘルス" features={LIFESTYLE_HEALTH_FEATURES} />
+      <FeatureGroup title="🛠 システム" features={SYSTEM_FEATURES} />
 
       <IntegrationPanel />
 

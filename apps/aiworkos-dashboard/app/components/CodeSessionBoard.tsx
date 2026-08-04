@@ -5,20 +5,24 @@ import { useEffect, useMemo, useState } from "react";
 // ホームの「セッションの鮮度」。中身は /api/code-sessions。
 //
 // 出し方の考え方（AdvisorCard と同じ作法）:
-//   ・畳んだ状態でも、いちばん重い1行は読める。見出しに「昨日から動いたのは N本／
-//     中断 M本／3日以上放置 K本」を置き、開かなくても状況が分かるようにする。
-//   ・件数だけのバッジにしない。盤面そのものを最初から見せる。
+//   ・畳んだ状態でも、いちばん重い1行は読める。
+//   ・件数だけのバッジにしない。実際にどのセッションなのかを名前で出す。
 //   ・測れないものは出さない。セッションに「完了」の定義が無いので進捗率(%)は作らない。
 //     出すのは動きの鮮度（最後に動いてからの日数）と詰まり方（中断）だけ。
 //   ・今日のスナップショットが無い日は、古い盤面を今日の状態として出さない。
 //     「最終取得 MM/DD時点」と明示し、「昨日から」も言わない
 //     （進捗の実装で、古い値を黙って今日の顔で出す罠を一度踏んでいる）。
 //
-// 盤面の読み方:
-//   1マス＝セッション1本（アーカイブ済みは出さない）。
-//   濃さ＝最後に動いてからの経過日数。今日動いたものが濃く、放置されるほど薄くなる。
-//   色相＝中断したまま止まっているか（藍=通常／橙=中断）。薄さとは別の軸にしてある。
-//   枠＝ピン留め。
+// 見せ方（2026-08-04に作り替え）:
+//   もとは1マス＝1セッションの濃淡ヒートマップだったが、192マスの濃さの差を
+//   読み解くのは実際には無理があった。「今日／2週以上／中断／ピン留め」の
+//   凡例を見比べないと意味が取れず、どれが止まっているのかはマスに触って回る
+//   まで分からない。数を一望する形より、**名前で読める一覧**に寄せる。
+//
+//   ・「今日動いた」「1週間以内」「中断」の3つに切り替える。既定は今日。
+//   ・中断は濃さではなく橙の面で区別する（他の軸と混ざらないよう色相を分ける）。
+//   ・長い尾（1週間以上動いていない大量のセッション）は数だけを最後に1行で出す。
+//     一覧に混ぜると読む気が失せ、結局どれも読まれなくなる。
 
 type BoardSession = {
   id: string;
@@ -40,33 +44,15 @@ type BoardResponse = {
   error?: string;
 };
 
-// 鮮度の段階。境目は「今日／昨日／2日／1週間／2週間／それ以上」。
-// いちばん薄い段を indigo-50 まで落とすと白地に溶けて、放置の塊が「見えない」のではなく
-// 「無い」ように見えてしまう。薄い側は 100 で止めて、必ず面として残す。
-const STEPS = [
-  { limit: 1, live: "bg-indigo-700", stalled: "bg-amber-600" },
-  { limit: 2, live: "bg-indigo-500", stalled: "bg-amber-500" },
-  { limit: 3, live: "bg-indigo-400", stalled: "bg-amber-400" },
-  { limit: 7, live: "bg-indigo-300", stalled: "bg-amber-300" },
-  { limit: 14, live: "bg-indigo-200", stalled: "bg-amber-200" },
-  { limit: Infinity, live: "bg-indigo-100", stalled: "bg-amber-100" },
-] as const;
+type TabKey = "today" | "week" | "stalled";
 
 /**
- * 中断を名前で並べる本数の上限。超えたぶんは「ほか N本」に畳む。
+ * 一覧に名前を並べる上限。超えたぶんは「ほか N本」に畳む。
  *
- * 数だけを出していた頃は「中断6本」としか読めず、どれが止まっているのかは
- * 盤面のマスに触って回るまで分からなかった。中断は普段ひと桁なので、
- * 名前をそのまま置ける。放置（3桁になる）は数のままでよい。
+ * 1週間以内は数十本になることがある。全部並べるとホームが一覧で埋まって、
+ * 下にある機能カードまで辿り着けなくなる。上限を切って、続きは数で示す。
  */
-const NAMED_STALLED_MAX = 4;
-
-function toneOf(s: BoardSession): string {
-  // 経過日数が読めなかったマスは、いちばん薄い段に置く（勝手に「今日」にしない）。
-  const idle = s.days_idle ?? Infinity;
-  const step = STEPS.find((t) => idle < t.limit) ?? STEPS[STEPS.length - 1];
-  return s.stalled ? step.stalled : step.live;
-}
+const LIST_MAX = 12;
 
 function shortDate(day: string): string {
   const [, m, d] = day.split("-");
@@ -81,34 +67,47 @@ function idleText(days: number | null): string {
   return `${Math.floor(days)}日前`;
 }
 
-function Cell({
-  s,
-  active,
-  onPick,
-}: {
-  s: BoardSession;
-  active: boolean;
-  onPick: (s: BoardSession) => void;
-}) {
+// ピン留めを先頭に、あとは動きが新しい順。中断は「新しく止まったものほど
+// 手を戻しやすい」ので、同じ並びでよい。
+function byFreshness(a: BoardSession, b: BoardSession): number {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+  return (a.days_idle ?? Infinity) - (b.days_idle ?? Infinity);
+}
+
+function Row({ s }: { s: BoardSession }) {
   return (
-    <button
-      type="button"
-      onMouseEnter={() => onPick(s)}
-      onFocus={() => onPick(s)}
-      onClick={() => onPick(s)}
-      title={`${s.title}／${idleText(s.days_idle)}／${s.place}`}
-      aria-label={`${s.title}、${idleText(s.days_idle)}、${s.place}`}
-      className={`aspect-square rounded-[3px] transition ${toneOf(s)} ${
-        s.pinned ? "ring-2 ring-slate-800" : ""
-      } ${active ? "scale-125" : ""}`}
-    />
+    <li
+      className={`rounded-lg border px-3 py-2 ${
+        s.stalled ? "border-amber-200 bg-amber-50" : "border-gray-100 bg-gray-50"
+      }`}
+    >
+      <p className="flex items-start gap-1.5 text-sm font-medium leading-snug text-gray-900">
+        {s.pinned && <span aria-label="ピン留め">📌</span>}
+        <span className="min-w-0 flex-1">{s.title}</span>
+        {s.stalled && (
+          <span className="shrink-0 rounded-full bg-amber-200 px-1.5 py-0.5 text-[0.6875rem] font-bold text-amber-900">
+            中断
+          </span>
+        )}
+      </p>
+      <p
+        className={`mt-0.5 text-xs leading-relaxed ${
+          s.stalled ? "text-amber-700" : "text-gray-500"
+        }`}
+      >
+        {idleText(s.days_idle)}
+        {" ／ "}
+        {s.place}
+        {s.last_event && `（${s.last_event}）`}
+      </p>
+    </li>
   );
 }
 
 export default function CodeSessionBoard() {
   const [data, setData] = useState<BoardResponse | null>(null);
   const [failedToLoad, setFailedToLoad] = useState(false);
-  const [picked, setPicked] = useState<BoardSession | null>(null);
+  const [tab, setTab] = useState<TabKey>("today");
 
   useEffect(() => {
     let alive = true;
@@ -125,21 +124,17 @@ export default function CodeSessionBoard() {
     };
   }, []);
 
-  const summary = useMemo(() => {
+  const buckets = useMemo(() => {
     if (!data) return null;
     const list = data.sessions;
-    // 中断は、新しく止まったものほど手を戻しやすい。経過の浅い順に並べて、
-    // 名前で読める本数だけ前に出す。数だけでは「どれが」が分からず、
-    // 結局この盤面を開き直すことになる。
-    const stalledList = list
-      .filter((s) => s.stalled)
-      .sort((a, b) => (a.days_idle ?? Infinity) - (b.days_idle ?? Infinity));
+    // days_idle が読めなかったものは「今日動いた」に混ぜない（勝手に新しくしない）。
+    const idle = (s: BoardSession) => s.days_idle ?? Infinity;
     return {
       total: list.length,
-      stalledList,
-      stalledNamed: stalledList.slice(0, NAMED_STALLED_MAX),
-      stalledRest: Math.max(0, stalledList.length - NAMED_STALLED_MAX),
-      stale: list.filter((s) => (s.days_idle ?? Infinity) >= 3).length,
+      today: list.filter((s) => idle(s) < 1).sort(byFreshness),
+      week: list.filter((s) => idle(s) < 7).sort(byFreshness),
+      stalled: list.filter((s) => s.stalled).sort(byFreshness),
+      cold: list.filter((s) => idle(s) >= 7).length,
     };
   }, [data]);
 
@@ -152,13 +147,13 @@ export default function CodeSessionBoard() {
     );
   }
 
-  if (!data || !summary) {
+  if (!data || !buckets) {
     return (
       <div className="mb-6 h-[168px] animate-pulse rounded-2xl border border-gray-200 bg-gray-100" />
     );
   }
 
-  if (!data.snapshot_date || summary.total === 0) {
+  if (!data.snapshot_date || buckets.total === 0) {
     return (
       <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <p className="text-sm font-bold text-gray-900">
@@ -177,118 +172,89 @@ export default function CodeSessionBoard() {
   // 何日ぶんの動きなのか分からない数字になる。
   const showMoved = isToday && data.moved_since_prev !== null;
 
+  const TABS: { key: TabKey; label: string; list: BoardSession[] }[] = [
+    { key: "today", label: "今日動いた", list: buckets.today },
+    { key: "week", label: "1週間以内", list: buckets.week },
+    { key: "stalled", label: "中断", list: buckets.stalled },
+  ];
+  const current = TABS.find((t) => t.key === tab) ?? TABS[0];
+  const shown = current.list.slice(0, LIST_MAX);
+  const rest = current.list.length - shown.length;
+
   return (
     <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="mb-1 flex items-baseline justify-between gap-2">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
         <p className="text-sm font-bold text-gray-900">🗂️ セッションの鮮度</p>
         <p className="text-xs font-bold text-gray-400">
-          {isToday ? `全${summary.total}本` : `最終取得 ${shortDate(data.snapshot_date)}時点`}
+          {isToday ? `全${buckets.total}本` : `最終取得 ${shortDate(data.snapshot_date)}時点`}
         </p>
       </div>
 
-      {/* 数だけの行は「6本ある」以上のことを伝えない。中断は普段ひと桁なので、
-          どれが止まっているのかを名前で書く。放置は3桁になるので数のままにする。 */}
-      <p className="mb-2 text-sm leading-relaxed text-gray-600">
-        {showMoved && (
-          <>
-            昨日から
-            <span className="font-bold text-gray-900">{data.moved_since_prev}本</span>
-            が動いた
-            {" ／ "}
-          </>
-        )}
-        3日以上動いていないのが
-        <span className="font-bold text-gray-900">{summary.stale}本</span>
-        {!isToday && <span className="text-gray-400">（{shortDate(data.snapshot_date)}時点）</span>}
-      </p>
-
-      {summary.stalledList.length > 0 ? (
-        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="text-sm font-bold text-amber-800">
-            中断したまま {summary.stalledList.length}本
-          </p>
-          <ul className="mt-1 space-y-0.5">
-            {summary.stalledNamed.map((s) => (
-              <li key={s.id} className="text-sm leading-snug text-amber-900">
-                <span className="font-medium">{s.title}</span>
-                <span className="text-amber-700">
-                  {" — "}
-                  {idleText(s.days_idle)}
-                  {s.last_event ? `・${s.last_event}` : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {summary.stalledRest > 0 && (
-            <p className="mt-1 text-sm text-amber-700">
-              ほか {summary.stalledRest}本（盤面の橙のマス）
-            </p>
-          )}
-        </div>
-      ) : (
-        <p className="mb-3 text-sm text-gray-500">中断したまま止まっているものはありません。</p>
+      {showMoved && (
+        <p className="mb-2 text-sm leading-relaxed text-gray-600">
+          昨日から
+          <span className="font-bold text-gray-900">{data.moved_since_prev}本</span>
+          が動きました
+        </p>
       )}
 
       {!isToday && (
-        <p className="mb-3 text-sm text-amber-700">
-          今日の走査がまだ届いていません。この盤面は
+        <p className="mb-2 text-sm text-amber-700">
+          今日の走査がまだ届いていません。以下は
           {shortDate(data.snapshot_date)}時点のもので、今の状態ではありません。
         </p>
       )}
 
-      {/* 列数は幅任せ（auto-fill）。実測で iPhone(375px)は14列、PC(1280px)は33列になり、
-          どちらも1枚のカードに収まる。列数を固定するとどちらかで溢れるか間延びする。 */}
-      <div
-        className="grid gap-[3px] rounded-xl bg-slate-50 p-2"
-        style={{ gridTemplateColumns: "repeat(auto-fill, minmax(18px, 1fr))" }}
-      >
-        {data.sessions.map((s) => (
-          <Cell key={s.id} s={s} active={picked?.id === s.id} onPick={setPicked} />
+      {/* 切り替え。件数をラベルに載せて、開かなくても分布が分かるようにする */}
+      <div className="mb-2 flex gap-1 rounded-xl bg-gray-100 p-1">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            aria-pressed={t.key === tab}
+            className={`flex-1 rounded-lg px-1 py-1.5 transition ${
+              t.key === tab
+                ? t.key === "stalled"
+                  ? "bg-amber-500 text-white"
+                  : "bg-white text-gray-900 shadow-sm"
+                : "text-gray-500 active:bg-gray-200"
+            }`}
+          >
+            {/* iPhone幅では「今日動いた」が折り返す。3つとも
+                ラベル＋件数の2段に固定して、高さと重心を揃える */}
+            <span className="block whitespace-nowrap text-[0.8125rem] font-medium leading-tight">
+              {t.label}
+            </span>
+            <span className="block text-sm font-bold leading-tight">{t.list.length}</span>
+          </button>
         ))}
       </div>
 
-      <div className="mt-3 min-h-[2.75rem] rounded-xl bg-gray-50 px-3 py-2">
-        {picked ? (
-          <>
-            <p className="truncate text-sm font-bold text-gray-900">
-              {picked.pinned && <span className="mr-1">📌</span>}
-              {picked.title}
-            </p>
-            <p className="mt-0.5 text-xs text-gray-500">
-              {idleText(picked.days_idle)}
-              {" ／ "}
-              {picked.place}
-              {picked.stalled && (
-                <span className="font-bold text-amber-700">{" ／ "}中断</span>
-              )}
-              {picked.last_event && <span>（{picked.last_event}）</span>}
-            </p>
-          </>
-        ) : (
-          <p className="text-xs leading-relaxed text-gray-400">
-            マスに触れるとセッション名・経過・場所が出ます
-          </p>
-        )}
-      </div>
+      {shown.length > 0 ? (
+        <ul className="space-y-1.5">
+          {shown.map((s) => (
+            <Row key={s.id} s={s} />
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-lg bg-gray-50 px-3 py-3 text-sm text-gray-500">
+          {tab === "stalled"
+            ? "中断したまま止まっているものはありません。"
+            : "この期間に動いたセッションはありません。"}
+        </p>
+      )}
 
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
-        <span className="flex items-center gap-1">
-          今日
-          <span className="h-3 w-3 rounded-[3px] bg-indigo-700" aria-hidden />
-          <span className="h-3 w-3 rounded-[3px] bg-indigo-400" aria-hidden />
-          <span className="h-3 w-3 rounded-[3px] bg-indigo-200" aria-hidden />
-          <span className="h-3 w-3 rounded-[3px] bg-indigo-100" aria-hidden />
-          2週以上
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded-[3px] bg-amber-400" aria-hidden />
-          中断
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="h-3 w-3 rounded-[3px] bg-indigo-300 ring-2 ring-slate-800" aria-hidden />
-          ピン留め
-        </span>
-      </div>
+      {rest > 0 && (
+        <p className="mt-1.5 text-sm text-gray-500">ほか {rest}本</p>
+      )}
+
+      {/* 長い尾は数だけ。一覧に混ぜると読む気が失せる */}
+      {buckets.cold > 0 && (
+        <p className="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-400">
+          1週間以上動いていないのが {buckets.cold}本
+        </p>
+      )}
     </section>
   );
 }
