@@ -222,6 +222,9 @@ export default function ActionsPage() {
   // 納期の入力（カレンダーを開いている行のid）。
   // input[type=date] を使うので、iPhoneでもPCでもOS標準のカレンダーが出る。
   const [dueEditId, setDueEditId] = useState<string | null>(null);
+  // 納期は「入力中の下書き」を別に持つ。入力のたびに保存して入力欄を閉じると、
+  // iPhoneではカレンダーごと消えて日付を選べない（下の saveDue のコメント参照）。
+  const [dueDraft, setDueDraft] = useState("");
 
   // 戦略ToDoの新規追加（ジャンルごとにインライン行を開く）
   const [stAddGenre, setStAddGenre] = useState<string | null>(null); // 追加フォームを開いているジャンル
@@ -319,6 +322,13 @@ export default function ActionsPage() {
 
   // 納期の設定／解除。value に YYYY-MM-DD を渡すと設定、null で解除。
   // 楽観的更新→失敗時は元の配列に戻す（他のインライン編集と同じ作法）。
+  //
+  // ここを input[type=date] の onChange から直接呼んではいけない。iPhoneの
+  // 日付ピッカーは、ホイールが動いた時点（空欄なら開いた直後に今日の日付で）
+  // change を飛ばしてくる。保存と同時に入力欄を閉じると、その1発目で input が
+  // 消え、開いたばかりのカレンダーごと閉じてしまう——押した瞬間に閉じる、という
+  // 挙動の正体がこれ。PCは日付を確定するまで change が飛ばないので再現しない。
+  // 入力中は dueDraft に溜め、「決定」を押したときだけこの関数を呼ぶこと。
   async function saveDue(t: Strategic, value: string | null) {
     if (t.due_date === value) {
       setDueEditId(null);
@@ -896,14 +906,33 @@ export default function ActionsPage() {
                     <input
                       type="date"
                       autoFocus
-                      value={t.due_date ?? ""}
-                      onChange={(e) => saveDue(t, e.target.value || null)}
+                      value={dueDraft}
+                      onChange={(e) => setDueDraft(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Escape") setDueEditId(null);
+                        if (e.key === "Enter") saveDue(t, dueDraft || null);
                       }}
                       aria-label="納期"
                       className="rounded-lg border border-emerald-400 px-1.5 py-0.5 text-[0.8125rem] text-gray-700"
                     />
+                    {/* 中身を変えたときだけ「決定」に変わる。押すまで保存されない */}
+                    {dueDraft !== (t.due_date ?? "") ? (
+                      <button
+                        type="button"
+                        onClick={() => saveDue(t, dueDraft || null)}
+                        className="rounded-full bg-emerald-600 px-2 py-0.5 text-[0.6875rem] font-semibold text-white transition active:bg-emerald-700"
+                      >
+                        決定
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setDueEditId(null)}
+                        className="rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-400 transition active:bg-gray-100"
+                      >
+                        閉じる
+                      </button>
+                    )}
                     {t.due_date && (
                       <button
                         type="button"
@@ -913,13 +942,6 @@ export default function ActionsPage() {
                         クリア
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => setDueEditId(null)}
-                      className="rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-400 transition active:bg-gray-100"
-                    >
-                      閉じる
-                    </button>
                   </span>
                 ) : (
                   (() => {
@@ -927,7 +949,10 @@ export default function ActionsPage() {
                     return (
                       <button
                         type="button"
-                        onClick={() => setDueEditId(t.id)}
+                        onClick={() => {
+                          setDueDraft(t.due_date ?? "");
+                          setDueEditId(t.id);
+                        }}
                         title={t.due_date ? "納期を変更・解除する" : "納期を設定する"}
                         className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] transition active:scale-95 ${
                           dm ? dm.klass : "border-dashed border-gray-300 text-gray-400"
