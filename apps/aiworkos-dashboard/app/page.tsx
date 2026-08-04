@@ -144,6 +144,16 @@ const REVIEW_FEATURES: Feature[] = [
   },
 ];
 
+const LEARN_FEATURES: Feature[] = [
+  {
+    href: "/salt2",
+    icon: "🎓",
+    title: "SALT2人脈DB",
+    desc: "ブートキャンプ受講生を業界・立場・趣味から引き、共通点を見つけて繋がる",
+    accent: "bg-blue-100 text-blue-700",
+  },
+];
+
 const LIFESTYLE_HEALTH_FEATURES: Feature[] = [
   {
     href: "/health",
@@ -374,6 +384,7 @@ export default function Home() {
       <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
       <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
       <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
+      <FeatureGroup title="🎓 学ぶ" features={LEARN_FEATURES} />
       <FeatureGroup title="🌱 ライフスタイル・ヘルス" features={LIFESTYLE_HEALTH_FEATURES} />
 
       <IntegrationPanel />
