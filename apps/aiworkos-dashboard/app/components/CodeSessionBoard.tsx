@@ -52,6 +52,15 @@ const STEPS = [
   { limit: Infinity, live: "bg-indigo-100", stalled: "bg-amber-100" },
 ] as const;
 
+/**
+ * 中断を名前で並べる本数の上限。超えたぶんは「ほか N本」に畳む。
+ *
+ * 数だけを出していた頃は「中断6本」としか読めず、どれが止まっているのかは
+ * 盤面のマスに触って回るまで分からなかった。中断は普段ひと桁なので、
+ * 名前をそのまま置ける。放置（3桁になる）は数のままでよい。
+ */
+const NAMED_STALLED_MAX = 4;
+
 function toneOf(s: BoardSession): string {
   // 経過日数が読めなかったマスは、いちばん薄い段に置く（勝手に「今日」にしない）。
   const idle = s.days_idle ?? Infinity;
@@ -119,9 +128,17 @@ export default function CodeSessionBoard() {
   const summary = useMemo(() => {
     if (!data) return null;
     const list = data.sessions;
+    // 中断は、新しく止まったものほど手を戻しやすい。経過の浅い順に並べて、
+    // 名前で読める本数だけ前に出す。数だけでは「どれが」が分からず、
+    // 結局この盤面を開き直すことになる。
+    const stalledList = list
+      .filter((s) => s.stalled)
+      .sort((a, b) => (a.days_idle ?? Infinity) - (b.days_idle ?? Infinity));
     return {
       total: list.length,
-      stalled: list.filter((s) => s.stalled).length,
+      stalledList,
+      stalledNamed: stalledList.slice(0, NAMED_STALLED_MAX),
+      stalledRest: Math.max(0, stalledList.length - NAMED_STALLED_MAX),
       stale: list.filter((s) => (s.days_idle ?? Infinity) >= 3).length,
     };
   }, [data]);
@@ -169,23 +186,48 @@ export default function CodeSessionBoard() {
         </p>
       </div>
 
-      <p className="mb-3 text-sm leading-relaxed text-gray-600">
+      {/* 数だけの行は「6本ある」以上のことを伝えない。中断は普段ひと桁なので、
+          どれが止まっているのかを名前で書く。放置は3桁になるので数のままにする。 */}
+      <p className="mb-2 text-sm leading-relaxed text-gray-600">
         {showMoved && (
           <>
-            昨日から動いたのは
+            昨日から
             <span className="font-bold text-gray-900">{data.moved_since_prev}本</span>
+            が動いた
             {" ／ "}
           </>
         )}
-        中断
-        <span className={`font-bold ${summary.stalled > 0 ? "text-amber-700" : "text-gray-900"}`}>
-          {summary.stalled}本
-        </span>
-        {" ／ "}
-        3日以上放置
+        3日以上動いていないのが
         <span className="font-bold text-gray-900">{summary.stale}本</span>
         {!isToday && <span className="text-gray-400">（{shortDate(data.snapshot_date)}時点）</span>}
       </p>
+
+      {summary.stalledList.length > 0 ? (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-sm font-bold text-amber-800">
+            中断したまま {summary.stalledList.length}本
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {summary.stalledNamed.map((s) => (
+              <li key={s.id} className="text-sm leading-snug text-amber-900">
+                <span className="font-medium">{s.title}</span>
+                <span className="text-amber-700">
+                  {" — "}
+                  {idleText(s.days_idle)}
+                  {s.last_event ? `・${s.last_event}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {summary.stalledRest > 0 && (
+            <p className="mt-1 text-sm text-amber-700">
+              ほか {summary.stalledRest}本（盤面の橙のマス）
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mb-3 text-sm text-gray-500">中断したまま止まっているものはありません。</p>
+      )}
 
       {!isToday && (
         <p className="mb-3 text-sm text-amber-700">

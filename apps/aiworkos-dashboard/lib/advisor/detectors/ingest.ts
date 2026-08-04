@@ -1,12 +1,22 @@
 // 検知器：取り込みが止まっていないか。
 //
 // 「データが増えていない」だけでは休日と故障を見分けられないため、
-// ジョブ側が成功のたびに打刻した心拍（job_heartbeats / service_health）を見る。
+// ジョブ側が打刻した心拍（job_heartbeats / service_health）を見る。
 // 行が無いジョブは「まだ一度も成功していない」だけなので黙っている。
 // 動いていたものが止まった時だけ言う。
+//
+// job_heartbeats は成功だけでなく失敗も持つ（2026-08-04）。「走ったが落ちた」と
+// 「Macが閉じていて走らなかった」は別の話なので、判定も分けている。
+// 分け方は lib/advisor/watchlist.ts の judgeJob() が唯一の正。
 
 import { getRows } from "../client";
-import { WATCHED_JOBS, WATCHED_SERVICES } from "../watchlist";
+import {
+  WATCHED_JOBS,
+  WATCHED_SERVICES,
+  JOB_HEARTBEAT_SELECT,
+  judgeJob,
+  type JobHeartbeat,
+} from "../watchlist";
 import type { Ctx, Detector, Finding } from "../types";
 import { hoursSince } from "../types";
 
@@ -17,25 +27,18 @@ async function run(ctx: Ctx): Promise<Finding[]> {
   const findings: Finding[] = [];
 
   // --- 定期実行ジョブの心拍 ---
-  const beats = await getRows<{ job: string; last_ok_at: string }>(
-    ctx,
-    "job_heartbeats?select=job,last_ok_at"
-  );
-  const beatMap = new Map(beats.map((b) => [b.job, b.last_ok_at]));
+  const beats = await getRows<JobHeartbeat>(ctx, `job_heartbeats?select=${JOB_HEARTBEAT_SELECT}`);
+  const beatMap = new Map(beats.map((b) => [b.job, b]));
   for (const w of WATCHED_JOBS) {
-    const last = beatMap.get(w.job);
-    if (!last) continue;
-    const hours = hoursSince(last, ctx.now);
-    if (hours < w.staleHours) continue;
+    // 判定そのものは watchlist.ts に置いてある。朝のPush通知も同じ関数を呼ぶ。
+    const verdict = judgeJob(w, beatMap.get(w.job), ctx.now);
+    if (!verdict) continue;
     findings.push({
       id: `job:${w.job}`,
       area: "取り込み",
       severity: "alert",
-      title: `${w.label}が止まっています`,
-      facts: [
-        `最後に成功したのは ${last.slice(0, 16).replace("T", " ")}（${Math.floor(hours / 24)}日前）`,
-        `${w.staleHours}時間を超えたら出すようにしています`,
-      ],
+      title: verdict.title,
+      facts: verdict.facts,
     });
   }
 

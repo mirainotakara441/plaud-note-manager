@@ -6,6 +6,9 @@ import {
   WATCHED_SERVICES,
   DIARY_STALE_THRESHOLD_DAYS,
   HEALTH_STALE_THRESHOLD_DAYS,
+  JOB_HEARTBEAT_SELECT,
+  judgeJob,
+  type JobHeartbeat,
 } from "@/lib/advisor/watchlist";
 
 // 毎朝、Vercel Cronから叩かれるエンドポイント。
@@ -39,8 +42,10 @@ export const dynamic = "force-dynamic";
 // 書いていると片方だけ直したときに言い分が食い違い、どちらが正しいのか
 // 分からなくなる。
 //
-// 打刻は各ジョブの成功時のみ。日報録は自前で打ち、それ以外は
-// ~/.local/bin/with-heartbeat.sh が包んで打つ（本体には手を入れていない）。
+// 打刻は日報録が自前で打ち、それ以外は ~/.local/bin/with-heartbeat.sh が包んで打つ
+// （本体には手を入れていない）。2026-08-04 から成功だけでなく失敗も打つ：
+// 成功時しか打たないと「Macが閉じていて走らなかった」と「走ったが落ちた」が
+// 同じ "打刻が無い" にしか見えず、鈍い48時間の閾値が本当の故障にも効いてしまう。
 // job_heartbeats に行が無いジョブは「まだ一度も成功していない」だけなので
 // 警告しない（動いていたものが止まった時だけ鳴らす）。
 //
@@ -135,21 +140,22 @@ export async function GET(req: NextRequest) {
 
   // ④-1 ジョブの心拍。行が無い＝一度も成功していない（打刻前の初回だけ起きる）
   // ので、その場合は警告しない。動いていたものが止まった時だけ鳴らす。
+  //
+  // 「走ったが落ちた」（last_fail_at が新しい）と「打刻が途絶えた」（Macを閉じていた
+  // 可能性がある）は別の規則で見る。判定は watchlist.ts の judgeJob() に置いてあり、
+  // ホームのカード（/api/advisor）も同じ関数を呼ぶ。ここに書き写すと必ず食い違う。
   try {
     const res = await fetch(
-      `${service.url}/rest/v1/job_heartbeats?select=job,last_ok_at`,
+      `${service.url}/rest/v1/job_heartbeats?select=${JOB_HEARTBEAT_SELECT}`,
       { headers: restHeaders(service.key), cache: "no-store" }
     );
     if (res.ok) {
-      const rows: { job: string; last_ok_at: string }[] = await res.json();
-      const beats = new Map(rows.map((r) => [r.job, r.last_ok_at]));
+      const rows: JobHeartbeat[] = await res.json();
+      const beats = new Map(rows.map((r) => [r.job, r]));
+      const now = new Date();
       for (const w of WATCHED_JOBS) {
-        const last = beats.get(w.job);
-        if (!last) continue;
-        const hours = (Date.now() - new Date(last).getTime()) / (60 * 60 * 1000);
-        if (hours >= w.staleHours) {
-          staleAlerts.push(`${w.label}が${Math.floor(hours / 24)}日止まっています`);
-        }
+        const verdict = judgeJob(w, beats.get(w.job), now);
+        if (verdict) staleAlerts.push(verdict.push);
       }
     }
   } catch (err) {
