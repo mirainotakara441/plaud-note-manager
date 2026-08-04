@@ -47,12 +47,28 @@ const RECORD_FEATURES: Feature[] = [
   },
 ];
 
+// 並びは「探す・相手を知る」→「作る」。前半が攻める相手を決める道具、
+// 後半がその相手に出すものを作る道具。
 const PROPOSE_FEATURES: Feature[] = [
   {
     href: "/search",
     icon: "🔍",
     title: "横断検索",
     desc: "日記・会議・学び・成果物を自然言語でまとめて検索",
+    accent: "bg-indigo-100 text-indigo-700",
+  },
+  {
+    href: "/organizations",
+    icon: "🧭",
+    title: "団体別攻略",
+    desc: "団体ごとの状態・課題・施策と、会議・週報・成果物の時系列を1画面に",
+    accent: "bg-fuchsia-100 text-fuchsia-700",
+  },
+  {
+    href: "/legislators",
+    icon: "🏛️",
+    title: "議員リスト",
+    desc: "会派・議会の階層で議員を辿り、接触履歴とこれからの予定を1画面で確認",
     accent: "bg-indigo-100 text-indigo-700",
   },
   {
@@ -77,13 +93,6 @@ const PROPOSE_FEATURES: Feature[] = [
     accent: "bg-pink-100 text-pink-700",
   },
   {
-    href: "/legislators",
-    icon: "🏛️",
-    title: "議員リスト",
-    desc: "会派・議会の階層で議員を辿り、接触履歴とこれからの予定を1画面で確認",
-    accent: "bg-indigo-100 text-indigo-700",
-  },
-  {
     href: "/procedure-refine",
     icon: "📋",
     title: "提出文書 壁打ち",
@@ -92,7 +101,9 @@ const PROPOSE_FEATURES: Feature[] = [
   },
 ];
 
-// 並びは「日々 → 週 → 月 → 団体」。手前ほど頻繁に開くものを置く。
+// 並びは「日々 → 週 → 月」。手前ほど頻繁に開くものを置く。
+// 団体別攻略・議員リストは、振り返るものではなく攻める相手を決める道具なので
+// PROPOSE_FEATURES 側に置いてある。
 const REVIEW_FEATURES: Feature[] = [
   {
     href: "/actions",
@@ -121,13 +132,6 @@ const REVIEW_FEATURES: Feature[] = [
     title: "月報ドラフト自動生成",
     desc: "暦月を選ぶと週報のKPI集計とAI月報ドラフトを生成し、サイト・Notionへ登録",
     accent: "bg-orange-100 text-orange-700",
-  },
-  {
-    href: "/organizations",
-    icon: "🧭",
-    title: "団体別攻略",
-    desc: "団体ごとの状態・課題・施策と、会議・週報・成果物の時系列を1画面に",
-    accent: "bg-fuchsia-100 text-fuchsia-700",
   },
 ];
 
