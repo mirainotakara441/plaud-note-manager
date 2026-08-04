@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+// Anthropic は Anthropic.MessageParam（多ターンの会話の型）でのみ使う。
+// 実際の呼び出しは lib/llm.ts のヘルパー経由。
 import Anthropic from "@anthropic-ai/sdk";
+import { isLlmConfigured, structured, text as llmText } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { findTemplate, sectionNames, type SlideTemplate } from "@/lib/slideTemplates";
 
@@ -8,8 +11,6 @@ import { findTemplate, sectionNames, type SlideTemplate } from "@/lib/slideTempl
 // 成果物として記憶層へ保存する。会話は slide_refine_sessions / slide_refine_messages に残す。
 
 export const maxDuration = 60;
-
-const MODEL = "claude-sonnet-5";
 
 type Msg = { role: "user" | "assistant"; content: string };
 // sectionは選んだテンプレート(lib/slideTemplates.ts)のセクション名のいずれか。
@@ -315,7 +316,6 @@ async function saveMessage(
 }
 
 async function askClaude(
-  client: Anthropic,
   theme: string,
   history: Msg[],
   organization?: string | null,
@@ -349,16 +349,14 @@ ${linkInstruction}
     messages.push({ role: m.role, content: m.content });
   }
 
-  const res = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    thinking: { type: "adaptive" },
-    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+  // 面談の応答は構造化出力ではなく素の文章なので text() を使う。
+  const reply = await llmText({
+    system: SYSTEM_PROMPT,
     messages,
+    maxTokens: 8000,
   });
 
-  const textBlock = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-  return textBlock?.text ?? "（応答を生成できませんでした）";
+  return reply || "（応答を生成できませんでした）";
 }
 
 export async function GET(req: NextRequest) {
@@ -405,14 +403,13 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const anon = anonCreds();
   const service = serviceCreds();
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anon || !service) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
   const supabaseUrl = anon.url;
   const anonKey = anon.key;
   const serviceKey = service.key;
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+  if (!isLlmConfigured()) {
     return NextResponse.json({ error: "ANTHROPIC_APIキーが未設定です" }, { status: 500 });
   }
 
@@ -441,7 +438,6 @@ export async function POST(req: NextRequest) {
   }
 
   const action = body.action;
-  const client = new Anthropic({ apiKey: anthropicKey });
 
   try {
     // ── 開始: セッションを作り、お題を読んで最初の深掘り質問を出す
@@ -475,7 +471,7 @@ export async function POST(req: NextRequest) {
       const rows = await created.json();
       const session = Array.isArray(rows) ? rows[0] : rows;
 
-      const reply = await askClaude(client, theme, [], organization, category, purpose);
+      const reply = await askClaude(theme, [], organization, category, purpose);
       await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
 
       return NextResponse.json({
@@ -507,7 +503,7 @@ export async function POST(req: NextRequest) {
 
       await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
-      const reply = await askClaude(client, theme, history, organization, category, purpose);
+      const reply = await askClaude(theme, history, organization, category, purpose);
       await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
 
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });
@@ -556,16 +552,11 @@ export async function POST(req: NextRequest) {
           : `スライドの枚数はちょうど${slideCount}枚にしてください（${order}の配分はこの${slideCount}枚に収まるよう調整すること）。要点(bullets)は各スライド3〜5個を超えないこと。`
         : `スライド枚数の指定はありません。内容に応じて5〜10枚程度で構いません。要点(bullets)は各スライド3〜5個を超えないこと。`;
 
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: buildOutlineSchema(template, slideCount) } },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${theme}
+      const parsed = await structured<{ slides: Slide[]; constraints?: string[] }>({
+        system: PERSONA_PROMPT,
+        schema: buildOutlineSchema(template, slideCount),
+        maxTokens: 16000,
+        prompt: `【お題】${theme}
 ${organization ? `【紐付く対象】${organization}` : ""}
 
 ==== 壁打ちの会話 ====
@@ -581,14 +572,7 @@ ${slideCountInstruction}
 （例:「自治体批判ではなく環境変化の共有にとどめる」「用語は正式名称で統一する」等）。
 明示的な言及が無ければ空配列で構いません。憶測で作らないこと。
 指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "構成案の生成に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { slides: Slide[]; constraints?: string[] };
       const constraints = Array.isArray(parsed.constraints) ? parsed.constraints.filter(Boolean) : [];
 
       await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
@@ -629,16 +613,11 @@ ${slideCountInstruction}
         .map((s, i) => `${i + 1}. [${s.section}] ${s.title}\n${s.bullets.map((b) => `- ${b}`).join("\n")}`)
         .join("\n\n");
 
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: VISUAL_CANDIDATES_SCHEMA } },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${theme}
+      const parsed = await structured<{ proposals: { candidates: VisualCandidate[] }[] }>({
+        system: PERSONA_PROMPT,
+        schema: VISUAL_CANDIDATES_SCHEMA,
+        maxTokens: 16000,
+        prompt: `【お題】${theme}
 ${organization ? `【紐付く対象】${organization}` : ""}
 ${constraintsBlock(srows?.[0]?.constraints)}
 ==== スライド構成案 ====
@@ -649,14 +628,7 @@ ${slidesText}
 ただしこれらに縛られる必要はありません。そのスライドの内容に本当に合うパターンを選んでください
 （機械的に多様性を出したり、決まったリストを順番に回したりしないこと）。
 slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "図解候補の生成に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { proposals: { candidates: VisualCandidate[] }[] };
       const candidates = parsed.proposals.map((p) => p.candidates);
 
       await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
@@ -701,16 +673,11 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
         })
         .join("\n\n");
 
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: RENDER_VISUALS_SCHEMA } },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${theme}
+      const parsed = await structured<{ visuals: Visual[] }>({
+        system: PERSONA_PROMPT,
+        schema: RENDER_VISUALS_SCHEMA,
+        maxTokens: 16000,
+        prompt: `【お題】${theme}
 ${constraintsBlock(srows?.[0]?.constraints)}
 ==== 選ばれた図解パターンとスライド本文（スライドごとに1個・確定済み） ====
 ${choicesText}
@@ -719,14 +686,7 @@ ${choicesText}
 ${NO_FABRICATION_INSTRUCTION}
 ${todayContext()}
 choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "図解の生成に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { visuals: Visual[] };
 
       await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
         method: "PATCH",
@@ -762,16 +722,11 @@ choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してく
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
 
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: buildRegenerateSlideSchema(template) } },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${theme}
+      const parsed = await structured<{ slide: Slide; visual: Visual }>({
+        system: PERSONA_PROMPT,
+        schema: buildRegenerateSlideSchema(template),
+        maxTokens: 16000,
+        prompt: `【お題】${theme}
 ${organization ? `【紐付く対象】${organization}` : ""}
 ${constraintsBlock(srows?.[0]?.constraints)}
 ==== 他のスライドの見出し（重複回避の参考。内容は変えない） ====
@@ -789,14 +744,7 @@ ${currentVisual ? `現在の図解: [${currentVisual.diagramType}] ${currentVisu
 新しい内容は本文(title/bullets)の中だけで完結させ、図解(svg)の文言・数値・年月も本文と一致させること。
 ${todayContext()}
 指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "作り直しに失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { slide: Slide; visual: Visual };
       return NextResponse.json(parsed);
     }
 
@@ -823,18 +771,15 @@ ${todayContext()}
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
 
-      // 注: thinking:adaptiveを付けると、現在のSVG全文を入力に含む都合上、実測で100秒超かかり
-      // Vercelの maxDuration=60 を超えて本番で失敗する恐れがあった（2026-07-27確認）。
-      // このアクションは「指示された箇所だけを直す」狭い作業なので、深い思考は不要と判断し外した。
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 8000,
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: buildRegenerateSlideSchema(template) } },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${theme}
+      const parsed = await structured<{ slide: Slide; visual: Visual }>({
+        system: PERSONA_PROMPT,
+        schema: buildRegenerateSlideSchema(template),
+        maxTokens: 8000,
+        // 注: thinking:adaptiveを付けると、現在のSVG全文を入力に含む都合上、実測で100秒超かかり
+        // Vercelの maxDuration=60 を超えて本番で失敗する恐れがあった（2026-07-27確認）。
+        // このアクションは「指示された箇所だけを直す」狭い作業なので、深い思考は不要と判断し外した。
+        thinking: false,
+        prompt: `【お題】${theme}
 ${srows?.[0]?.organization ? `【紐付く対象】${srows[0].organization}` : ""}
 ${constraintsBlock(srows?.[0]?.constraints)}
 ==== 今のスライド ====
@@ -857,14 +802,7 @@ ${instruction}
 ${NO_FABRICATION_INSTRUCTION}
 ${todayContext()}
 セクション・並び順への影響は与えないこと。修正後のslideとvisual一式を、指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "修正に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { slide: Slide; visual: Visual };
       return NextResponse.json(parsed);
     }
 
@@ -945,16 +883,11 @@ ${todayContext()}
         .map((v, i) => `${i + 1}. [${v.diagramType}] ${v.description}`)
         .join("\n");
 
-      const synth = await client.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        thinking: { type: "adaptive" },
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: SYNTHESIS_SCHEMA } },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${theme}
+      const parsed = await structured<{ title: string; content: string }>({
+        system: PERSONA_PROMPT,
+        schema: SYNTHESIS_SCHEMA,
+        maxTokens: 16000,
+        prompt: `【お題】${theme}
 ${organization ? `【紐付く対象】${organization}（${category}）` : ""}
 ${constraintsBlock(row?.constraints)}
 ==== 壁打ちの会話 ====
@@ -968,14 +901,7 @@ ${visualsText || "（なし）"}
 
 このスライド壁打ちで熟成した内容を、今後の別提案でも土台として再利用できる形にまとめてください。
 目的・聞き手・ゴール、確定した構成、ビジュアルの狙いを必ず反映し、指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = synth.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "登録に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { title: string; content: string };
 
       const today = new Date().toISOString().slice(0, 10);
       const chunks = windowChunks(parsed.content);

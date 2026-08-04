@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import {
+  AUTH_ERROR_MESSAGE,
+  DEFAULT_MODEL,
+  isAuthError,
+  isLlmConfigured,
+  structured,
+} from "@/lib/llm";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 import { correctTranscriptionMany, summarizeCorrections } from "@/lib/transcriptionDictionary";
 
@@ -8,7 +14,7 @@ import { correctTranscriptionMany, summarizeCorrections } from "@/lib/transcript
 // 含むドラフトを生成し、monthly_reports（Supabase）とNotionへ登録する。
 //
 // app/api/agent/route.ts のパターンを踏襲:
-//   - claude-sonnet-5 + thinking:adaptive + output_config(json_schema) で構造化出力
+//   - lib/llm.ts の structured()（既定モデル + thinking:adaptive + json_schema）で構造化出力
 //   - systemプロンプトを cache_control でプレフィックスキャッシュ
 //   - signature による差分検知（元データ不変ならClaudeを呼ばずキャッシュ返却）
 //   - edited フラグ（手直し版があれば再生成の土台にする）
@@ -20,8 +26,8 @@ export const dynamic = "force-dynamic";
 const TABLE = "monthly_reports";
 const WEEKLY_TABLE = "weekly_reports";
 
+// モデルは lib/llm.ts の DEFAULT_MODEL（環境変数 AIWORKOS_MODEL で差し替え可）。
 // claude-sonnet-5: 入力 $3/MTok（〜2026-08-31 は導入価格 $2）、出力 $15/MTok（同 $10）。
-const MODEL = "claude-sonnet-5";
 
 // Notion「🧠 AIワークOS」ページ配下に月報ページを作成する。
 // env優先・現行のハードコード値をフォールバックに統一。env未設定でも従来どおり動く。
@@ -321,39 +327,21 @@ function isComplete(d: Draft): boolean {
 }
 
 async function generateDraft(
-  client: Anthropic,
   month: string,
   rows: WeeklyReportRow[],
   kpi: MonthKpi,
   editedDraft: Draft | null
 ): Promise<Draft> {
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    thinking: { type: "adaptive" },
-    system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-    output_config: { format: { type: "json_schema", schema: MONTHLY_SCHEMA } },
-    messages: [{ role: "user", content: buildUserPrompt(month, rows, kpi, editedDraft) }],
+  // 拒否・打ち切り・空応答・JSON解析失敗は structured() が例外にする。
+  // 例外は呼び出し元（POST）の catch で 502 に落ちる（従来の refusal /
+  // no_text_output / invalid_json_output と同じ扱い）。
+  const input = await structured<Partial<Draft>>({
+    system: SYSTEM_PROMPT,
+    prompt: buildUserPrompt(month, rows, kpi, editedDraft),
+    schema: MONTHLY_SCHEMA,
+    maxTokens: 8000,
+    label: "月報生成",
   });
-
-  console.log("月報生成:", message.stop_reason, JSON.stringify(message.usage));
-
-  if (message.stop_reason === "refusal") {
-    throw new Error("refusal");
-  }
-
-  const textBlock = message.content.find(
-    (block): block is Anthropic.TextBlock => block.type === "text"
-  );
-  if (!textBlock) throw new Error("no_text_output");
-
-  let input: Partial<Draft>;
-  try {
-    input = JSON.parse(textBlock.text) as Partial<Draft>;
-  } catch (err) {
-    console.error("月報生成: Claude出力のJSON解析失敗", err);
-    throw new Error("invalid_json_output");
-  }
 
   return {
     oneLiner: typeof input.oneLiner === "string" ? input.oneLiner : "",
@@ -816,7 +804,6 @@ export async function PUT(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const anon = anonCreds();
   const service = serviceCreds();
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
   if (!anon || !service) {
     return NextResponse.json(
@@ -824,7 +811,7 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+  if (!isLlmConfigured()) {
     return NextResponse.json(
       { error: "ANTHROPIC_APIキーが未設定です。.env.local に ANTHROPIC_API_KEY を設定してください。" },
       { status: 500 }
@@ -891,18 +878,13 @@ export async function POST(req: NextRequest) {
     : null;
 
   // 3. Claudeで生成
-  const client = new Anthropic({ apiKey: anthropicKey });
   let draft: Draft;
   try {
-    draft = await generateDraft(client, month, rows, kpi, editedDraft);
+    draft = await generateDraft(month, rows, kpi, editedDraft);
     if (!isComplete(draft)) throw new Error("empty_draft");
   } catch (error) {
-    const status = (error as { status?: number })?.status;
-    if (status === 401) {
-      return NextResponse.json(
-        { error: "ANTHROPIC_APIキーが無効です。.env.local の ANTHROPIC_API_KEY を確認してください。" },
-        { status: 500 }
-      );
+    if (isAuthError(error)) {
+      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
     }
     console.error("月報生成エラー:", error);
     return NextResponse.json(
@@ -926,7 +908,7 @@ export async function POST(req: NextRequest) {
     handover: draft.handover,
     signature,
     notion_url: notionResult.url,
-    model: MODEL,
+    model: DEFAULT_MODEL,
     edited: !!editedDraft,
   });
   if (!saved) {

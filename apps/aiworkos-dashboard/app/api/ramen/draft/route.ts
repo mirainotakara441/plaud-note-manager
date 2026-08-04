@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+// text は下のローカル変数と名前がぶつかるので別名で取り込む。
+import { text as generateText, isLlmConfigured } from "@/lib/llm";
 import { serviceCreds, anonCreds, restHeaders } from "@/lib/supabase";
 import { captureAuthorized, draftPrompt, parseDraft, type RamenRow } from "@/lib/ramen";
 
@@ -10,8 +11,6 @@ import { captureAuthorized, draftPrompt, parseDraft, type RamenRow } from "@/lib
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const MODEL = "claude-sonnet-5";
-
 const SELECT =
   "id,eaten_on,bowl_no,bowl_label,shop,area,genre,visit_count,menu,price,score,score_time,title,excerpt,memo,status,draft_tabelog,draft_x,is_ramen";
 
@@ -20,8 +19,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (!isLlmConfigured()) {
     return NextResponse.json({ error: "ANTHROPIC_API_KEY が未設定です" }, { status: 500 });
   }
   const svc = serviceCreds();
@@ -63,20 +61,18 @@ export async function POST(req: NextRequest) {
   }
   const samples = sampleRes.ok ? ((await sampleRes.json()) as RamenRow[]) : [];
 
-  const client = new Anthropic({ apiKey });
+  // system プロンプトは渡さない。役割指示は draftPrompt() が組み立てる
+  // user プロンプトの中に入っているため、ここで別に書き起こすと送る内容が変わる。
   let text = "";
   try {
-    const msg = await client.messages.create({
-      model: MODEL,
+    text = await generateText({
+      prompt: draftPrompt(target, samples),
       // 食べログ本文とX本文の2本立てなので2000だと途中で切れ、
       // 区切り行の ===X=== に届かないまま止まることがある（2026-08-01）。
-      max_tokens: 4000,
-      messages: [{ role: "user", content: draftPrompt(target, samples) }],
+      maxTokens: 4000,
+      // 元から思考は使っていない呼び出し。文体を実例に寄せるだけなので不要。
+      thinking: false,
     });
-    text = msg.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { text: string }).text)
-      .join("");
   } catch (e) {
     console.error("ラーメン下書き生成エラー:", e);
     return NextResponse.json({ error: "文章の生成に失敗しました" }, { status: 502 });

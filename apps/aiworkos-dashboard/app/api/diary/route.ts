@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import { structured, isLlmConfigured, isAuthError, AUTH_ERROR_MESSAGE } from "@/lib/llm";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 import { correctTranscription, summarizeCorrections } from "@/lib/transcriptionDictionary";
 
@@ -18,7 +18,7 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 // claude-sonnet-5: 入力 $3/MTok（〜2026-08-31 は導入価格 $2）、出力 $15/MTok（同 $10）。
-const MODEL = "claude-sonnet-5";
+// モデルの指定は lib/llm.ts の DEFAULT_MODEL に集約している（env AIWORKOS_MODEL で差し替え可）。
 
 // Notion「一行日記」DB。
 // env優先・現行のハードコード値をフォールバックに統一（/api/status が使う
@@ -173,34 +173,15 @@ function normalizeEntry(raw: unknown): DiaryEntry | null {
   };
 }
 
-async function parseDiaryEntries(client: Anthropic, text: string): Promise<DiaryEntry[]> {
-  const message = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    thinking: { type: "adaptive" },
-    system: [{ type: "text", text: DIARY_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-    output_config: { format: { type: "json_schema", schema: DIARY_SCHEMA } },
-    messages: [{ role: "user", content: buildDiaryUserPrompt(text) }],
+async function parseDiaryEntries(text: string): Promise<DiaryEntry[]> {
+  // 拒否・打ち切り・空応答の判定と、stop_reason/usage のログは structured() 側で行う。
+  const parsed = await structured<{ entries?: unknown }>({
+    system: DIARY_SYSTEM_PROMPT,
+    prompt: buildDiaryUserPrompt(text),
+    schema: DIARY_SCHEMA,
+    maxTokens: 8000,
+    label: "日記解析",
   });
-
-  console.log("日記解析:", message.stop_reason, JSON.stringify(message.usage));
-
-  if (message.stop_reason === "refusal") {
-    throw new Error("refusal");
-  }
-
-  const textBlock = message.content.find(
-    (block): block is Anthropic.TextBlock => block.type === "text"
-  );
-  if (!textBlock) throw new Error("no_text_output");
-
-  let parsed: { entries?: unknown };
-  try {
-    parsed = JSON.parse(textBlock.text) as { entries?: unknown };
-  } catch (err) {
-    console.error("日記解析: Claude出力のJSON解析失敗", err);
-    throw new Error("invalid_json_output");
-  }
 
   const rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
   return rawEntries
@@ -389,7 +370,6 @@ async function storeDiaryMemory(
 
 export async function POST(req: NextRequest) {
   const anon = anonCreds();
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
   if (!anon) {
     return NextResponse.json(
@@ -397,7 +377,7 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+  if (!isLlmConfigured()) {
     return NextResponse.json(
       { error: "ANTHROPIC_APIキーが未設定です。.env.local に ANTHROPIC_API_KEY を設定してください。" },
       { status: 500 }
@@ -433,18 +413,13 @@ export async function POST(req: NextRequest) {
   }
 
   // 1. Claudeで日ごとのエントリに構造化
-  const client = new Anthropic({ apiKey: anthropicKey });
   let entries: DiaryEntry[];
   try {
-    entries = await parseDiaryEntries(client, text);
+    entries = await parseDiaryEntries(text);
     if (entries.length === 0) throw new Error("no_entries");
   } catch (error) {
-    const status = (error as { status?: number })?.status;
-    if (status === 401) {
-      return NextResponse.json(
-        { error: "ANTHROPIC_APIキーが無効です。.env.local の ANTHROPIC_API_KEY を確認してください。" },
-        { status: 500 }
-      );
+    if (isAuthError(error)) {
+      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
     }
     if ((error as Error)?.message === "no_entries") {
       return NextResponse.json(

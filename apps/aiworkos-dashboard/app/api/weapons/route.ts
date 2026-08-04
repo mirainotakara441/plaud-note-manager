@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+// Anthropic は Anthropic.TextBlock の型注釈のために残している（クライアント生成は lib/llm.ts）。
 import Anthropic from "@anthropic-ai/sdk";
+import { DEFAULT_MODEL, isAuthError, isLlmConfigured, llmClient } from "@/lib/llm";
 import { windowChunks } from "@/lib/chunks";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 
@@ -12,8 +14,6 @@ import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 // Claude Code 側の slide-architect に渡す。
 
 export const maxDuration = 60;
-
-const MODEL = "claude-sonnet-5";
 
 type MemoResult = {
   id: string;
@@ -363,12 +363,11 @@ export async function savePart(
 export async function POST(req: NextRequest) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
   if (!supabaseUrl || !anonKey) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+  if (!isLlmConfigured()) {
     return NextResponse.json({ error: "ANTHROPIC_APIキーが未設定です" }, { status: 500 });
   }
 
@@ -471,11 +470,15 @@ ${meetingsText}
 ${instruction}
 配列を空にせず、指定の JSON スキーマで返してください。`;
 
-  const client = new Anthropic({ apiKey: anthropicKey });
+  // structured() ではなく生クライアントを使う理由:
+  // 下の refusal / max_tokens / 空応答は、それぞれ別の文言で 502 を返している
+  // （どの段階で落ちたかを画面で切り分けるため）。structured() は3つとも同じ例外に
+  // まとめてしまい、この出し分けが失われるので、ここだけ元の形を保つ。
+  const client = llmClient();
 
   try {
     const message = await client.messages.create({
-      model: MODEL,
+      model: DEFAULT_MODEL,
       // 1種類だけ作るので 8000 で足りる。thinking 込みで60秒に収める。
       // ※ thinking は adaptive を使う。enabled(budget指定) は構造化出力(json_schema)と
       //   組み合わせるとエラーになったため使わない。proposal の時間対策は各節の簡潔化で行う。
@@ -551,7 +554,8 @@ ${instruction}
     });
   } catch (error) {
     const status = (error as { status?: number })?.status;
-    if (status === 401) {
+    // 文言は元のまま（共通の AUTH_ERROR_MESSAGE より短い）。画面表示を変えないため。
+    if (isAuthError(error)) {
       return NextResponse.json({ error: "ANTHROPIC_APIキーが無効です" }, { status: 500 });
     }
     console.error("武器生成エラー:", error);

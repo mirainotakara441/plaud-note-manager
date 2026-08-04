@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+// Anthropic は Anthropic.MessageParam / Anthropic.TextBlock の型と、
+// 名称付け（save）で使う生クライアント呼び出しのために残している。
+// 実際の呼び出しは原則 lib/llm.ts のヘルパー経由。
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  DEFAULT_MODEL,
+  isLlmConfigured,
+  llmClient,
+  structured,
+  text as llmText,
+} from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import {
   findProcedureTemplate,
@@ -23,8 +33,6 @@ import {
 //     として別立てで出させ、画面で潰していく。
 
 export const maxDuration = 60;
-
-const MODEL = "claude-sonnet-5";
 
 type Msg = { role: "user" | "assistant"; content: string };
 // AIには rows を {cells:[...]} の配列で返させ、保存時に string[][] へ均す
@@ -314,7 +322,6 @@ async function saveMessage(
 }
 
 async function askClaude(
-  client: Anthropic,
   theme: string,
   history: Msg[],
   template: ProcedureTemplate,
@@ -355,18 +362,14 @@ ${linkInstruction}
     messages.push({ role: m.role, content: m.content });
   }
 
-  const res = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    thinking: { type: "adaptive" },
-    system: [
-      { type: "text", text: systemPrompt(template), cache_control: { type: "ephemeral" } },
-    ],
+  // 面談の応答は構造化出力ではなく素の文章なので text() を使う。
+  const reply = await llmText({
+    system: systemPrompt(template),
     messages,
+    maxTokens: 8000,
   });
 
-  const textBlock = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-  return textBlock?.text ?? "（応答を生成できませんでした）";
+  return reply || "（応答を生成できませんでした）";
 }
 
 const SESSION_COLUMNS =
@@ -410,14 +413,13 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const anon = anonCreds();
   const service = serviceCreds();
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anon || !service) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
   const supabaseUrl = anon.url;
   const anonKey = anon.key;
   const serviceKey = service.key;
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+  if (!isLlmConfigured()) {
     return NextResponse.json({ error: "ANTHROPIC_APIキーが未設定です" }, { status: 500 });
   }
 
@@ -445,7 +447,6 @@ export async function POST(req: NextRequest) {
   }
 
   const action = body.action;
-  const client = new Anthropic({ apiKey: anthropicKey });
 
   // セッション行を読む共通処理（必要な列だけ都度指定する）。
   async function loadSession(sessionId: string, columns: string) {
@@ -498,7 +499,6 @@ export async function POST(req: NextRequest) {
       const session = Array.isArray(rows) ? rows[0] : rows;
 
       const reply = await askClaude(
-        client,
         theme,
         [],
         template,
@@ -533,7 +533,6 @@ export async function POST(req: NextRequest) {
       await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       const reply = await askClaude(
-        client,
         row.theme,
         history,
         findProcedureTemplate(row.template_id),
@@ -601,20 +600,13 @@ export async function POST(req: NextRequest) {
         .map((m) => `${m.role === "user" ? "吉井" : "参謀"}: ${m.content}`)
         .join("\n\n");
 
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 16000,
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: {
-          format: {
-            type: "json_schema",
-            schema: buildDraftPartSchema(template, sectionNames),
-          },
-        },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${row.theme}
+      const parsed = await structured<{ items: RawItem[] }>({
+        system: PERSONA_PROMPT,
+        schema: buildDraftPartSchema(template, sectionNames),
+        maxTokens: 16000,
+        // 上の実測メモの通り、この呼び出しは maxDuration=60 に対して余裕が無いため thinking は付けない。
+        thinking: false,
+        prompt: `【お題】${row.theme}
 【文書の種類】${template.label}
 ${row.organization ? `【相手方】${row.organization}（${row.category ?? "その他"}）` : "【相手方】特定なし"}
 ${row.purpose ? `【位置づけ】${row.purpose}` : ""}
@@ -639,14 +631,7 @@ ${NO_FABRICATION_INSTRUCTION}
 ${todayContext()}
 会話で決まっていない事項は、本文をそれらしく埋めるのではなく「（要確認）」と明記して断定しないでください。
 指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "章立て案の生成に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { items: RawItem[] };
       const items = (parsed.items ?? []).map(normalizeItem);
       const merged = [...priorItems, ...items];
 
@@ -678,15 +663,13 @@ ${todayContext()}
         .map((m) => `${m.role === "user" ? "吉井" : "参謀"}: ${m.content}`)
         .join("\n\n");
 
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 4000,
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: OPEN_ITEMS_SCHEMA } },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${row.theme}
+      const parsed = await structured<{ openItems?: string[]; constraints?: string[] }>({
+        system: PERSONA_PROMPT,
+        schema: OPEN_ITEMS_SCHEMA,
+        maxTokens: 4000,
+        // 元から thinking は付けていない呼び出し（短い抽出処理・速度優先）。
+        thinking: false,
+        prompt: `【お題】${row.theme}
 【文書の種類】${template.label}
 ${row.organization ? `【相手方】${row.organization}（${row.category ?? "その他"}）` : ""}
 
@@ -700,14 +683,7 @@ ${items.map((it, k) => itemToText(it, k)).join("\n\n")}
 本文に「要確認」と書かれている箇所は必ず拾うこと。会話で決まっている事項は挙げないこと。
 あわせて、会話の中で吉井さんが述べた「文書全体で守るべき制約」があれば constraints に抽出してください（無ければ空配列）。
 指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "要確認事項の抽出に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { openItems?: string[]; constraints?: string[] };
       const openItems = Array.isArray(parsed.openItems) ? parsed.openItems.filter(Boolean) : [];
       const constraints = Array.isArray(parsed.constraints)
         ? parsed.constraints.filter(Boolean)
@@ -757,19 +733,14 @@ ${instruction}
         : `この章1つだけを、同じ章区分（${item.section}）の役割を保ったまま、違う切り口で作り直してください。
 他の章との重複は避け、章の並び順・数には影響を与えないこと。`;
 
-      const res = await client.messages.create({
-        model: MODEL,
+      const parsed = await structured<{ item: RawItem }>({
+        system: PERSONA_PROMPT,
+        schema: buildSingleItemSchema(template),
+        maxTokens: 8000,
         // 「ここを直す」は狭い作業。Vercelの maxDuration=60 に収めるため thinking は付けない
         // （slide-refine の fix-slide で実測100秒超になった経緯と同じ判断）。
-        max_tokens: 8000,
-        system: [{ type: "text", text: PERSONA_PROMPT }],
-        output_config: {
-          format: { type: "json_schema", schema: buildSingleItemSchema(template) },
-        },
-        messages: [
-          {
-            role: "user",
-            content: `【お題】${row.theme}
+        thinking: false,
+        prompt: `【お題】${row.theme}
 【文書の種類】${template.label}
 ${row.organization ? `【相手方】${row.organization}（${row.category ?? "その他"}）` : ""}
 ${row.period ? `【実施時期の目安】${row.period}` : ""}
@@ -788,14 +759,7 @@ ${task}
 ${NO_FABRICATION_INSTRUCTION}
 ${todayContext()}
 指定のJSONスキーマで返してください。`,
-          },
-        ],
       });
-      const tb = res.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-      if (!tb) {
-        return NextResponse.json({ error: "修正に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { item: RawItem };
       return NextResponse.json({ item: normalizeItem(parsed.item) });
     }
 
@@ -866,8 +830,12 @@ ${todayContext()}
       // 名称だけAIに付けてもらう。本文は画面で確定した内容そのものを登録する
       // （AIに要約させ直すと、吉井さんが直した文言が登録側でまた変わってしまう）。
       const template = findProcedureTemplate(row.template_id);
-      const naming = await client.messages.create({
-        model: MODEL,
+      // 注: ここだけ生クライアント(llmClient)を使う。structured() は本文が返らないと例外を投げるが、
+      // この呼び出しは「名称が取れなくても既定名で登録を続ける」フォールバックを持っており
+      // （下の title の `|| ...` 部分）、その挙動をヘルパーでは表現できないため元の形を保つ。
+      // thinking は元から付けていない（短い名称付けなので不要）。
+      const naming = await llmClient().messages.create({
+        model: DEFAULT_MODEL,
         max_tokens: 1000,
         system: [{ type: "text", text: PERSONA_PROMPT }],
         output_config: { format: { type: "json_schema", schema: SYNTHESIS_SCHEMA } },

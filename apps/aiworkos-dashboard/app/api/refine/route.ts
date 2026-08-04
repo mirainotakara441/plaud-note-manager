@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { isLlmConfigured, structured, text } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { windowChunks } from "@/lib/chunks";
 
@@ -7,8 +8,6 @@ import { windowChunks } from "@/lib/chunks";
 // 内容を熟成 → 成果物として記憶層へ保存し直す。会話は refine_sessions / refine_messages に残す。
 
 export const maxDuration = 60;
-
-const MODEL = "claude-sonnet-5";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -246,7 +245,6 @@ async function saveMessage(
 }
 
 async function askClaude(
-  client: Anthropic,
   context: string,
   history: Msg[],
   organization: string,
@@ -276,20 +274,13 @@ ${themeInstruction}
     messages.push({ role: m.role, content: m.content });
   }
 
-  const res = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    thinking: { type: "adaptive" },
-    system: [
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-    ],
+  // 構造化出力ではなく素の文章を返させる（画面が「**Q1. …**」の行形式を頼りに切り出す）。
+  const answer = await text({
+    system: SYSTEM_PROMPT,
     messages,
+    maxTokens: 8000,
   });
-
-  const textBlock = res.content.find(
-    (b): b is Anthropic.TextBlock => b.type === "text"
-  );
-  return textBlock?.text ?? "（応答を生成できませんでした）";
+  return answer || "（応答を生成できませんでした）";
 }
 
 export async function GET(req: NextRequest) {
@@ -338,7 +329,6 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const anon = anonCreds();
   const service = serviceCreds();
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (!anon || !service) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
@@ -424,13 +414,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, deleted: true });
   }
 
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+  if (!isLlmConfigured()) {
     return NextResponse.json(
       { error: "ANTHROPIC_APIキーが未設定です" },
       { status: 500 }
     );
   }
-  const client = new Anthropic({ apiKey: anthropicKey });
 
   try {
     // ── 開始: セッションを作り、土台を読んで最初の深掘り質問を出す
@@ -460,7 +449,7 @@ export async function POST(req: NextRequest) {
       const session = Array.isArray(rows) ? rows[0] : rows;
 
       const context = await fetchContext(supabaseUrl, anonKey, organization);
-      const reply = await askClaude(client, context, [], organization, theme);
+      const reply = await askClaude(context, [], organization, theme);
       await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
 
       return NextResponse.json({
@@ -493,7 +482,7 @@ export async function POST(req: NextRequest) {
       await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       const context = await fetchContext(supabaseUrl, anonKey, organization);
-      const reply = await askClaude(client, context, history, organization, theme);
+      const reply = await askClaude(context, history, organization, theme);
       await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
 
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });
@@ -526,16 +515,12 @@ export async function POST(req: NextRequest) {
         .map((m) => `${m.role === "user" ? "吉井" : "参謀"}: ${m.content}`)
         .join("\n\n");
 
-      const synth = await client.messages.create({
-        model: MODEL,
-        max_tokens: 8000,
-        thinking: { type: "adaptive" },
-        system: [{ type: "text", text: SYSTEM_PROMPT }],
-        output_config: { format: { type: "json_schema", schema: SYNTHESIS_SCHEMA } },
-        messages: [
-          {
-            role: "user",
-            content: `対象: ${organization}
+      // ここは深掘り（askClaude）と違い1回きりの呼び出しなので、
+      // systemプロンプトのキャッシュは効かせない（元の形どおり cache: false）。
+      // 応答が空・拒否のときは structured() が投げ、下の catch で 502 になる。
+      const parsed = await structured<{ title: string; content: string }>({
+        system: SYSTEM_PROMPT,
+        prompt: `対象: ${organization}
 
 ==== 既存の土台 ====
 ${context}
@@ -545,17 +530,10 @@ ${transcript}
 
 この壁打ちで熟成した内容を、今後の提案の土台として再利用できる形にまとめてください。
 会話で新たに判明した事実・判断軸・次アクションを必ず反映し、指定のJSONスキーマで返してください。`,
-          },
-        ],
+        schema: SYNTHESIS_SCHEMA,
+        maxTokens: 8000,
+        cache: false,
       });
-
-      const tb = synth.content.find(
-        (b): b is Anthropic.TextBlock => b.type === "text"
-      );
-      if (!tb) {
-        return NextResponse.json({ error: "熟成に失敗しました" }, { status: 502 });
-      }
-      const parsed = JSON.parse(tb.text) as { title: string; content: string };
 
       const today = new Date().toISOString().slice(0, 10);
       const chunks = windowChunks(parsed.content);

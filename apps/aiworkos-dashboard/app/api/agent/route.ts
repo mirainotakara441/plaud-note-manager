@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import {
+  AUTH_ERROR_MESSAGE,
+  DEFAULT_MODEL,
+  isAuthError,
+  isLlmConfigured,
+  structured,
+} from "@/lib/llm";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 
 // thinking を有効化すると生成に時間がかかるため、Vercel の関数タイムアウトを引き上げる
@@ -37,7 +43,7 @@ type Proposal = {
 // system＋tools は毎回同一なので cache_control を付けて prefix キャッシュ対象にする
 // （レンダリング順は tools → system → messages。最後の system ブロックに breakpoint を
 // 置くと tools と system がまとめてキャッシュされる）。キャッシュ読取は約0.1倍・書込は約1.25倍。
-const MODEL = "claude-sonnet-5";
+// モデル名と cache_control は lib/llm.ts に集約（DEFAULT_MODEL / structured() の cache 既定 true）。
 
 const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
 自治体（地方公共団体）への営業・提案戦略を立案します。
@@ -395,7 +401,6 @@ function isComplete(p: Proposal): boolean {
 // structured outputs（output_config.format）で JSON 形状を保証しつつ、
 // adaptive thinking で会議履歴を分析させてから全フィールドを埋めさせる。
 async function generateProposal(
-  client: Anthropic,
   organization: string,
   meetings: Meeting[],
   memos: MemoResult[],
@@ -404,55 +409,26 @@ async function generateProposal(
   editedProposal: Proposal | null,
   metrics: MemoResult | null
 ): Promise<Proposal> {
-  const message = await client.messages.create({
-    model: MODEL,
+  // ツール強制の代わりに structured outputs で JSON 形状を保証する。
+  // 思考（adaptive thinking）は structured() の既定 true のまま使い、
+  // 即出力ではなく会議履歴を分析させてから各フィールドを埋めさせる。
+  // 拒否・打ち切り・空応答は structured() が例外に変換するので、ここでは投げっぱなしでよい。
+  const input = await structured<Partial<Proposal>>({
+    system: SYSTEM_PROMPT,
+    prompt: buildUserPrompt(
+      organization,
+      meetings,
+      memos,
+      deliverables,
+      commonDocs,
+      editedProposal,
+      metrics
+    ),
+    schema: PROPOSAL_SCHEMA,
     // thinking + 4フィールドの構造化出力を収めるため 16000 に引き上げ。
-    max_tokens: 16000,
-    // 思考を有効化して、即出力ではなく会議履歴を分析させてから各フィールドを埋めさせる。
-    thinking: { type: "adaptive" },
-    // 最後の system ブロックの cache_control で system をキャッシュ対象にする
-    system: [
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-    ],
-    // ツール強制の代わりに structured outputs で JSON 形状を保証する
-    output_config: {
-      format: { type: "json_schema", schema: PROPOSAL_SCHEMA },
-    },
-    messages: [
-      {
-        role: "user",
-        content: buildUserPrompt(
-          organization,
-          meetings,
-          memos,
-          deliverables,
-          commonDocs,
-          editedProposal,
-          metrics
-        ),
-      },
-    ],
+    maxTokens: 16000,
+    label: "提案生成",
   });
-
-  console.log("提案生成:", message.stop_reason, JSON.stringify(message.usage));
-
-  if (message.stop_reason === "refusal") {
-    throw new Error("refusal");
-  }
-
-  // structured outputs では最初の text ブロックが有効な JSON になる
-  const textBlock = message.content.find(
-    (block): block is Anthropic.TextBlock => block.type === "text"
-  );
-  if (!textBlock) throw new Error("no_text_output");
-
-  let input: Partial<Proposal>;
-  try {
-    input = JSON.parse(textBlock.text) as Partial<Proposal>;
-  } catch (err) {
-    console.error("提案生成: Claude出力のJSON解析失敗", err);
-    throw new Error("invalid_json_output");
-  }
 
   return {
     summary: typeof input.summary === "string" ? input.summary : "",
@@ -527,7 +503,6 @@ export async function PUT(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
   if (!supabaseUrl || !anonKey) {
     return NextResponse.json(
@@ -536,7 +511,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (!anthropicKey || anthropicKey.trim() === "" || anthropicKey === "sk-ant-xxxxx") {
+  if (!isLlmConfigured()) {
     return NextResponse.json(
       {
         error:
@@ -614,14 +589,11 @@ export async function POST(req: NextRequest) {
   const memos = await fetchRelatedMemos(supabaseUrl, anonKey, organization);
 
   // c. Claude で提案生成（structured outputs + adaptive thinking）
-  const client = new Anthropic({ apiKey: anthropicKey });
-
   let proposal: Proposal;
   try {
     // adaptive thinking で過去成果物・会議履歴を分析させてから構造化出力するため、
     // 1回の生成で全フィールドが埋まる想定（従来の空配列問題への対処）。
     proposal = await generateProposal(
-      client,
       organization,
       meetings,
       memos,
@@ -634,15 +606,8 @@ export async function POST(req: NextRequest) {
       throw new Error("empty_proposal");
     }
   } catch (error) {
-    const status = (error as { status?: number })?.status;
-    if (status === 401) {
-      return NextResponse.json(
-        {
-          error:
-            "ANTHROPIC_APIキーが無効です。.env.local の ANTHROPIC_API_KEY を確認してください。",
-        },
-        { status: 500 }
-      );
+    if (isAuthError(error)) {
+      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
     }
     console.error("提案生成エラー:", error);
     return NextResponse.json(
@@ -659,7 +624,7 @@ export async function POST(req: NextRequest) {
       signature,
       proposal,
       meetings,
-      model: MODEL,
+      model: DEFAULT_MODEL,
       // 手直しを土台に再生成した場合は訂正が引き継がれているので、印を保つ。
       // ここを落とすと次の再生成で訂正が消える。
       edited: !!editedProposal,

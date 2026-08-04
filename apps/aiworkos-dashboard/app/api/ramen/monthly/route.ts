@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+// text は下のローカル変数と名前がぶつかるので別名で取り込む。
+import { text as generateText, isLlmConfigured } from "@/lib/llm";
 import { anonCreds, restHeaders } from "@/lib/supabase";
 import { captureAuthorized, type RamenRow } from "@/lib/ramen";
 
@@ -17,7 +18,6 @@ import { captureAuthorized, type RamenRow } from "@/lib/ramen";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
-const MODEL = "claude-sonnet-5";
 const MONTH_RE = /^\d{4}-\d{2}$/;
 
 const SELECT =
@@ -43,8 +43,7 @@ export async function POST(req: NextRequest) {
   if (!(await captureAuthorized(req))) {
     return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (!isLlmConfigured()) {
     return NextResponse.json({ error: "ANTHROPIC_API_KEY が未設定です" }, { status: 500 });
   }
   const anon = anonCreds();
@@ -168,30 +167,21 @@ JSONにはしないこと（本文が複数行なので改行で壊れる）。
 4本目の全文
 ===END===`;
 
-  const client = new Anthropic({ apiKey });
+  // system プロンプトは渡さない。役割指示は上の prompt（user 側）に入っているため、
+  // ここで別に書き起こすと送る内容が変わる。
   let text = "";
   try {
     // effort を指定しないと、このモデルは推論だけで max_tokens を使い切り、
     // 本文が1文字も返らないことがある（2026-08-01: stop=max_tokens / blocks=thinking / chars=0）。
     // 4本ぶんの長文を出す枠を確保するため、思考は控えめにして上限も広げておく。
-    const msg = await client.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      output_config: { effort: "medium" },
-      messages: [{ role: "user", content: prompt }],
+    text = await generateText({
+      prompt,
+      maxTokens: 16000,
+      thinking: false,
+      effort: "medium",
+      label: "月次生成",
     });
-    text = msg.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { text: string }).text)
-      .join("");
-    console.log(
-      "月次生成:",
-      "stop=", msg.stop_reason,
-      "blocks=", msg.content.map((b) => b.type).join(","),
-      "in=", msg.usage?.input_tokens,
-      "out=", msg.usage?.output_tokens,
-      "chars=", text.length
-    );
+    console.log("月次生成 chars=", text.length);
   } catch (e) {
     console.error("月次振り返り生成エラー:", e);
     return NextResponse.json({ error: "月次振り返りの生成に失敗しました" }, { status: 502 });
