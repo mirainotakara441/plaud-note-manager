@@ -146,6 +146,13 @@ const REVIEW_FEATURES: Feature[] = [
 
 const LEARN_FEATURES: Feature[] = [
   {
+    href: "/bootcamp",
+    icon: "📘",
+    title: "ブートキャンプ学習",
+    desc: "Sprintごとの学びとQ&Aを溜め、新規事業への応用に変える",
+    accent: "bg-indigo-100 text-indigo-700",
+  },
+  {
     href: "/salt2",
     icon: "🎓",
     title: "SALT2人脈DB",
