@@ -94,7 +94,11 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true, count: Array.isArray(rows) ? rows.length : 0 });
   }
 
-  // 単体更新: { id, done?, content? }
+  // 単体更新: { id, done?, content?, entry_date?, due_date? }
+  //
+  // entry_date（いつの日記か）と due_date（いつまでにやるか）は別物として持つ。
+  // 期限を付けるために日記の日付を動かすと、日付ごとの積み上げが崩れる。
+  // due_date は null を「納期なし」として明示的に受け付ける（未指定＝変更しない、と区別する）。
   const id: string | undefined = body?.id;
   if (!id) return NextResponse.json({ error: "idが必要です" }, { status: 400 });
 
@@ -108,6 +112,9 @@ export async function PATCH(req: NextRequest) {
     if (!content) return NextResponse.json({ error: "内容が空です" }, { status: 400 });
     patch.content = content;
   }
+  const isDay = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  if (isDay(body.entry_date)) patch.entry_date = body.entry_date;
+  if (body.due_date === null || isDay(body.due_date)) patch.due_date = body.due_date;
 
   const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",

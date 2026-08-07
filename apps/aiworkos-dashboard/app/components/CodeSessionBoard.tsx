@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // ホームの「セッションの鮮度」。中身は /api/code-sessions。
 //
@@ -74,21 +74,53 @@ function byFreshness(a: BoardSession, b: BoardSession): number {
   return (a.days_idle ?? Infinity) - (b.days_idle ?? Infinity);
 }
 
-function Row({ s }: { s: BoardSession }) {
+function Row({
+  s,
+  busy,
+  onPin,
+  onHide,
+}: {
+  s: BoardSession;
+  busy: boolean;
+  onPin: (s: BoardSession) => void;
+  onHide: (s: BoardSession) => void;
+}) {
   return (
     <li
       className={`rounded-lg border px-3 py-2 ${
         s.stalled ? "border-amber-200 bg-amber-50" : "border-gray-100 bg-gray-50"
-      }`}
+      } ${busy ? "opacity-50" : ""}`}
     >
       <p className="flex items-start gap-1.5 text-sm font-medium leading-snug text-gray-900">
-        {s.pinned && <span aria-label="ピン留め">📌</span>}
+        <button
+          type="button"
+          onClick={() => onPin(s)}
+          disabled={busy}
+          aria-pressed={s.pinned}
+          aria-label={s.pinned ? "ピン留めを外す" : "ピン留めする"}
+          title={s.pinned ? "ピン留めを外す" : "ピン留めする（上に固定）"}
+          className={`shrink-0 rounded px-0.5 transition active:scale-90 ${
+            s.pinned ? "" : "opacity-25 grayscale"
+          }`}
+        >
+          📌
+        </button>
         <span className="min-w-0 flex-1">{s.title}</span>
         {s.stalled && (
           <span className="shrink-0 rounded-full bg-amber-200 px-1.5 py-0.5 text-[0.6875rem] font-bold text-amber-900">
             中断
           </span>
         )}
+        <button
+          type="button"
+          onClick={() => onHide(s)}
+          disabled={busy}
+          aria-label="盤面から消す"
+          title="盤面から消す（会話そのものは消えません）"
+          className="shrink-0 rounded-md px-1 text-gray-300 transition active:bg-gray-200 active:text-rose-500"
+        >
+          ✕
+        </button>
       </p>
       <p
         className={`mt-0.5 text-xs leading-relaxed ${
@@ -108,21 +140,54 @@ export default function CodeSessionBoard() {
   const [data, setData] = useState<BoardResponse | null>(null);
   const [failedToLoad, setFailedToLoad] = useState(false);
   const [tab, setTab] = useState<TabKey>("today");
+  const [reloading, setReloading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/code-sessions", { cache: "no-store" });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      setData(await r.json());
+      setFailedToLoad(false);
+    } catch {
+      setFailedToLoad(true);
+    }
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    fetch("/api/code-sessions", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
-      .then((d) => {
-        if (alive) setData(d);
-      })
-      .catch(() => {
-        if (alive) setFailedToLoad(true);
+    load();
+  }, [load]);
+
+  // ピン留め／盤面から消す。どちらも見え方だけを変える操作で、
+  // Macの中の会話には触らない。反映は読み直しで確かめる（楽観更新にすると、
+  // 保存に失敗しても消えたように見えてしまう）。
+  async function setPref(s: BoardSession, patch: { hidden?: boolean; pinned?: boolean }) {
+    setBusyId(s.id);
+    try {
+      const r = await fetch("/api/code-sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: s.id, ...patch }),
       });
-    return () => {
-      alive = false;
-    };
-  }, []);
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      await load();
+    } catch {
+      setFailedToLoad(true);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function hideSession(s: BoardSession) {
+    if (!window.confirm(`「${s.title}」を盤面から消します。\n会話そのものは消えません。よろしいですか？`)) return;
+    setPref(s, { hidden: true });
+  }
+
+  async function reload() {
+    setReloading(true);
+    await load();
+    setReloading(false);
+  }
 
   const buckets = useMemo(() => {
     if (!data) return null;
@@ -185,9 +250,19 @@ export default function CodeSessionBoard() {
     <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <p className="text-sm font-bold text-gray-900">🗂️ セッションの鮮度</p>
-        <p className="text-xs font-bold text-gray-400">
-          {isToday ? `全${buckets.total}本` : `最終取得 ${shortDate(data.snapshot_date)}時点`}
-        </p>
+        <div className="flex items-baseline gap-2">
+          <p className="text-xs font-bold text-gray-400">
+            {isToday ? `全${buckets.total}本` : `最終取得 ${shortDate(data.snapshot_date)}時点`}
+          </p>
+          <button
+            type="button"
+            onClick={reload}
+            disabled={reloading}
+            className="rounded-full border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-500 transition active:bg-gray-100 disabled:opacity-40"
+          >
+            {reloading ? "更新中" : "更新"}
+          </button>
+        </div>
       </div>
 
       {showMoved && (
@@ -234,7 +309,13 @@ export default function CodeSessionBoard() {
       {shown.length > 0 ? (
         <ul className="space-y-1.5">
           {shown.map((s) => (
-            <Row key={s.id} s={s} />
+            <Row
+              key={s.id}
+              s={s}
+              busy={busyId === s.id}
+              onPin={(x) => setPref(x, { pinned: !x.pinned })}
+              onHide={hideSession}
+            />
           ))}
         </ul>
       ) : (

@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders, type Creds } from "@/lib/supabase";
 import { toJstDateString } from "@/lib/date";
 
@@ -16,8 +16,16 @@ import { toJstDateString } from "@/lib/date";
 //   ・今日のスナップショットが無い日は、古い行を今日の状態として出さない。
 //     snapshot_date をそのまま返し、画面側で「最終取得 MM/DD」と言わせる。
 //   ・セッション名には案件名がそのまま入るので、service role でサーバー側からのみ読む。
+//
+// 画面からの操作（PATCH）は code_session_prefs に書く。code_session_snapshots へ
+// 直接書いてはいけない——あちらは毎晩の走査が (snapshot_date, session_id) で upsert し直す
+// ので、盤面から消したつもりが翌朝には戻る。prefs は日付を持たないので走査と衝突しない。
 
 export const dynamic = "force-dynamic";
+
+const PREFS_TABLE = "code_session_prefs";
+
+type PrefRow = { session_id: string; hidden: boolean; pinned: boolean | null };
 
 type Row = {
   snapshot_date: string;
@@ -131,9 +139,23 @@ export async function GET() {
     const current = rows.filter((r) => r.snapshot_date === snapshot_date);
     const previous = rows.filter((r) => r.snapshot_date === prevCandidate);
 
-    // アーカイブは盤面に出さない（畳んだものは「放置」ではない）。
+    // 画面から付けた設定を重ねる。取れなくても盤面は出す（設定は付随情報）。
+    const prefs = new Map<string, PrefRow>();
+    try {
+      const res = await fetch(
+        `${c.url}/rest/v1/${PREFS_TABLE}?select=session_id,hidden,pinned&limit=5000`,
+        { headers: restHeaders(c.key), cache: "no-store" }
+      );
+      if (res.ok) {
+        for (const p of (await res.json()) as PrefRow[]) prefs.set(p.session_id, p);
+      }
+    } catch (err) {
+      console.error("GET /api/code-sessions: prefs取得失敗", err);
+    }
+
+    // アーカイブ（走査側）と、画面から消したもの（prefs.hidden）は盤面に出さない。
     const sessions: BoardSession[] = current
-      .filter((r) => !r.is_archived)
+      .filter((r) => !r.is_archived && !prefs.get(r.session_id)?.hidden)
       .map((r) => {
         const days_idle = toNumber(r.days_idle);
         return {
@@ -143,7 +165,8 @@ export async function GET() {
           days_idle,
           last_activity_at: r.last_activity_at,
           last_event: r.last_event || "",
-          pinned: r.is_pinned,
+          // prefs.pinned が null なら走査結果に従う（画面で触っていないもの）。
+          pinned: prefs.get(r.session_id)?.pinned ?? r.is_pinned,
           // 経過が読めないものは中断として数えない（判定できないものは判定しない）。
           stalled:
             r.is_stalled && days_idle !== null && days_idle <= STALLED_WINDOW_DAYS,
@@ -184,5 +207,56 @@ export async function GET() {
       { error: err instanceof Error ? err.message : "取得に失敗しました" },
       { status: 502 }
     );
+  }
+}
+
+// 盤面の手動設定。{ session_id, hidden?, pinned? }
+//
+// hidden=true は「盤面から消す」。セッションの実体（Macの中の会話）には一切触らない。
+// 消したいのは見え方であって記録ではないので、行を削除せず hidden で伏せる
+// （消し過ぎたときに戻せないと、盤面を触るのが怖くなる）。
+export async function PATCH(req: NextRequest) {
+  const c = serviceCreds();
+  if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
+
+  let body: { session_id?: unknown; hidden?: unknown; pinned?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "リクエストが不正です" }, { status: 400 });
+  }
+
+  const sessionId = typeof body.session_id === "string" ? body.session_id.trim() : "";
+  if (!sessionId) {
+    return NextResponse.json({ error: "session_id が必要です" }, { status: 400 });
+  }
+
+  const patch: Record<string, unknown> = { session_id: sessionId, updated_at: new Date().toISOString() };
+  if (typeof body.hidden === "boolean") patch.hidden = body.hidden;
+  // pinned は null を「走査結果に従う」の意味で受け付ける。
+  if (typeof body.pinned === "boolean" || body.pinned === null) patch.pinned = body.pinned;
+  if (!("hidden" in patch) && !("pinned" in patch)) {
+    return NextResponse.json({ error: "変更する項目がありません" }, { status: 400 });
+  }
+
+  try {
+    const res = await fetch(
+      `${c.url}/rest/v1/${PREFS_TABLE}?on_conflict=session_id`,
+      {
+        method: "POST",
+        headers: restHeaders(c.key, { Prefer: "resolution=merge-duplicates,return=representation" }),
+        body: JSON.stringify(patch),
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error("PATCH /api/code-sessions: 保存失敗", res.status, detail.slice(0, 300));
+      return NextResponse.json({ error: `保存失敗 ${res.status}` }, { status: 502 });
+    }
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/code-sessions: 例外", err);
+    return NextResponse.json({ error: "保存に失敗しました" }, { status: 502 });
   }
 }

@@ -247,11 +247,18 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
         caption: "残り / 全件",
       };
 
+  // 「今週の接点」は中身が伝わらなかった（何が1件なのか分からない）。
+  // 実体は今週の週報に書いた活動の行数なので、そのまま名前にする。
   const contactsCard: StatCard = weekFailed
-    ? { href: "/weekly-report", label: "今週の接点", value: "—", caption: "取得できませんでした" }
+    ? { href: "/weekly-report", label: "今週の活動", value: "—", caption: "取得できませんでした" }
     : noWeek
-    ? { href: "/weekly-report", label: "今週の接点", value: "—", caption: "週報データがまだありません" }
-    : { href: "/weekly-report", label: "今週の接点", value: `${stats?.week.contacts ?? 0}`, caption: "件" };
+    ? { href: "/weekly-report", label: "今週の活動", value: "—", caption: "週報データがまだありません" }
+    : {
+        href: "/weekly-report",
+        label: "今週の活動",
+        value: `${stats?.week.contacts ?? 0}`,
+        caption: "週報に書いた件数",
+      };
 
   const homeworkCard: StatCard = weekFailed
     ? { href: "/weekly-report", label: "宿題消化", value: "—", caption: "取得できませんでした" }
@@ -276,9 +283,44 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
   return [todoCard, contactsCard, homeworkCard, claudeHoursCard];
 }
 
-function FeatureGroup({ title, features }: { title: string; features: Feature[] }) {
+// ホーム上部の飛び先。id は FeatureGroup と1対1で対応させる。
+// iPhoneだと機能カードが縦に20枚以上並び、下の群は毎回スクロールで掘り当てることになる。
+const GROUPS = [
+  { id: "g-record", short: "記録", title: "📥 記録する" },
+  { id: "g-review", short: "振り返る", title: "📊 振り返る" },
+  { id: "g-propose", short: "提案", title: "⚔️ 提案する" },
+  { id: "g-learn", short: "学ぶ", title: "🎓 学ぶ" },
+  { id: "g-life", short: "ライフ", title: "🌱 ライフスタイル・ヘルス" },
+  { id: "g-system", short: "システム", title: "🛠 システム" },
+] as const;
+
+/** 上部に貼り付く群への近道。押すとその群の見出しまで飛ぶ。 */
+function GroupNav() {
   return (
-    <section className="mb-6">
+    <nav
+      aria-label="カテゴリー"
+      className="sticky top-0 z-10 -mx-4 mb-4 border-b border-gray-200 bg-gray-50/95 px-4 py-2 backdrop-blur"
+    >
+      {/* 横スクロール1行。折り返して2段にすると、貼り付いた時に画面を食いすぎる */}
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+        {GROUPS.map((g) => (
+          <a
+            key={g.id}
+            href={`#${g.id}`}
+            className="shrink-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition active:bg-gray-100"
+          >
+            {g.short}
+          </a>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+function FeatureGroup({ id, title, features }: { id: string; title: string; features: Feature[] }) {
+  return (
+    // scroll-mt は貼り付いたナビの下に見出しが隠れないための余白。
+    <section id={id} className="mb-6 scroll-mt-16">
       <h2 className="mb-2 text-sm font-bold text-gray-500">{title}</h2>
       <div className="space-y-3">
         {features.map((f) => (
@@ -398,12 +440,18 @@ export default function Home() {
           出すのは動きの鮮度と詰まり方だけ。放置されている帯が薄い塊として浮かぶ。 */}
       <CodeSessionBoard />
 
-      <FeatureGroup title="📥 記録する" features={RECORD_FEATURES} />
-      <FeatureGroup title="📊 振り返る" features={REVIEW_FEATURES} />
-      <FeatureGroup title="⚔️ 提案する" features={PROPOSE_FEATURES} />
-      <FeatureGroup title="🎓 学ぶ" features={LEARN_FEATURES} />
-      <FeatureGroup title="🌱 ライフスタイル・ヘルス" features={LIFESTYLE_HEALTH_FEATURES} />
-      <FeatureGroup title="🛠 システム" features={SYSTEM_FEATURES} />
+      <GroupNav />
+
+      <FeatureGroup id="g-record" title="📥 記録する" features={RECORD_FEATURES} />
+      <FeatureGroup id="g-review" title="📊 振り返る" features={REVIEW_FEATURES} />
+      <FeatureGroup id="g-propose" title="⚔️ 提案する" features={PROPOSE_FEATURES} />
+      <FeatureGroup id="g-learn" title="🎓 学ぶ" features={LEARN_FEATURES} />
+      <FeatureGroup
+        id="g-life"
+        title="🌱 ライフスタイル・ヘルス"
+        features={LIFESTYLE_HEALTH_FEATURES}
+      />
+      <FeatureGroup id="g-system" title="🛠 システム" features={SYSTEM_FEATURES} />
 
       <IntegrationPanel />
 

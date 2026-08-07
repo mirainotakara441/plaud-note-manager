@@ -20,7 +20,8 @@ import { toJstDateString } from "@/lib/date";
 type Kind = "action" | "point";
 type Item = {
   id: string;
-  entry_date: string; // YYYY-MM-DD
+  entry_date: string; // YYYY-MM-DD。いつの日記から来たか
+  due_date: string | null; // YYYY-MM-DD / null=納期なし。entry_dateとは別物
   kind: Kind;
   content: string;
   done: boolean;
@@ -222,6 +223,10 @@ export default function ActionsPage() {
   // 納期の入力（カレンダーを開いている行のid）。
   // input[type=date] を使うので、iPhoneでもPCでもOS標準のカレンダーが出る。
   const [dueEditId, setDueEditId] = useState<string | null>(null);
+  // 日々のToDo（日記由来）側の納期・日付の編集。営業ToDoとは別の行なので状態も分ける。
+  const [itemDueEditId, setItemDueEditId] = useState<string | null>(null);
+  const [itemDueDraft, setItemDueDraft] = useState("");
+  const [itemDateEditId, setItemDateEditId] = useState<string | null>(null);
   // 納期は「入力中の下書き」を別に持つ。入力のたびに保存して入力欄を閉じると、
   // iPhoneではカレンダーごと消えて日付を選べない（下の saveDue のコメント参照）。
   const [dueDraft, setDueDraft] = useState("");
@@ -495,10 +500,34 @@ export default function ActionsPage() {
     completeMany(ids);
   }
 
-  async function remove(id: string) {
-    setItems((prev) => prev.filter((x) => x.id !== id));
-    const res = await fetch(`/api/actions?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+  // 削除は元に戻せない。日記由来の行は自動で起票されるので、消したつもりが
+  // 別の行だった、という取り違えが起きやすい。内容を出して一度確かめる。
+  async function remove(it: Item) {
+    if (!window.confirm(`「${it.content}」を削除します。元に戻せません。よろしいですか？`)) return;
+    setItems((prev) => prev.filter((x) => x.id !== it.id));
+    const res = await fetch(`/api/actions?id=${encodeURIComponent(it.id)}`, { method: "DELETE" });
     if (!res.ok) load();
+  }
+
+  // 日付（いつの日記か）と納期（いつまでにやるか）の更新。
+  // 納期の入力欄は営業ToDo側と同じ作法で、下書きに溜めて「決定」で保存する
+  // （iPhoneの日付ピッカーは開いた直後にchangeを飛ばすので、保存と同時に
+  //  入力欄を閉じるとカレンダーごと消える。詳しくは saveDue のコメント）。
+  async function saveItemDates(it: Item, patch: { entry_date?: string; due_date?: string | null }) {
+    const prev = items;
+    setItems((p) => p.map((x) => (x.id === it.id ? { ...x, ...patch } : x)));
+    setItemDueEditId(null);
+    try {
+      const res = await fetch("/api/actions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: it.id, ...patch }),
+      });
+      if (!res.ok) throw new Error("更新に失敗しました");
+    } catch {
+      setItems(prev);
+      setError("日付の更新に失敗しました");
+    }
   }
 
   async function addItem() {
@@ -741,7 +770,94 @@ export default function ActionsPage() {
             <span className={`rounded px-1.5 py-0.5 text-[0.6875rem] font-semibold ${meta.klass}`}>
               {meta.icon} {meta.label}
             </span>
-            <span className="text-[0.6875rem] text-gray-400">{fmtDate(it.entry_date)}</span>
+
+            {/* 日付＝いつの日記か。押すと差し替えられる（取込先の日を間違えた時用） */}
+            {itemDateEditId === it.id ? (
+              <input
+                type="date"
+                autoFocus
+                defaultValue={it.entry_date}
+                onChange={(e) => {
+                  if (e.target.value) saveItemDates(it, { entry_date: e.target.value });
+                  setItemDateEditId(null);
+                }}
+                onBlur={() => setItemDateEditId(null)}
+                aria-label="日付"
+                className="rounded border border-gray-300 px-1 py-0.5 text-[0.6875rem] text-gray-700"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setItemDateEditId(it.id)}
+                title="日付を変える"
+                className="rounded text-[0.6875rem] text-gray-400 underline decoration-dotted underline-offset-2 active:bg-gray-100"
+              >
+                {fmtDate(it.entry_date)}
+              </button>
+            )}
+
+            {/* 納期。営業ToDoと同じ見た目・同じ作法にそろえる */}
+            {itemDueEditId === it.id ? (
+              <span className="inline-flex items-center gap-1">
+                <input
+                  type="date"
+                  autoFocus
+                  value={itemDueDraft}
+                  onChange={(e) => setItemDueDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setItemDueEditId(null);
+                    if (e.key === "Enter") saveItemDates(it, { due_date: itemDueDraft || null });
+                  }}
+                  aria-label="納期"
+                  className="rounded-lg border border-emerald-400 px-1.5 py-0.5 text-[0.8125rem] text-gray-700"
+                />
+                {itemDueDraft !== (it.due_date ?? "") ? (
+                  <button
+                    type="button"
+                    onClick={() => saveItemDates(it, { due_date: itemDueDraft || null })}
+                    className="rounded-full bg-emerald-600 px-2 py-0.5 text-[0.6875rem] font-semibold text-white"
+                  >
+                    決定
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setItemDueEditId(null)}
+                    className="rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-400"
+                  >
+                    閉じる
+                  </button>
+                )}
+                {it.due_date && (
+                  <button
+                    type="button"
+                    onClick={() => saveItemDates(it, { due_date: null })}
+                    className="rounded-full border border-gray-300 px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-500"
+                  >
+                    クリア
+                  </button>
+                )}
+              </span>
+            ) : (
+              (() => {
+                const dm = it.due_date ? dueMeta(it.due_date, it.done) : null;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setItemDueDraft(it.due_date ?? "");
+                      setItemDueEditId(it.id);
+                    }}
+                    title={it.due_date ? "納期を変更・解除する" : "納期を設定する"}
+                    className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] transition active:scale-95 ${
+                      dm ? dm.klass : "border-dashed border-gray-300 text-gray-400"
+                    }`}
+                  >
+                    {it.due_date && dm ? `📅 ${fmtDate(it.due_date)} ${dm.rel}` : "📅 納期"}
+                  </button>
+                );
+              })()
+            )}
           </div>
           {editing ? (
             <div className="flex gap-2">
@@ -782,7 +898,7 @@ export default function ActionsPage() {
         {!editing && (
           <button
             type="button"
-            onClick={() => remove(it.id)}
+            onClick={() => remove(it)}
             aria-label="削除"
             className="mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-gray-300 transition active:bg-gray-100 active:text-rose-500"
           >
