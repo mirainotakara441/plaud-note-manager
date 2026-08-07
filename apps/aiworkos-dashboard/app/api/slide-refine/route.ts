@@ -266,6 +266,26 @@ function windowChunks(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP):
   return chunks;
 }
 
+// ⑤ 既存スライドの登録。専用の列は増やさず、登録内容をこのマーカー付きの最初のuser
+// メッセージとして slide_refine_messages（既存テーブル）に保存する。メッセージは
+// 会話履歴・構成案・熟成まとめのすべてに自然に流れ込むため、土台の置き場所として
+// 一番壊れにくく、マイグレーション不要で済む。マーカーは改善モードの判別にも使う。
+const BASE_DECK_MARKER = "【既存スライドの登録】";
+
+function buildBaseDeckMessage(baseSlides: string | null, baseScript: string | null): string {
+  return [
+    `${BASE_DECK_MARKER}この壁打ちの目的は、以下の既存スライドの改善・完成です。`,
+    "==== スライド構成 ====",
+    baseSlides ?? "（未登録。台本だけを土台にする）",
+    "==== 台本・スクリプト ====",
+    baseScript ?? "（未登録）",
+  ].join("\n");
+}
+
+function hasBaseDeck(history: Msg[]): boolean {
+  return history.some((m) => m.role === "user" && m.content.startsWith(BASE_DECK_MARKER));
+}
+
 function restUrl(supabaseUrl: string, table: string) {
   return `${supabaseUrl}/rest/v1/${table}`;
 }
@@ -320,8 +340,17 @@ async function askClaude(
   history: Msg[],
   organization?: string | null,
   category?: string | null,
-  purpose?: string | null
+  purpose?: string | null,
+  baseRegistered = false
 ): Promise<string> {
+  // 既存スライドの改善モードでは「ゼロから作る」前提の深掘りをさせない。
+  // 登録済みの内容を既知として扱わせ、足りない部分を埋める質問に寄せる。
+  const baseInstruction = baseRegistered
+    ? `
+
+吉井さんは過去に作った既存スライドの構成（と台本）を登録済みで、この会話に含まれています。この壁打ちの目的は「既存スライドの改善・完成」であり、ゼロから作り直すことではありません。登録内容に既に書かれていることを改めて質問せず、足りない部分・弱い部分・聞き手に刺さらない部分を埋める質問をしてください。`
+    : "";
+
   const linkInstruction =
     organization && organization.trim()
       ? `このスライドは特定の対象に紐付いています。対象: ${organization}（${category ?? "その他"}）。聞き手を深掘りする際はこの対象を踏まえてください。`
@@ -340,7 +369,7 @@ ${theme}
 
 ${purposeInstruction}
 
-${linkInstruction}
+${linkInstruction}${baseInstruction}
 
 このお題をもとに壁打ちを始めてください。聞き手・ゴールを中心に、まだ言語化されていないものを深掘りする質問を2〜3問投げてください。`,
     },
@@ -430,6 +459,8 @@ export async function POST(req: NextRequest) {
     visual?: unknown;
     slide?: unknown;
     instruction?: unknown;
+    baseSlides?: unknown;
+    baseScript?: unknown;
   };
   try {
     body = await req.json();
@@ -455,6 +486,15 @@ export async function POST(req: NextRequest) {
         typeof body.templateId === "string" && body.templateId.trim()
           ? findTemplate(body.templateId).id
           : findTemplate(null).id;
+      // ⑤ 既存スライドの登録（両方とも任意。どちらかがあれば改善モードで始める）。
+      const baseSlides =
+        typeof body.baseSlides === "string" && body.baseSlides.trim()
+          ? body.baseSlides.trim()
+          : null;
+      const baseScript =
+        typeof body.baseScript === "string" && body.baseScript.trim()
+          ? body.baseScript.trim()
+          : null;
       if (!theme) {
         return NextResponse.json({ error: "お題を入力してください" }, { status: 400 });
       }
@@ -471,12 +511,24 @@ export async function POST(req: NextRequest) {
       const rows = await created.json();
       const session = Array.isArray(rows) ? rows[0] : rows;
 
-      const reply = await askClaude(theme, [], organization, category, purpose);
+      // 既存スライドが登録されていれば、最初のuserメッセージとして土台を積んでから面談を始める
+      // （画面にもそのまま出るので、何を土台にしたかが後から見ても分かる）。
+      const hasBase = !!(baseSlides || baseScript);
+      const baseHistory: Msg[] = [];
+      if (hasBase) {
+        const baseMessage = buildBaseDeckMessage(baseSlides, baseScript);
+        await saveMessage(supabaseUrl, serviceKey, session.id, "user", baseMessage);
+        baseHistory.push({ role: "user", content: baseMessage });
+      }
+
+      const reply = await askClaude(theme, baseHistory, organization, category, purpose, hasBase);
       await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
 
       return NextResponse.json({
         sessionId: session.id,
-        messages: [{ role: "assistant", content: reply }],
+        messages: hasBase
+          ? await loadMessages(supabaseUrl, anonKey, session.id)
+          : [{ role: "assistant", content: reply }],
       });
     }
 
@@ -503,7 +555,15 @@ export async function POST(req: NextRequest) {
 
       await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
-      const reply = await askClaude(theme, history, organization, category, purpose);
+      // 既存スライドの改善モードかは、履歴のマーカーで判別する（列を増やさない方針）。
+      const reply = await askClaude(
+        theme,
+        history,
+        organization,
+        category,
+        purpose,
+        hasBaseDeck(history)
+      );
       await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
 
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });
@@ -552,6 +612,13 @@ export async function POST(req: NextRequest) {
           : `スライドの枚数はちょうど${slideCount}枚にしてください（${order}の配分はこの${slideCount}枚に収まるよう調整すること）。要点(bullets)は各スライド3〜5個を超えないこと。`
         : `スライド枚数の指定はありません。内容に応じて5〜10枚程度で構いません。要点(bullets)は各スライド3〜5個を超えないこと。`;
 
+      // 既存スライドの改善モードでは、テンプレの型よりも登録済み構成の流れを優先させる。
+      // ここを指示しないと、せっかく登録した構成をゼロから作り直してしまう。
+      const baseDeckInstruction = hasBaseDeck(history)
+        ? `
+（重要）この壁打ちには「${BASE_DECK_MARKER}」として登録済みの既存スライドがあります。目的は既存スライドの改善・完成であり、ゼロから作り直さないこと。既存の枚数・流れ・文言を土台にし、壁打ちの会話で判明した改善点だけを反映すること。型の並びと既存の流れが食い違う場合は既存の流れを優先し、各スライドはsectionのうち最も近いものに割り当ててよい。`
+        : "";
+
       const parsed = await structured<{ slides: Slide[]; constraints?: string[] }>({
         system: PERSONA_PROMPT,
         schema: buildOutlineSchema(template, slideCount),
@@ -565,7 +632,7 @@ ${transcript || "（まだ会話はありません。お題のみからスライ
 この壁打ちの内容をもとに、スライド構成案を作ってください。
 必ず「${order}」の型で並べること。
 ${sectionGuidance}
-${slideCountInstruction}
+${slideCountInstruction}${baseDeckInstruction}
 スライドは${order}の順にすでに並んだ状態で返すこと（後で並べ替えない前提）。
 
 あわせて、この壁打ちの会話の中で吉井さんが述べた「デッキ全体で守るべき制約」があれば抽出してください
