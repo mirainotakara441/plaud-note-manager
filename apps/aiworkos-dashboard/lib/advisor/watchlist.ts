@@ -21,6 +21,10 @@ export const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: numbe
   // カード自体は「最終取得 MM/DD」と出して古い値を隠さないので、
   // 通知と画面の二重で気づける。
   { job: "shinchoku", label: "進捗エージェント（セッションの盤面）", staleHours: 48 },
+  // 盤面だけを更新する軽い実行（2時間おき）。Macを開いている間しか走らないので、
+  // 週末に閉じっぱなしでも誤報しないよう36時間まで待つ。本編（22:30）が止まっても
+  // こちらが生きていれば画面は今日の状態を保てるので、別々に見る意味がある。
+  { job: "shinchoku-board", label: "盤面の随時更新", staleHours: 36 },
   // 週次バックアップは1回飛ばしたら気づきたいので8日。
   { job: "aiworkos-backup", label: "週次バックアップ", staleHours: 24 * 8 },
   { job: "ramen-x-followers", label: "ラーメンXのフォロワー記録", staleHours: 48 },
