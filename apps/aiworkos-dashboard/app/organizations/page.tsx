@@ -24,6 +24,7 @@ import { ORG_CATEGORIES, isOrgCategory, type OrgCategory } from "@/lib/categorie
 //   /api/organizations/profile        … 現状・課題・施策・基礎データ
 //   /api/organizations/notes          … 手書きメモ（GET / PUT / DELETE）
 //   /api/organizations/timeline       … タイムライン（タブが選ばれるまで取りに行かない）
+//   /api/organizations/influence      … 影響力マップ（同上。抽出・確定・削除もここ）
 
 type Organization = {
   name: string;
@@ -58,6 +59,34 @@ type TimelineResponse = {
   organization: string;
   timeline: TimelineEntry[];
   relatedDiaries: DiaryResult[];
+};
+
+// 影響力マップ（/api/organizations/influence）。人物＝点、関係＝線。
+// draft は AI 抽出の下書きで、吉井さんが「確定」を押すまで事実扱いしない。
+type InfluenceEdge = {
+  id: string;
+  org_name: string;
+  from_person: string;
+  to_person: string;
+  relation: string;
+  note: string | null;
+  source_ref: string | null;
+  status: "draft" | "confirmed";
+  created_at: string;
+  updated_at: string;
+};
+
+type InfluencePerson = {
+  name: string;
+  department: string | null;
+  title: string | null;
+  flag: string | null;
+};
+
+type InfluenceResponse = {
+  organization: string;
+  edges: InfluenceEdge[];
+  people: InfluencePerson[];
 };
 
 type ProfileWeek = {
@@ -110,7 +139,7 @@ type OrganizationNote = {
   updated_at: string;
 };
 
-type TabKey = "status" | "issues" | "tactics" | "basics" | "timeline";
+type TabKey = "status" | "issues" | "tactics" | "basics" | "influence" | "timeline";
 
 type TabDef = {
   key: TabKey;
@@ -119,12 +148,15 @@ type TabDef = {
   section: NoteSection | null;
 };
 
-// 並び順：現状 → 課題 → 施策 → 基礎データ → タイムライン
+// 並び順：現状 → 課題 → 施策 → 基礎データ → 影響力 → タイムライン
+// 影響力（影響力マップ）は手書きメモを持たない（線の1本1本に根拠と確定操作があるため、
+// タブ全体への自由メモは置かない。タイムラインと同じ扱い）。
 const TABS: TabDef[] = [
   { key: "status", label: "現状", section: "現状" },
   { key: "issues", label: "課題", section: "課題" },
   { key: "tactics", label: "施策", section: "施策" },
   { key: "basics", label: "基礎データ", section: "基礎データ" },
+  { key: "influence", label: "影響力", section: null },
   { key: "timeline", label: "タイムライン", section: null },
 ];
 
@@ -665,6 +697,103 @@ function DiaryCard({ diary }: { diary: DiaryResult }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// 影響力マップ（点＝人物カード、線＝関係の行リスト）
+// ---------------------------------------------------------------------------
+
+// 人脈DBは「点」の名簿。ここでは点を薄く並べ、主役は下の「線」に譲る。
+function InfluencePersonChip({ person }: { person: InfluencePerson }) {
+  const sub = [person.department, person.title].filter((s) => !!s).join(" ");
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-sm font-bold text-gray-900">{person.name}</span>
+        {person.flag && (
+          <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[0.625rem] font-semibold text-rose-700">
+            {person.flag}
+          </span>
+        )}
+      </div>
+      {sub && <p className="mt-0.5 text-xs text-gray-500">{sub}</p>}
+    </div>
+  );
+}
+
+// 「A →(後任) B」の矢印。依存パッケージを増やさず、軽いインラインSVGで済ませる。
+function RelationArrow({ relation }: { relation: string }) {
+  return (
+    <span className="flex shrink-0 flex-col items-center px-0.5 text-gray-400">
+      <span className="text-[0.625rem] font-semibold leading-none text-gray-500">
+        {relation}
+      </span>
+      <svg width="44" height="10" viewBox="0 0 44 10" aria-hidden="true" className="mt-0.5">
+        <line x1="0" y1="5" x2="35" y2="5" stroke="currentColor" strokeWidth="1.5" />
+        <polygon points="35,1 43,5 35,9" fill="currentColor" />
+      </svg>
+    </span>
+  );
+}
+
+// 関係1本の行。draft（AI下書き）は琥珀色で「まだ事実ではない」ことを明示し、
+// 吉井さんの「確定」で通常表示（confirmed）へ昇格する。
+function InfluenceEdgeRow({
+  edge,
+  busy,
+  onConfirm,
+  onDelete,
+}: {
+  edge: InfluenceEdge;
+  busy: boolean;
+  onConfirm: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const isDraft = edge.status === "draft";
+  return (
+    <li
+      className={`rounded-xl border p-3 ${
+        isDraft ? "border-amber-300 bg-amber-50/60" : "border-gray-200 bg-white"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        {isDraft && (
+          <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[0.6875rem] font-bold text-amber-900">
+            下書き
+          </span>
+        )}
+        <span className="text-sm font-bold text-gray-900">{edge.from_person}</span>
+        <RelationArrow relation={edge.relation} />
+        <span className="text-sm font-bold text-gray-900">{edge.to_person}</span>
+      </div>
+      {edge.note && (
+        <p className="mt-1.5 text-xs leading-relaxed text-gray-600">根拠：{edge.note}</p>
+      )}
+      {edge.source_ref && (
+        <p className="mt-0.5 text-[0.6875rem] text-gray-400">出所：{edge.source_ref}</p>
+      )}
+      <div className="mt-2 flex items-center gap-3">
+        {isDraft && (
+          <button
+            type="button"
+            onClick={() => onConfirm(edge.id)}
+            disabled={busy}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white active:opacity-70 disabled:opacity-50"
+          >
+            確定
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => onDelete(edge.id)}
+          disabled={busy}
+          className="ml-auto text-xs font-medium text-red-600 active:opacity-70 disabled:opacity-50"
+        >
+          削除
+        </button>
+      </div>
+    </li>
+  );
+}
+
 function Spinner({ label }: { label: string }) {
   return (
     <div className="flex flex-col items-center gap-3 py-10">
@@ -713,6 +842,16 @@ function OrganizationsInner() {
   const [timelineError, setTimelineError] = useState<string | null>(null);
   // タイムラインはタブが選ばれるまで取りに行かない（重いため）
   const [timelineRequestedFor, setTimelineRequestedFor] = useState<string | null>(null);
+
+  // 影響力マップ。タイムラインと同じく、タブが選ばれるまで取りに行かない。
+  const [influence, setInfluence] = useState<InfluenceResponse | null>(null);
+  const [influenceLoading, setInfluenceLoading] = useState(false);
+  const [influenceError, setInfluenceError] = useState<string | null>(null);
+  const [influenceRequestedFor, setInfluenceRequestedFor] = useState<string | null>(null);
+  // 抽出（Claude呼び出し）と行操作は多重実行させない
+  const [extracting, setExtracting] = useState(false);
+  const [extractMessage, setExtractMessage] = useState<string | null>(null);
+  const [edgeBusyId, setEdgeBusyId] = useState<string | null>(null);
 
   // 団体一覧。週報にしか出てこない団体も選べるよう include=weekly で取る。
   useEffect(() => {
@@ -816,11 +955,126 @@ function OrganizationsInner() {
     }
   }, []);
 
-  // 団体が変わったら現状・課題・施策・基礎データとメモを取り直し、タイムラインは捨てる
+  const loadInfluence = useCallback(async (org: string) => {
+    setInfluenceLoading(true);
+    setInfluenceError(null);
+    setInfluence(null);
+    try {
+      const res = await fetch(
+        `/api/organizations/influence?org=${encodeURIComponent(org)}`,
+        { cache: "no-store" }
+      );
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setInfluenceError(errorMessage(json, "影響力マップの取得に失敗しました"));
+        return;
+      }
+      setInfluence(json as InfluenceResponse);
+    } catch {
+      setInfluenceError("通信エラーが発生しました。接続を確認してください。");
+    } finally {
+      setInfluenceLoading(false);
+    }
+  }, []);
+
+  // 会議録＋人脈DBメモから関係を抽出（draft 保存）。終わったら一覧を取り直す。
+  const runExtract = useCallback(async () => {
+    if (!selected || extracting) return;
+    setExtracting(true);
+    setExtractMessage(null);
+    setInfluenceError(null);
+    try {
+      const res = await fetch("/api/organizations/influence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ org: selected, action: "extract" }),
+      });
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setInfluenceError(errorMessage(json, "関係の抽出に失敗しました"));
+        return;
+      }
+      const r = json as { insertedCount?: number; duplicateCount?: number };
+      const added = r.insertedCount ?? 0;
+      const dup = r.duplicateCount ?? 0;
+      setExtractMessage(
+        added > 0
+          ? `${added}件の関係を下書きとして追加しました${dup > 0 ? `（既存と重複 ${dup}件は除外）` : ""}`
+          : dup > 0
+            ? `新しい関係はありませんでした（既存と重複 ${dup}件）`
+            : "資料から読み取れる新しい関係はありませんでした"
+      );
+      await loadInfluence(selected);
+    } catch {
+      setInfluenceError("通信エラーが発生しました。接続を確認してください。");
+    } finally {
+      setExtracting(false);
+    }
+  }, [selected, extracting, loadInfluence]);
+
+  // draft → confirmed。楽観更新はせず、APIの返した行で置き換える（状態のズレ防止）。
+  const confirmEdge = useCallback(async (id: string) => {
+    setEdgeBusyId(id);
+    try {
+      const res = await fetch("/api/organizations/influence", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status: "confirmed" }),
+      });
+      const json: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setInfluenceError(errorMessage(json, "確定に失敗しました"));
+        return;
+      }
+      const edge =
+        json && typeof json === "object"
+          ? ((json as { edge?: InfluenceEdge | null }).edge ?? null)
+          : null;
+      if (!edge) return;
+      setInfluence((prev) =>
+        prev
+          ? { ...prev, edges: prev.edges.map((e) => (e.id === id ? edge : e)) }
+          : prev
+      );
+    } catch {
+      setInfluenceError("通信エラーが発生しました。接続を確認してください。");
+    } finally {
+      setEdgeBusyId(null);
+    }
+  }, []);
+
+  const deleteEdge = useCallback(async (id: string) => {
+    setEdgeBusyId(id);
+    try {
+      const res = await fetch(
+        `/api/organizations/influence?id=${encodeURIComponent(id)}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const json: unknown = await res.json().catch(() => null);
+        setInfluenceError(errorMessage(json, "削除に失敗しました"));
+        return;
+      }
+      setInfluence((prev) =>
+        prev ? { ...prev, edges: prev.edges.filter((e) => e.id !== id) } : prev
+      );
+    } catch {
+      setInfluenceError("通信エラーが発生しました。接続を確認してください。");
+    } finally {
+      setEdgeBusyId(null);
+    }
+  }, []);
+
+  // 団体が変わったら現状・課題・施策・基礎データとメモを取り直し、
+  // タイムライン・影響力マップは捨てる（次にタブが選ばれたとき取り直す）
   useEffect(() => {
     setTimeline(null);
     setTimelineError(null);
     setTimelineRequestedFor(null);
+    setInfluence(null);
+    setInfluenceError(null);
+    setInfluenceRequestedFor(null);
+    setExtractMessage(null);
     if (!selected) {
       setProfile(null);
       setProfileError(null);
@@ -839,6 +1093,14 @@ function OrganizationsInner() {
     setTimelineRequestedFor(selected);
     loadTimeline(selected);
   }, [activeTab, selected, timelineRequestedFor, loadTimeline]);
+
+  // 遅延ロード：影響力タブも同じ方式
+  useEffect(() => {
+    if (activeTab !== "influence" || !selected) return;
+    if (influenceRequestedFor === selected) return;
+    setInfluenceRequestedFor(selected);
+    loadInfluence(selected);
+  }, [activeTab, selected, influenceRequestedFor, loadInfluence]);
 
   // ジャンル・団体・タブの3点をURLに保持する（リロード・共有・戻るで復元できる）。
   const pushQuery = useCallback(
@@ -953,6 +1215,7 @@ function OrganizationsInner() {
         issues: null,
         tactics: null,
         basics: null,
+        influence: influence ? influence.edges.length : null,
         timeline: timeline ? timeline.timeline.length : null,
       };
     }
@@ -969,9 +1232,10 @@ function OrganizationsInner() {
         profile.basics.meetingCount +
         profile.basics.weeklyCount +
         profile.basics.deliverableCount,
+      influence: influence ? influence.edges.length : null,
       timeline: timeline ? timeline.timeline.length : null,
     };
-  }, [profile, timeline]);
+  }, [profile, timeline, influence]);
 
   const activeDef = TABS.find((t) => t.key === activeTab) ?? TABS[0];
 
@@ -991,6 +1255,80 @@ function OrganizationsInner() {
       default:
         return null;
     }
+  }
+
+  function renderInfluenceTab() {
+    if (influenceLoading) return <Spinner label="影響力マップを読み込み中…" />;
+    if (!influence && influenceError) return <ErrorBox message={influenceError} />;
+    if (!influence) return null;
+
+    // 下書き（要確認）を上に出し、確認待ちが埋もれないようにする。
+    const drafts = influence.edges.filter((e) => e.status === "draft");
+    const confirmed = influence.edges.filter((e) => e.status === "confirmed");
+
+    return (
+      <div className="space-y-4">
+        {/* 抽出の入り口。draft を増やすだけで、確定は必ず行ごとの目視操作。 */}
+        <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-bold text-gray-900">影響力マップ</h3>
+            <span className="text-xs text-gray-400">誰が誰に影響するかの「線」</span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-gray-500">
+            会議録の同席情報と人脈DBのメモ欄（後任など）から、AIが人物間の関係を下書きとして抽出します。確定するまで事実扱いにはなりません。
+          </p>
+          <button
+            type="button"
+            onClick={runExtract}
+            disabled={extracting}
+            className="mt-3 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white active:opacity-70 disabled:opacity-50"
+          >
+            {extracting ? "抽出中…（1分ほどかかります）" : "会議録から関係を抽出"}
+          </button>
+          {extractMessage && (
+            <p className="mt-2 text-sm font-medium text-emerald-700">{extractMessage}</p>
+          )}
+          {influenceError && <p className="mt-2 text-sm text-red-600">{influenceError}</p>}
+        </section>
+
+        <BlockCard title="人物" hint="人脈DB（Notionの写し）から">
+          {influence.people.length > 0 ? (
+            <div className="grid grid-cols-2 gap-2">
+              {influence.people.map((p) => (
+                <InfluencePersonChip key={p.name} person={p} />
+              ))}
+            </div>
+          ) : (
+            <EmptyLine text="記録なし（この団体の人物はまだ人脈DBに登録されていません）" />
+          )}
+        </BlockCard>
+
+        <BlockCard
+          title="影響の線"
+          hint={
+            drafts.length > 0
+              ? `下書き ${drafts.length}件が確認待ち`
+              : "確定済みの関係だけが表示されています"
+          }
+        >
+          {influence.edges.length > 0 ? (
+            <ul className="space-y-2">
+              {[...drafts, ...confirmed].map((e) => (
+                <InfluenceEdgeRow
+                  key={e.id}
+                  edge={e}
+                  busy={edgeBusyId === e.id}
+                  onConfirm={confirmEdge}
+                  onDelete={deleteEdge}
+                />
+              ))}
+            </ul>
+          ) : (
+            <EmptyLine text="記録なし（「会議録から関係を抽出」で下書きを作れます）" />
+          )}
+        </BlockCard>
+      </div>
+    );
   }
 
   function renderTimelineTab() {
@@ -1239,7 +1577,9 @@ function OrganizationsInner() {
             )}
 
             {/* 自動導出 */}
-            {activeTab === "timeline" ? (
+            {activeTab === "influence" ? (
+              renderInfluenceTab()
+            ) : activeTab === "timeline" ? (
               renderTimelineTab()
             ) : (
               <div className="space-y-2">
