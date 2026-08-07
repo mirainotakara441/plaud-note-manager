@@ -42,7 +42,7 @@ const RECORD_FEATURES: Feature[] = [
     href: "/refine",
     icon: "💬",
     title: "壁打ち",
-    desc: "登録内容をAIが深掘り質問。答えるほど熟成し記憶に還る",
+    desc: "成果物・スライド・提出文書をひとつの入口で深掘り。答えるほど熟成し記憶に還る",
     accent: "bg-teal-100 text-teal-700",
   },
 ];
@@ -84,20 +84,6 @@ const PROPOSE_FEATURES: Feature[] = [
     title: "武器を出す",
     desc: "決めた打ち手を想定ストーリー・想定問答・スライド構成案にする",
     accent: "bg-amber-100 text-amber-700",
-  },
-  {
-    href: "/slide-refine",
-    icon: "🎯",
-    title: "スライド壁打ち",
-    desc: "目的・聞き手・ゴールを深掘りし、スライド構成と簡易ビジュアルまで作る",
-    accent: "bg-pink-100 text-pink-700",
-  },
-  {
-    href: "/procedure-refine",
-    icon: "📋",
-    title: "提出文書 壁打ち",
-    desc: "実施理由書・実施要領書を深掘りし、章立て・表・要確認事項まで作る",
-    accent: "bg-lime-100 text-lime-700",
   },
 ];
 
