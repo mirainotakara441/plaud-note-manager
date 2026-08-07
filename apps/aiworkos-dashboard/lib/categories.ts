@@ -98,6 +98,34 @@ export function parseCategoryWideName(v: unknown): OrgCategory | null {
   return isOrgCategory(base) ? base : null;
 }
 
+/**
+ * 提案・武器の「汎用ターゲット（セグメント）」。特定の団体名ではなく、
+ * 「政令市に共通して効く訴求」のような区分単位の相手を表す。
+ *
+ * 「〇〇全般」（parseCategoryWideName）より一段細かい粒度。全般は正準8分類そのもの、
+ * セグメントは営業上の攻め方が変わる単位（政令市と特別区では決裁の構造が違う）。
+ *
+ * 団体マスタ・会議履歴には存在しない名前なので、これを対象にするときは
+ * 団体タグでの絞り込みを外して横断で資料を引くこと（絞ると土台が空になる）。
+ */
+export const SEGMENT_TARGETS: ReadonlyArray<{
+  group: "自治体" | "議員";
+  names: readonly string[];
+}> = [
+  { group: "自治体", names: ["政令市", "特別区", "大規模市町村"] },
+  { group: "議員", names: ["国会議員", "都道府県議員", "区議会議員", "市町村議会議員"] },
+];
+
+const SEGMENT_NAME_SET = new Set(SEGMENT_TARGETS.flatMap((s) => [...s.names]));
+
+/** 「政令市」のようなセグメント名ならその分類（自治体/議員）を返す。団体名なら null。 */
+export function parseSegmentTarget(v: unknown): "自治体" | "議員" | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (!SEGMENT_NAME_SET.has(s)) return null;
+  return SEGMENT_TARGETS.find((t) => (t.names as readonly string[]).includes(s))!.group;
+}
+
 // ---------------------------------------------------------------------------
 // 各テーブルで使える値（DBのCHECK制約と1:1で対応させる）
 // ---------------------------------------------------------------------------
