@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import IntegrationPanel from "@/app/components/IntegrationPanel";
 import AdvisorCard from "@/app/components/AdvisorCard";
 import CodeSessionBoard from "@/app/components/CodeSessionBoard";
+import NextTargetsCard from "@/app/components/NextTargetsCard";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
@@ -303,34 +304,62 @@ function GroupNav() {
   );
 }
 
-function FeatureGroup({ id, title, features }: { id: string; title: string; features: Feature[] }) {
+// 機能カードは2列グリッド・説明文なし。縦長の原因は「カード20枚×説明文」で、
+// 説明はもう覚えられている。desc は title 属性（PCのホバー）にだけ残す。
+//
+// collapsible な群（ライフ・システム）は既定で畳む。毎日開くものではないので、
+// 畳んでもホームの役割（今日の作戦から始める）は損なわれない。
+function FeatureGroup({
+  id,
+  title,
+  features,
+  collapsible,
+}: {
+  id: string;
+  title: string;
+  features: Feature[];
+  collapsible?: boolean;
+}) {
+  const [open, setOpen] = useState(!collapsible);
+
   return (
     // scroll-mt は貼り付いたナビの下に見出しが隠れないための余白。
-    <section id={id} className="mb-6 scroll-mt-16">
-      <h2 className="mb-2 text-sm font-bold text-gray-500">{title}</h2>
-      <div className="space-y-3">
-        {features.map((f) => (
-          <Link
-            key={f.href}
-            href={f.href}
-            className="flex items-center gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition active:bg-gray-50"
-          >
-            <span
-              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-2xl ${f.accent}`}
-              aria-hidden
+    <section id={id} className="mb-5 scroll-mt-16">
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="mb-2 flex w-full items-center justify-between text-sm font-bold text-gray-500 active:opacity-70"
+        >
+          <span>{title}</span>
+          <span className="text-gray-300">{open ? "▲" : "▼"}</span>
+        </button>
+      ) : (
+        <h2 className="mb-2 text-sm font-bold text-gray-500">{title}</h2>
+      )}
+      {open && (
+        <div className="grid grid-cols-2 gap-2">
+          {features.map((f) => (
+            <Link
+              key={f.href}
+              href={f.href}
+              title={f.desc}
+              className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm transition active:bg-gray-50"
             >
-              {f.icon}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-base font-bold text-gray-900">{f.title}</span>
-              <span className="mt-0.5 block text-sm leading-relaxed text-gray-500">{f.desc}</span>
-            </span>
-            <span className="shrink-0 text-lg text-gray-300" aria-hidden>
-              →
-            </span>
-          </Link>
-        ))}
-      </div>
+              <span
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg ${f.accent}`}
+                aria-hidden
+              >
+                {f.icon}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm font-bold text-gray-900">
+                {f.title}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -421,6 +450,10 @@ export default function Home() {
           見に行かなければ分からない。溜まったデータ側から声をかける役をここに置く。 */}
       <AdvisorCard />
 
+      {/* 次に攻める相手。このOSの目的は成約で、ホームは機能の棚である前に
+          「今日どの相手に何をするか」から始まるべき。/status の抜粋。 */}
+      <NextTargetsCard />
+
       {/* セッションの鮮度。並行して抱えている本数が多く、どれがどこまで進んだか
           分からなくなる。進捗率は測れない（セッションに「完了」の定義が無い）ので、
           出すのは動きの鮮度と詰まり方だけ。放置されている帯が薄い塊として浮かぶ。 */}
@@ -436,8 +469,9 @@ export default function Home() {
         id="g-life"
         title="🌱 ライフスタイル・ヘルス"
         features={LIFESTYLE_HEALTH_FEATURES}
+        collapsible
       />
-      <FeatureGroup id="g-system" title="🛠 システム" features={SYSTEM_FEATURES} />
+      <FeatureGroup id="g-system" title="🛠 システム" features={SYSTEM_FEATURES} collapsible />
 
       <IntegrationPanel />
 
