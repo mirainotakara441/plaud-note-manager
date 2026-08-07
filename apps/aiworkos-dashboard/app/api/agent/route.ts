@@ -7,6 +7,7 @@ import {
   structured,
 } from "@/lib/llm";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
+import { parseSegmentTarget } from "@/lib/categories";
 
 // thinking を有効化すると生成に時間がかかるため、Vercel の関数タイムアウトを引き上げる
 // （Hobby プランの上限。org-history/search-memory/Claude 生成を合算しても収まる想定）。
@@ -46,7 +47,7 @@ type Proposal = {
 // モデル名と cache_control は lib/llm.ts に集約（DEFAULT_MODEL / structured() の cache 既定 true）。
 
 const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
-自治体（地方公共団体）への営業・提案戦略を立案します。
+自治体（地方公共団体）・議員への営業・提案戦略を立案します。対象は特定の団体のこともあれば、「政令市」「国会議員」のような区分全体（セグメント）への汎用的な訴求のこともあります。
 
 厳守事項:
 - 必ず与えられた「会議履歴」「過去成果物（過去にこの団体向けに作った提案書・資料）」「関連メモ」に書かれた事実のみに基づいて分析すること。
@@ -159,7 +160,7 @@ async function fetchDeliverables(
   supabaseUrl: string,
   anonKey: string,
   targetOrg: string,
-  filterOrg: string,
+  filterOrg: string, // 空文字なら団体で絞らない（セグメント向けの横断検索）
   matchCount: number
 ): Promise<MemoResult[]> {
   try {
@@ -172,7 +173,7 @@ async function fetchDeliverables(
       body: JSON.stringify({
         query: `${targetOrg} 提案 論点 打ち手 骨子`,
         source_type: "成果物",
-        organization: filterOrg,
+        ...(filterOrg ? { organization: filterOrg } : {}),
         match_count: matchCount,
       }),
       cache: "no-store",
@@ -361,7 +362,14 @@ ${metrics.content}
 `
     : "";
 
-  return `対象自治体: ${organization}
+  // セグメントは「相手が決まっていない」のではなく「特定しないのが狙い」。
+  // 明示しないと、最初の出力が「どの自治体ですか」の確認で埋まる。
+  const seg = parseSegmentTarget(organization);
+  const targetLine = seg
+    ? `対象: ${organization}（特定の団体ではなく「${organization}」という区分全体への汎用的な訴求。個別の団体名を特定せず、${organization}に共通する構造・決裁の通り方・響く論点を扱うこと。${seg === "議員" ? "相手は行政職員ではなく議員。議会質問・政策実績・地元へのメリットという議員の関心軸で組み立てること。" : ""}）`
+    : `対象自治体: ${organization}`;
+
+  return `${targetLine}
 ${metricsText}${editedText}
 以下は、法人請求オンラインサービスの【共通資料】（特定の団体に限らない、サービス標準の提案の型・セミナー資料・事業戦略）の抜粋です。提案の「型」「サービスの価値訴求」「全社戦略との整合」はここに従ってください。
 ==== 共通資料 ====
@@ -541,24 +549,36 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // a. 会議履歴（時系列）
-  let meetings: Meeting[];
-  try {
-    meetings = await fetchOrgHistory(supabaseUrl, anonKey, organization);
-  } catch (err) {
-    console.error("POST /api/agent: 会議履歴取得失敗", err);
-    return NextResponse.json(
-      { error: "会議履歴の取得に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
-    );
+  // セグメント（政令市・特別区・国会議員など）＝特定の団体ではなく区分全体への訴求。
+  // 団体マスタ・会議履歴に存在しない名前なので、団体前提の取得をそのまま回すと
+  // 土台が空になり、AIが何も知らないまま提案を書く。取り方を変える。
+  const segment = parseSegmentTarget(organization);
+
+  // a. 会議履歴（時系列）。セグメントには「その団体の会議」が存在しないので飛ばす
+  //    （org-history に存在しない名前を投げても空が返るだけだが、待ち時間が無駄）。
+  let meetings: Meeting[] = [];
+  if (!segment) {
+    try {
+      meetings = await fetchOrgHistory(supabaseUrl, anonKey, organization);
+    } catch (err) {
+      console.error("POST /api/agent: 会議履歴取得失敗", err);
+      return NextResponse.json(
+        { error: "会議履歴の取得に失敗しました。しばらくしてから再度お試しください。" },
+        { status: 502 }
+      );
+    }
   }
 
   // a-2. 提案のベースとなる成果物。キャッシュ署名に含めるため、キャッシュ確認より先に取得する。
   //   - この団体向け: 取りこぼしを避けるため多め（40）に取る。
   //   - 共通資料: 全団体分の横断資料（100件超）が対象なので、類似度上位のみに絞って
   //     プロンプトの肥大を防ぐ。
+  //   - セグメント: 団体タグで絞ると0件になるので、絞りを外して横断で引く。
+  //     「政令市 向けの提案」のような検索語で、区分に関連の深い過去資料が上位に来る。
   const [deliverables, commonDocs, metrics] = await Promise.all([
-    fetchDeliverables(supabaseUrl, anonKey, organization, organization, 40),
+    segment
+      ? fetchDeliverables(supabaseUrl, anonKey, `${organization} ${segment}`, "", 40)
+      : fetchDeliverables(supabaseUrl, anonKey, organization, organization, 40),
     organization === COMMON_ORG
       ? Promise.resolve<MemoResult[]>([])
       : fetchDeliverables(supabaseUrl, anonKey, organization, COMMON_ORG, 20),

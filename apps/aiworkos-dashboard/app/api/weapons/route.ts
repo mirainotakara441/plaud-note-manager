@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { DEFAULT_MODEL, isAuthError, isLlmConfigured, llmClient } from "@/lib/llm";
 import { windowChunks } from "@/lib/chunks";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
+import { parseSegmentTarget } from "@/lib/categories";
 
 // 武器生成。/agent が出した打ち手のうち「これでいく」と決めたものを受け取り、
 // 現場で使える形（想定ストーリー・想定問答・スライド構成案）に落とす。
@@ -410,6 +411,12 @@ export async function POST(req: NextRequest) {
   }
   const note = typeof body.note === "string" ? body.note.trim() : "";
 
+  // セグメント（政令市・特別区・国会議員など）＝区分全体への汎用の武器。
+  // 団体マスタ・会議履歴に無い名前なので、団体タグで絞ると土台が空になる。
+  // 絞りを外して横断で引き、会議履歴は飛ばす。自由記入の団体名（マスタ未登録の
+  // 実在団体）はセグメントではないので、通常どおり団体タグで絞る（無ければ空なだけ）。
+  const segment = parseSegmentTarget(organization);
+
   // 土台を集める。壁打ちの熟成メモも成果物なのでここに含まれる。
   // 60秒上限に収めるため、件数は控えめにして類似度上位だけを使う。
   // proposal のときだけ、ひな形（節構成）もここで一緒に取得する。
@@ -417,7 +424,7 @@ export async function POST(req: NextRequest) {
     searchMemory(supabaseUrl, anonKey, {
       query: `${organization} ${actions.join(" ")}`,
       source_type: "成果物",
-      organization,
+      ...(segment ? {} : { organization }),
       match_count: 20,
     }),
     searchMemory(supabaseUrl, anonKey, {
@@ -426,7 +433,7 @@ export async function POST(req: NextRequest) {
       organization: COMMON_ORG,
       match_count: 12,
     }),
-    fetchMeetings(supabaseUrl, anonKey, organization),
+    segment ? Promise.resolve<Meeting[]>([]) : fetchMeetings(supabaseUrl, anonKey, organization),
     fetchLatestMetrics<MemoResult>(supabaseUrl, anonKey),
     kind === "proposal" ? fetchProposalSections(supabaseUrl, anonKey) : Promise.resolve(null),
   ]);
@@ -451,7 +458,13 @@ ${metrics.content}
 `
     : "";
 
-  const userPrompt = `対象: ${organization}
+  // セグメントは「相手が決まっていない」のではなく「特定しないのが狙い」。
+  // 明示しないと出力が個別団体の想定で書かれてしまう。
+  const targetLine = segment
+    ? `対象: ${organization}（特定の団体ではなく「${organization}」という区分全体に使う汎用の武器。個別の団体名を出さず、${organization}に共通する構造・懸念・響く論点で組み立てること。${segment === "議員" ? "相手は行政職員ではなく議員。議会質問・政策実績・地元へのメリットという議員の関心軸で書くこと。" : ""}）`
+    : `対象: ${organization}`;
+
+  const userPrompt = `${targetLine}
 ${metricsText}
 ==== 決定した施策（これでいくと決めた打ち手）====
 ${actions.map((a, i) => `${i + 1}. ${a}`).join("\n")}

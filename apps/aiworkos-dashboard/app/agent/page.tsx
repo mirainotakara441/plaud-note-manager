@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { SEGMENT_TARGETS } from "@/lib/categories";
 
 type Organization = { name: string; count: number };
 
@@ -252,7 +253,7 @@ export default function AgentPage() {
           htmlFor="org-select"
           className="block text-sm font-medium text-gray-600"
         >
-          自治体を選択
+          対象を選択
         </label>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row">
           <select
@@ -263,13 +264,26 @@ export default function AgentPage() {
             className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
           >
             <option value="">
-              {orgs ? "自治体を選んでください" : "読み込み中..."}
+              {orgs ? "対象を選んでください" : "読み込み中..."}
             </option>
-            {orgs?.map((o) => (
-              <option key={o.name} value={o.name}>
-                {o.name} ({o.count})
-              </option>
+            {/* 汎用ターゲット。特定の団体でなく区分全体への訴求（会議履歴なしで、
+                過去成果物を横断で土台にする）。定義は lib/categories.ts が唯一の正 */}
+            {SEGMENT_TARGETS.map((g) => (
+              <optgroup key={g.group} label={`${g.group}・汎用（相手を特定しない）`}>
+                {g.names.map((n) => (
+                  <option key={n} value={n}>
+                    {n}への汎用訴求
+                  </option>
+                ))}
+              </optgroup>
             ))}
+            <optgroup label="団体（会議実績あり）">
+              {orgs?.map((o) => (
+                <option key={o.name} value={o.name}>
+                  {o.name} ({o.count})
+                </option>
+              ))}
+            </optgroup>
           </select>
           <button
             type="button"

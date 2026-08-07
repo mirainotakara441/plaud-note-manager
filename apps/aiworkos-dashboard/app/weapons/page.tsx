@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { SEGMENT_TARGETS } from "@/lib/categories";
 
 // 武器生成。パイプラインの最後：収集 → 登録 → 壁打ちで深める → 施策案の決定 → 【武器を出す】
 // /agent から「武器にする →」で遷移すると、打ち手が引き継がれて選択肢に並ぶ。
@@ -43,6 +44,9 @@ function WeaponsInner() {
   // （Objects are not valid as a React child → ページ全体が「This page couldn't load」）。
   const [organizations, setOrganizations] = useState<{ name: string; count: number }[]>([]);
   const [organization, setOrganization] = useState(presetOrg);
+  // 一覧に無い相手（マスタ未登録の団体・任意のジャンル）を自由記入で指定する。
+  // "__custom__" を選ぶと入力欄に切り替わる（StakeholderPicker と同じ作法）。
+  const [customOrg, setCustomOrg] = useState(false);
   // /agent から引き継いだ打ち手の候補
   const [candidates, setCandidates] = useState<string[]>([]);
   const [chosen, setChosen] = useState<Record<string, boolean>>({});
@@ -296,19 +300,65 @@ function WeaponsInner() {
       <div className="space-y-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div>
           <label className="block text-sm font-medium text-gray-600">対象</label>
-          <select
-            value={organization}
-            onChange={(e) => setOrganization(e.target.value)}
-            disabled={loading}
-            className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
-          >
-            <option value="">対象を選んでください</option>
-            {organizations.map((o) => (
-              <option key={o.name} value={o.name}>
-                {o.name}（{o.count}）
-              </option>
-            ))}
-          </select>
+          {!customOrg ? (
+            <select
+              value={organization}
+              onChange={(e) => {
+                if (e.target.value === "__custom__") {
+                  setCustomOrg(true);
+                  setOrganization("");
+                } else {
+                  setOrganization(e.target.value);
+                }
+              }}
+              disabled={loading}
+              className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+            >
+              <option value="">対象を選んでください</option>
+              {/* 汎用ターゲット。区分全体に使う武器（団体の会議履歴なしで、
+                  過去成果物を横断で土台にする）。定義は lib/categories.ts が唯一の正 */}
+              {SEGMENT_TARGETS.map((g) => (
+                <optgroup key={g.group} label={`${g.group}・汎用（相手を特定しない）`}>
+                  {g.names.map((n) => (
+                    <option key={n} value={n}>
+                      {n}向けの汎用武器
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+              <optgroup label="団体（会議実績あり）">
+                {organizations.map((o) => (
+                  <option key={o.name} value={o.name}>
+                    {o.name}（{o.count}）
+                  </option>
+                ))}
+              </optgroup>
+              <option value="__custom__">その他（直接入力）</option>
+            </select>
+          ) : (
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                value={organization}
+                onChange={(e) => setOrganization(e.target.value)}
+                disabled={loading}
+                autoFocus
+                placeholder="例: 中核市 / 地方銀行 / ○○市"
+                className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomOrg(false);
+                  setOrganization("");
+                }}
+                disabled={loading}
+                className="shrink-0 rounded-lg border border-gray-300 px-3 text-sm text-gray-600 active:bg-gray-50"
+              >
+                一覧
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 施策案の決定：どの打ち手でいくかを選ぶ */}
