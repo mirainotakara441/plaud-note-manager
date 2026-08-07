@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 // ホームの「セッションの鮮度」。中身は /api/code-sessions。
@@ -254,13 +255,16 @@ export default function CodeSessionBoard() {
           <p className="text-xs font-bold text-gray-400">
             {isToday ? `全${buckets.total}本` : `最終取得 ${shortDate(data.snapshot_date)}時点`}
           </p>
+          {/* 「更新」ではなく「読み直す」。このボタンができるのは保存済みの盤面を
+              取り直すことだけで、Macの走査を起こすことはできない。「更新」と書いて
+              あると、古いまま変わらない＝壊れている、と読めてしまう。 */}
           <button
             type="button"
             onClick={reload}
             disabled={reloading}
             className="rounded-full border border-gray-200 px-2 py-0.5 text-xs font-medium text-gray-500 transition active:bg-gray-100 disabled:opacity-40"
           >
-            {reloading ? "更新中" : "更新"}
+            {reloading ? "読み直し中" : "読み直す"}
           </button>
         </div>
       </div>
@@ -273,11 +277,23 @@ export default function CodeSessionBoard() {
         </p>
       )}
 
+      {/* 古い日は「読み直す」では直らない。押しても変わらない理由と、
+          どこを見れば原因が分かるかをその場に書く（画面の中で行き止まりにしない）。 */}
       {!isToday && (
-        <p className="mb-2 text-sm text-amber-700">
-          今日の走査がまだ届いていません。以下は
-          {shortDate(data.snapshot_date)}時点のもので、今の状態ではありません。
-        </p>
+        <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-sm font-bold text-amber-800">
+            以下は{shortDate(data.snapshot_date)}時点で、今の状態ではありません
+          </p>
+          <p className="mt-0.5 text-xs leading-relaxed text-amber-700">
+            盤面を作るのは毎晩22:30の走査（Macの中を読むのでMacが開いている必要があります）。
+            「読み直す」は保存済みの盤面を取り直すだけなので、走査が届いていない日は
+            押しても変わりません。走査が落ちていないかは{" "}
+            <Link href="/status" className="font-medium underline">
+              連携ダッシュボード
+            </Link>{" "}
+            で確認できます。
+          </p>
+        </div>
       )}
 
       {/* 切り替え。件数をラベルに載せて、開かなくても分布が分かるようにする */}
