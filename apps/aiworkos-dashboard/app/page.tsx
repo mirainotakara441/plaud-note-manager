@@ -59,6 +59,13 @@ const PROPOSE_FEATURES: Feature[] = [
     accent: "bg-indigo-100 text-indigo-700",
   },
   {
+    href: "/news",
+    icon: "📰",
+    title: "DXニュース",
+    desc: "自治体DX・生成AI・法人請求まわりの直近1か月を、前回以降の新着つきで一望",
+    accent: "bg-sky-100 text-sky-700",
+  },
+  {
     href: "/organizations",
     icon: "🧭",
     title: "団体別攻略",
