@@ -16,7 +16,10 @@ import {
   hasAnyFilter,
   hobbyFacets,
   industryFacets,
+  isTabun,
   selfTeam,
+  snsCount,
+  snsLinks,
   stanceFacets,
   summaryLine,
   teamFacets,
@@ -36,7 +39,7 @@ import {
 // Slack原文から起こした生タグ（109種）はチップには出さないが、フリーワード検索では
 // 効くようにしてある（「LayerX」「半導体」のような細かい語で引けるのが価値のため）。
 //
-// データは56行と小さいので /api/salt2 で全件を受け取り、絞り込みは全てこの中で行う
+// データは68行と小さいので /api/salt2 で全件を受け取り、絞り込みは全てこの中で行う
 // （家庭訪問と同じ流儀。打つたびに問い合わせないぶん取り消しが速い）。
 //
 // 絞り込みの枠は既定で全部畳んである。以前は6枠のチップを開きっぱなしにしていて、
@@ -51,6 +54,7 @@ const C_INDUSTRY = "#4a3aa7"; // 業界
 const C_STANCE = "#2a78d6"; // 立場・関心
 const C_HOBBY = "#c2417f"; // 趣味
 const C_TEAM = "#0d7c8a"; // チーム（同じチームの動線を目で追える色）
+const C_SNS = "#5a5f6b"; // SNSリンク（外部サイトへ出る導線。タグの色と混ざらない鈍色）
 
 type ApiResponse = { members: Salt2Member[]; error?: string };
 
@@ -163,6 +167,53 @@ function RawIntro({ text }: { text: string }) {
   );
 }
 
+// 本人のSNSプロフィールを開くボタン。
+//
+// これは「本人のページを新しいタブで開くだけ」の導線。申請・フォロー・
+// メッセージ送信の自動化は載せない（mailto: も共有インテントも付けない）。
+//
+// リンクを持っているのは68名中10名だけなので、無い人には何も出さない。
+// 「なし」のようなプレースホルダを置くと、58枚のカードに空欄の見出しが並んで
+// 本文（経歴・AI活用）が押し下げられる。
+//
+// sns_confidence が「たぶん」の人は下に注記を出す。矢幡さんのnoteはIDが
+// メールと一致しただけで、note上の経歴が現職の説明とズレている。
+// 確実な9名と同じ見た目にすると、確証の無いページを本人だと思って読むことになる。
+function SnsLinks({ member }: { member: Salt2Member }) {
+  const links = snsLinks(member);
+  if (links.length === 0) return null;
+  const tabun = isTabun(member);
+
+  return (
+    <div>
+      <p className="text-xs font-medium text-gray-500">本人のページを開く</p>
+      {/* 375px でも崩れないよう折り返す。1つのボタンは折らない（whitespace-nowrap） */}
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {links.map((l) => (
+          <a
+            key={l.key}
+            href={l.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="whitespace-nowrap rounded-full border px-3 py-1 text-sm font-medium active:opacity-70"
+            style={{ color: C_SNS, borderColor: "#d4d7de" }}
+          >
+            {l.label}
+            <span className="ml-1 text-[0.625rem] text-gray-400" aria-hidden>
+              ↗
+            </span>
+          </a>
+        ))}
+      </div>
+      {tabun && (
+        <p className="mt-1 text-[0.625rem] leading-relaxed text-amber-700">
+          ⚠️ 本人確認は未確定（同姓同名・別人の可能性があります）
+        </p>
+      )}
+    </div>
+  );
+}
+
 function MemberCard({
   member,
   open,
@@ -266,6 +317,8 @@ function MemberCard({
           )}
           <Field label="人となり" value={member.personal} />
           <Field label="メモ" value={member.note} />
+
+          <SnsLinks member={member} />
 
           {member.raw_intro && <RawIntro text={member.raw_intro} />}
 
@@ -439,6 +492,13 @@ export default function Salt2Page() {
               industry_tags: m.industry_tags ?? [],
               stance_tags: m.stance_tags ?? [],
               hobby_tags: m.hobby_tags ?? [],
+              // SNSは58名が空。undefined と null が混ざらないよう null に寄せる
+              linkedin: m.linkedin ?? null,
+              x_url: m.x_url ?? null,
+              note_url: m.note_url ?? null,
+              facebook: m.facebook ?? null,
+              sns_other: m.sns_other ?? null,
+              sns_confidence: m.sns_confidence ?? null,
             }))
           );
         }
@@ -475,6 +535,10 @@ export default function Salt2Page() {
   const myTeamCount = myTeam ? teamSize(all, myTeam) : 0;
   const myTeamOn = myTeam != null && filters.teams.includes(myTeam);
 
+  // リンクを持っている人数。名簿全体に対する数を出す（他の絞り込みで変わらない）。
+  // 埋まっていくのは調べた後なので、0名なら押す意味が無い＝ボタンごと出さない。
+  const snsTotal = useMemo(() => snsCount(all), [all]);
+
   const setQuery = (query: string) => setFilters((f) => ({ ...f, query }));
   const toggleTag = (group: TagGroup, value: string) =>
     setFilters((f) => ({ ...f, [group]: toggle(f[group], value) }));
@@ -482,6 +546,7 @@ export default function Salt2Page() {
     setFilters((f) => ({ ...f, companies: toggle(f.companies, v) }));
   const toggleTrack = (v: string) => setFilters((f) => ({ ...f, tracks: toggle(f.tracks, v) }));
   const toggleTeam = (v: string) => setFilters((f) => ({ ...f, teams: toggle(f.teams, v) }));
+  const toggleSns = () => setFilters((f) => ({ ...f, snsOnly: !f.snsOnly }));
 
   const loading = !members && !error;
   const filtered = hasAnyFilter(filters);
@@ -550,6 +615,23 @@ export default function Salt2Page() {
                     375px でも1行に収まる（「解除」を足すと2行に折れる）。
                     もう一度押せば外れるのは、下のチップと同じ挙動。 */}
                 {myTeamOn ? "✅" : "👥"} 同じチーム（{myTeam}）{myTeamCount}名
+              </button>
+            )}
+
+            {/* 「同じチーム」と同じ並び。どちらも枠を開かずに一発で押せる一軍の導線で、
+                他の枠と普通に掛け合わせられる（業界＝HR かつ リンクあり、など）。
+                横に並べると375pxでチーム名が折れるので縦に積む。 */}
+            {snsTotal > 0 && (
+              <button
+                type="button"
+                onClick={toggleSns}
+                aria-pressed={filters.snsOnly}
+                className={`mt-2 w-full rounded-xl px-3 py-2 text-sm font-bold transition active:scale-[0.99] ${
+                  filters.snsOnly ? "text-white" : "bg-white text-gray-700 ring-1 ring-gray-200"
+                }`}
+                style={filters.snsOnly ? { backgroundColor: C_SNS } : { color: C_SNS }}
+              >
+                {filters.snsOnly ? "✅" : "🔗"} SNSリンクあり {snsTotal}名
               </button>
             )}
 

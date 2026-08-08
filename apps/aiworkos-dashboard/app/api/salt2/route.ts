@@ -3,7 +3,7 @@ import { anonCreds, restHeaders } from "@/lib/supabase";
 
 // SALT2人脈DB（/salt2）の読み取りAPI。
 //
-// 56行（名簿全体136名のうち自己紹介を投稿した人）と小さいので、全件を1回で返し、
+// 68行（名簿全体136名のうち自己紹介を投稿した人）と小さいので、全件を1回で返し、
 // 横断検索・タグ・会社・トラックの絞り込みはブラウザ側で行う（家庭訪問と同じ流儀）。
 // 打つたびにサーバーへ問い合わせないぶん、検索語を消したり足したりが速い。
 //
@@ -28,7 +28,7 @@ const COLUMNS = [
   "personal",
   "note",
   "track",
-  // チーム配属（Slackのチームチャンネル20本が出典）。SALT2側の配属が未完で38/56だけ埋まっている
+  // チーム配属（Slackのチームチャンネル20本が出典）。SALT2側の配属が未完で46/68だけ埋まっている
   "team",
   // 絞り込みに使う正準タグ3系統（Notionと同じ語彙）
   "industry_tags",
@@ -38,6 +38,14 @@ const COLUMNS = [
   "tags",
   "raw_intro",
   "posted_at",
+  // 本人のSNSプロフィールを開くための導線。埋まっているのは68名中10名だけ。
+  // search_text には入れていない（URLは検索語として打たれないため）。
+  "linkedin",
+  "x_url",
+  "note_url",
+  "facebook",
+  "sns_other",
+  "sns_confidence",
 ].join(",");
 
 export async function GET() {

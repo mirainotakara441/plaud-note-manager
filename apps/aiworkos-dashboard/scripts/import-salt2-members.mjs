@@ -16,9 +16,15 @@
 // SALT2側の配属が未完のため空文字の人がいる（空文字はnullで入る）。
 // track は team から補正済みなので、この2つは必ずセットで流すこと。
 //
+// linkedin / x_url / note_url / facebook / sns_other / sns_confidence は
+// 本人のSNSプロフィールを開くためだけの導線。大多数（68名中58名）が空で正常。
+// sns_confidence は '確実' / 'たぶん' / 空。'たぶん' は本人特定に確証が無い印で、
+// 画面側で「本人確認は未確定」と出すために使うので、勝手に '確実' へ寄せないこと。
+// URLは search_text（DB側のトリガー）には入れていない。検索語として打たれないため。
+//
 // キーは slack_display。同じ人をもう一度流せば上書き、新しい人は追加される。
 // 氏名の修正（「矢幡」→「矢幡 康祐」など）も slack_display が変わらない限り上書きで通る。
-// 名簿全体は136名で、いま入っているのは自己紹介を投稿した56名。
+// 名簿全体は136名で、いま入っているのは自己紹介を投稿した68名。
 // 未投稿の人ぶんを後から取れたら、同じ形のJSONにしてこのスクリプトを流せば足せる。
 //
 // RLSをまたぐので service role キーを使う（.env.local の SUPABASE_SERVICE_ROLE_KEY）。
@@ -86,6 +92,14 @@ const rows = members.map((m) => ({
   hobby_tags: list(m.hobby_tags),
   raw_intro: s(m.raw_intro),
   posted_at: s(m.posted_at),
+  // SNSプロフィールへの導線。無い人は空文字で来るので s() で null に落ちる。
+  // 68名中10名しか埋まっていない（確実9・たぶん1）のが正常な状態。
+  linkedin: s(m.linkedin),
+  x_url: s(m.x_url),
+  note_url: s(m.note_url),
+  facebook: s(m.facebook),
+  sns_other: s(m.sns_other),
+  sns_confidence: s(m.sns_confidence),
 }));
 
 const missing = rows.filter((r) => !r.name || !r.slack_display);

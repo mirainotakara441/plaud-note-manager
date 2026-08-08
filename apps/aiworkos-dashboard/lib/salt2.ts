@@ -5,7 +5,7 @@
 // （共通点が見つかれば声をかけられる、というのがこの画面の目的）。
 //
 // 出典は Slack salt2-summer-bootcamp の #0402_自己紹介。
-// 名簿全体は136名、うち自己紹介を投稿した56名が今の中身。
+// 名簿全体は136名、うち自己紹介を投稿した68名が今の中身。
 // 未投稿者は slack_display をキーに後から upsert で足せる（DB側で一意）。
 //
 // タグは2階建て。
@@ -41,7 +41,69 @@ export type Salt2Member = {
   hobby_tags: string[];
   raw_intro: string | null; // Slackの自己紹介の原文
   posted_at: string | null;
+  // SNSプロフィールへの導線。68名中10名しか埋まっていない（確実9・たぶん1）。
+  // 空が大多数なので、UIは「無い人には何も出さない」を既定にすること。
+  linkedin: string | null;
+  x_url: string | null;
+  note_url: string | null;
+  facebook: string | null;
+  sns_other: string | null; // 会社プロフィール・著者ページなど、上4つに入らないもの
+  sns_confidence: string | null; // 確実 / たぶん / null
 };
+
+// ── SNSリンク ────────────────────────────────────────────────────
+//
+// ここは「本人のページを新しいタブで開くだけ」の導線。
+// 申請・フォロー・メッセージ送信の自動化はしない（mailto: や共有インテントも付けない）。
+//
+// ラベルは飛び先が分かる形にする。「SNS」のような総称だと、
+// 押すまでLinkedInなのかXなのか分からず、開いてから戻る羽目になる。
+
+export type SnsLink = { key: string; label: string; url: string };
+
+export const SNS_TABUN = "たぶん";
+
+// 並びは「本人特定が固い順」。LinkedInは実名・職歴が載るので最初に置く。
+export function snsLinks(m: Salt2Member): SnsLink[] {
+  const defs: [string, string, string | null][] = [
+    ["linkedin", "in LinkedIn", m.linkedin],
+    ["x", "𝕏", m.x_url],
+    ["note", "note", m.note_url],
+    ["facebook", "f Facebook", m.facebook],
+    // 会社のチームページや出版社の著者ページ。SNSではないが「本人を知る導線」として同じ扱い
+    ["other", "サイト", m.sns_other],
+  ];
+  return defs
+    .filter(([, , url]) => isHttpUrl(url))
+    .map(([key, label, url]) => ({ key, label, url: (url as string).trim() }));
+}
+
+// 開くのは http(s) だけに限る。javascript: のような別スキームは踏ませない
+// （出典がSlackの自己紹介＝人が書いた文字列なので、そのまま href に入れない）。
+function isHttpUrl(url: string | null | undefined): boolean {
+  const t = url?.trim();
+  if (!t) return false;
+  try {
+    const p = new URL(t).protocol;
+    return p === "http:" || p === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function hasSns(m: Salt2Member): boolean {
+  return snsLinks(m).length > 0;
+}
+
+// 本人特定に確証が無い人。矢幡さんのnoteはIDがメールと一致しただけで、
+// note上の経歴が現職の説明とズレている。確実な9名と同じ見た目にはしない。
+export function isTabun(m: Salt2Member): boolean {
+  return hasSns(m) && (m.sns_confidence ?? "").trim() === SNS_TABUN;
+}
+
+export function snsCount(members: Salt2Member[]): number {
+  return members.filter(hasSns).length;
+}
 
 // 自己紹介にトラックが書かれていない人はこの値が入っている（DBの実データ）。
 // 絞り込みチップでは最後に回す。
@@ -191,6 +253,9 @@ export type Filters = {
   companies: string[];
   tracks: string[];
   teams: string[];
+  // 「SNSリンクあり」のトグル。他の枠と同じくANDで掛かる
+  // （例：業界＝HR かつ リンクあり）。
+  snsOnly: boolean;
 };
 
 export const EMPTY_FILTERS: Filters = {
@@ -201,6 +266,7 @@ export const EMPTY_FILTERS: Filters = {
   companies: [],
   tracks: [],
   teams: [],
+  snsOnly: false,
 };
 
 function matchesGroup(selected: string[], values: string[]): boolean {
@@ -215,6 +281,7 @@ export function filterMembers(members: Salt2Member[], f: Filters): Salt2Member[]
     if (f.companies.length > 0 && !f.companies.includes(m.company ?? "")) return false;
     if (f.tracks.length > 0 && !f.tracks.includes(m.track ?? "")) return false;
     if (f.teams.length > 0 && !f.teams.includes((m.team ?? "").trim())) return false;
+    if (f.snsOnly && !hasSns(m)) return false;
     if (f.query.trim() && !matchesQuery(haystack(m), f.query)) return false;
     return true;
   });
@@ -243,7 +310,8 @@ export function hasAnyFilter(f: Filters): boolean {
     f.hobbies.length > 0 ||
     f.companies.length > 0 ||
     f.tracks.length > 0 ||
-    f.teams.length > 0
+    f.teams.length > 0 ||
+    f.snsOnly
   );
 }
 
@@ -269,5 +337,5 @@ export function fmtPostedAt(iso: string | null): string | null {
 }
 
 // 名簿全体の人数。自己紹介を投稿した人だけがDBにいるので、
-// 「136名中56名ぶん」であることを画面で明示するために持っておく。
+// 「136名中68名ぶん」であることを画面で明示するために持っておく。
 export const ROSTER_TOTAL = 136;
