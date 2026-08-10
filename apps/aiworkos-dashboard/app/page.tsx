@@ -547,6 +547,44 @@ export default function Home() {
           </span>
         </a>
       </div>
+
+      <LogoutButton />
     </main>
+  );
+}
+
+// ログアウト。合言葉のcookieは1年有効なので、一度入れた端末はずっと入ったままになる。
+// 毎朝の使い勝手としてはそれで正しいが、人に画面を見せる・端末を貸すときに
+// 降りる手段が無かった。
+//
+// 目立たせない。毎日押すものではなく、押し間違えると合言葉の再入力が要る。
+function LogoutButton() {
+  const [busy, setBusy] = useState(false);
+
+  async function logout() {
+    if (!window.confirm("この端末からログアウトします。\n次に開くときは合言葉の入力が必要です。")) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await fetch("/api/login", { method: "DELETE" });
+    } finally {
+      // 成功しても失敗しても /login へ行く。失敗していればゲートが弾いて
+      // ログイン画面が出るので、どちらでも辻褄が合う。
+      window.location.href = "/login";
+    }
+  }
+
+  return (
+    <div className="mt-8 text-center">
+      <button
+        type="button"
+        onClick={logout}
+        disabled={busy}
+        className="text-xs text-gray-400 underline transition active:opacity-70 disabled:opacity-40"
+      >
+        {busy ? "ログアウトしています…" : "この端末からログアウト"}
+      </button>
+    </div>
   );
 }

@@ -42,3 +42,25 @@ export async function POST(req: NextRequest) {
   });
   return res;
 }
+
+// ログアウト。cookie を消すだけ。
+//
+// cookie は1年有効なので、一度入れた端末はずっと入れたままになる。それは
+// 毎朝の使い勝手のための設計だが、人に画面を見せる・端末を貸す・共用機で
+// 開いた、という場面で降りる手段が無かった。
+//
+// この端末だけが降りる。cookie の中身は合言葉から作った同じ値なので、他の端末は
+// そのまま入れる。全端末を一斉に締め出したいときは Vercel の APP_PASSPHRASE を
+// 変えること（画面から全端末を無効化する仕組みは、いまの1人運用には重い）。
+export async function DELETE() {
+  const res = NextResponse.json({ ok: true });
+  // maxAge:0 で即時失効。値も空にして、消し損ねたときに古い値が残らないようにする。
+  res.cookies.set(COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    maxAge: 0,
+    path: "/",
+  });
+  return res;
+}
