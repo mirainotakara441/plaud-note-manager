@@ -127,6 +127,29 @@ export default function BootcampPage() {
         </span>
       </a>
 
+      {/* 運営Tips（Slack #0404_お役立ち情報）のミラー。Slackを開かなくても振り返れるようにする */}
+      <Link
+        href="/bootcamp/tips"
+        className="mt-3 flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 transition active:bg-amber-100"
+      >
+        <span className="flex items-center gap-3">
+          <span className="text-xl" aria-hidden>
+            🧂
+          </span>
+          <span>
+            <span className="block text-sm font-semibold text-amber-900">
+              お役立ち情報
+            </span>
+            <span className="block text-xs text-amber-700">
+              運営からのTipsまとめ
+            </span>
+          </span>
+        </span>
+        <span className="text-sm text-amber-500" aria-hidden>
+          ↗
+        </span>
+      </Link>
+
       {error && (
         <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
           {error}
