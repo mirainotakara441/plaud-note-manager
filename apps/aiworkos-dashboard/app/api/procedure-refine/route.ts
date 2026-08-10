@@ -328,7 +328,9 @@ async function askClaude(
   organization?: string | null,
   category?: string | null,
   purpose?: string | null,
-  period?: string | null
+  period?: string | null,
+  baseDoc?: string | null,
+  baseDocName?: string | null
 ): Promise<string> {
   const linkInstruction =
     organization && organization.trim()
@@ -340,11 +342,24 @@ async function askClaude(
       ? `実施時期の目安として「${period}」が与えられています。スケジュールの深掘りはこれを起点にしてください。`
       : `実施時期はまだ指定されていません。相手方の都合で動かせない日を含めて、時期を早めに固めてください。`;
 
+  // 元文書があるときは「直す」仕事として指示を切り替える。ここを書かないと、
+  // 資料を渡してもゼロから作り直した案を返してくる。
+  const baseInstruction = baseDoc
+    ? `【元になる文書${baseDocName ? `（${baseDocName}）` : ""}】
+${baseDoc}
+
+この文書は既にある下敷きです。ゼロから作り直すのではなく、これを今回のお題・相手向けに
+直すことが目的です。まず何がそのまま使えて、何を差し替える必要があるかを見極め、
+差し替えが要る箇所についてだけ質問してください。既に書いてあることを聞き直さないこと。`
+    : "";
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: "user",
       content: `【お題】どんな文書を作るか
 ${theme}
+
+${baseInstruction}
 
 【文書の種類】${template.label}（${template.description}）
 想定している章立て: ${procedureSectionNames(template).join(" / ")}
@@ -373,7 +388,7 @@ ${linkInstruction}
 }
 
 const SESSION_COLUMNS =
-  "id,theme,organization,category,title,purpose,template_id,period,updated_at";
+  "id,theme,organization,category,title,purpose,template_id,period,base_doc,base_doc_name,updated_at";
 
 export async function GET(req: NextRequest) {
   const anon = anonCreds();
@@ -427,6 +442,8 @@ export async function POST(req: NextRequest) {
     action?: unknown;
     sessionId?: unknown;
     theme?: unknown;
+    baseDoc?: unknown;
+    baseDocName?: unknown;
     organization?: unknown;
     category?: unknown;
     purpose?: unknown;
@@ -475,6 +492,10 @@ export async function POST(req: NextRequest) {
       const template = findProcedureTemplate(
         typeof body.templateId === "string" ? body.templateId : null
       );
+      const baseDoc =
+        typeof body.baseDoc === "string" ? body.baseDoc.trim().slice(0, 60000) : "";
+      const baseDocName =
+        typeof body.baseDocName === "string" ? body.baseDocName.trim().slice(0, 200) : "";
       if (!theme) {
         return NextResponse.json({ error: "お題を入力してください" }, { status: 400 });
       }
@@ -489,6 +510,8 @@ export async function POST(req: NextRequest) {
           purpose,
           period,
           template_id: template.id,
+          base_doc: baseDoc || null,
+          base_doc_name: baseDocName || null,
         }),
         cache: "no-store",
       });
@@ -505,7 +528,9 @@ export async function POST(req: NextRequest) {
         organization,
         category,
         purpose,
-        period
+        period,
+        baseDoc || null,
+        baseDocName || null
       );
       await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
 
@@ -539,7 +564,9 @@ export async function POST(req: NextRequest) {
         row.organization,
         row.category,
         row.purpose,
-        row.period
+        row.period,
+        row.base_doc,
+        row.base_doc_name
       );
       await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
 

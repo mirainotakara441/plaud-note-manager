@@ -9,6 +9,7 @@ import StakeholderPicker, {
   rememberStakeholder,
   type Category,
 } from "@/app/components/StakeholderPicker";
+import DocUpload from "@/app/components/refine/DocUpload";
 import { parseCategoryWideName } from "@/lib/categories";
 import { composeReply, parseQuestions, stripBold } from "@/lib/parseQuestions";
 
@@ -46,6 +47,9 @@ export default function DeliverableRefine() {
   const [organization, setOrganization] = useState(presetOrg);
   const [category, setCategory] = useState<Category>("自治体");
   const [theme, setTheme] = useState("");
+  // 元になる資料（任意）。ブラウザで抽出したテキストだけを持つ。
+  const [baseDoc, setBaseDoc] = useState("");
+  const [baseDocName, setBaseDocName] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -90,6 +94,8 @@ export default function DeliverableRefine() {
           organization: organization.trim(),
           category,
           theme: theme.trim(),
+          baseDoc: baseDoc || undefined,
+          baseDocName: baseDocName || undefined,
         }),
       });
       const d = await r.json();
@@ -266,6 +272,16 @@ export default function DeliverableRefine() {
             onNameChange={setOrganization}
             disabled={loading}
             allowCategoryWide
+          />
+
+          <DocUpload
+            label="元になる資料（任意）"
+            hint="pptx・docx・pdf・txt・md。登録すると、記憶層の内容に加えてこの資料を土台に深掘りします"
+            disabled={loading}
+            onExtracted={(text, filename) => {
+              setBaseDoc(text);
+              setBaseDocName(filename);
+            }}
           />
 
           {/* テーマ出し：自分で決める／AIに任せる の両方に対応 */}

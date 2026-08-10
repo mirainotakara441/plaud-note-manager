@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import StakeholderPicker, { type Category } from "@/app/components/StakeholderPicker";
+import DocUpload from "@/app/components/refine/DocUpload";
 import { composeReply, parseQuestions, stripBold } from "@/lib/parseQuestions";
 import {
   PROCEDURE_TEMPLATES,
@@ -112,6 +113,9 @@ function TablePreview({ table }: { table: ProcedureItem["table"] }) {
 export default function ProcedureRefine() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [theme, setTheme] = useState("");
+  // 元になる文書（任意）。既存の実施理由書などを土台にして直す使い方。
+  const [baseDoc, setBaseDoc] = useState("");
+  const [baseDocName, setBaseDocName] = useState("");
   const [templateId, setTemplateId] = useState<string>(PROCEDURE_TEMPLATES[0].id);
   const [purposeCategory, setPurposeCategory] = useState<string>(PURPOSE_PRESETS[0]);
   const [purposeCustom, setPurposeCustom] = useState("");
@@ -225,6 +229,8 @@ export default function ProcedureRefine() {
           templateId,
           purpose,
           period: period.trim() || undefined,
+          baseDoc: baseDoc || undefined,
+          baseDocName: baseDocName || undefined,
           organization: linkTarget ? organization.trim() : undefined,
           category: linkTarget ? category : undefined,
         }),
@@ -513,6 +519,16 @@ export default function ProcedureRefine() {
               className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
             />
           </div>
+
+          <DocUpload
+            label="元になる文書（任意）"
+            hint="docx・pdf・pptx・txt。過去の実施理由書などを登録すると、ゼロからではなくそれを直す形で深掘りします"
+            disabled={loading}
+            onExtracted={(text, filename) => {
+              setBaseDoc(text);
+              setBaseDocName(filename);
+            }}
+          />
 
           <div>
             <label className="block text-sm font-medium text-gray-600">文書の種類（章立ての型）</label>

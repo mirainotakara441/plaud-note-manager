@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import StakeholderPicker, { type Category } from "@/app/components/StakeholderPicker";
+import DocUpload from "@/app/components/refine/DocUpload";
 import { composeReply, parseQuestions, stripBold } from "@/lib/parseQuestions";
 import { SLIDE_TEMPLATES, findTemplate, sectionBadgeClass } from "@/lib/slideTemplates";
 
@@ -710,6 +711,16 @@ export default function SlideRefine() {
 
           {useBase && (
             <div className="space-y-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+              {/* ファイルから流し込む。貼り付けと同じ欄に入れるので、読み込んだ後に
+                  手で直せる（AIに渡す前に確かめられる形にしておく）。 */}
+              <DocUpload
+                label="スライドのファイルから読み込む（任意）"
+                hint="pptx・pdf・docx・txt。読み込むと下の「スライド構成」に流し込みます"
+                disabled={loading}
+                onExtracted={(text) => {
+                  if (text) setBaseSlides(text);
+                }}
+              />
               <div>
                 <label className="block text-sm font-medium text-gray-600">スライド構成</label>
                 <textarea
@@ -723,6 +734,14 @@ export default function SlideRefine() {
                   className="mt-2 block w-full resize-y rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
                 />
               </div>
+              <DocUpload
+                label="台本のファイルから読み込む（任意）"
+                hint="docx・pdf・txt など。読み込むと下の「台本・スクリプト」に流し込みます"
+                disabled={loading}
+                onExtracted={(text) => {
+                  if (text) setBaseScript(text);
+                }}
+              />
               <div>
                 <label className="block text-sm font-medium text-gray-600">
                   台本・スクリプト（任意）

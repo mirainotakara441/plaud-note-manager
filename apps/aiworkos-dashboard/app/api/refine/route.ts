@@ -119,6 +119,12 @@ async function fetchContext(
     : fetchOrgContext(supabaseUrl, anonKey, organization);
 }
 
+/** セッションに紐づく持ち込み資料を土台の先頭に重ねる。今まさに見ている物なので過去の蓄積より前に置く。 */
+function withBaseDoc(context: string, doc?: string | null, name?: string | null): string {
+  if (!doc) return context;
+  return `==== 今回持ち込んだ資料${name ? `（${name}）` : ""} ====\n${doc}\n\n${context}`;
+}
+
 // 分類全体の土台。特定の団体に絞らないので、団体タグでの検索と会議履歴は使えない。
 // 代わりに週報（分類ごとの章立てがそのまま入っている唯一のテーブル）を横串で読む。
 // ここを入れないと土台が空同然になり、全般の壁打ちはAIが何も知らないまま始まる。
@@ -472,6 +478,8 @@ export async function POST(req: NextRequest) {
     category?: unknown;
     theme?: unknown;
     message?: unknown;
+    baseDoc?: unknown;
+    baseDocName?: unknown;
   };
   try {
     body = await req.json();
@@ -565,10 +573,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "対象を入力してください" }, { status: 400 });
       }
 
+      // 画面から登録された「元になる資料」。ブラウザで抽出済みのテキストだけが来る
+      // （ファイル本体は送らせない。Vercelの4.5MB制限に資料の実体で当たらないため）。
+      const baseDoc =
+        typeof body.baseDoc === "string" ? body.baseDoc.trim().slice(0, 60000) : "";
+      const baseDocName =
+        typeof body.baseDocName === "string" ? body.baseDocName.trim().slice(0, 200) : "";
+
       const created = await fetch(restUrl(supabaseUrl, "refine_sessions"), {
         method: "POST",
         headers: restHeaders(serviceKey, { Prefer: "return=representation" }),
-        body: JSON.stringify({ organization, category, theme }),
+        body: JSON.stringify({
+          organization,
+          category,
+          theme,
+          base_doc: baseDoc || null,
+          base_doc_name: baseDocName || null,
+        }),
         cache: "no-store",
       });
       if (!created.ok) {
@@ -577,7 +598,12 @@ export async function POST(req: NextRequest) {
       const rows = await created.json();
       const session = Array.isArray(rows) ? rows[0] : rows;
 
-      const context = await fetchContext(supabaseUrl, anonKey, organization);
+      const base = await fetchContext(supabaseUrl, anonKey, organization);
+      // 登録された資料は記憶層より前に置く。今まさに見ている物であり、
+      // 過去の蓄積より優先して読ませたいため。
+      const context = baseDoc
+        ? `==== 今回持ち込んだ資料${baseDocName ? `（${baseDocName}）` : ""} ====\n${baseDoc}\n\n${base}`
+        : base;
       const reply = await askClaude(context, [], organization, theme);
       await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
 
@@ -598,7 +624,7 @@ export async function POST(req: NextRequest) {
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "refine_sessions")}?select=organization,theme&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "refine_sessions")}?select=organization,theme,base_doc,base_doc_name&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -610,7 +636,11 @@ export async function POST(req: NextRequest) {
 
       await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
-      const context = await fetchContext(supabaseUrl, anonKey, organization);
+      const context = withBaseDoc(
+        await fetchContext(supabaseUrl, anonKey, organization),
+        srows?.[0]?.base_doc,
+        srows?.[0]?.base_doc_name
+      );
       const reply = await askClaude(context, history, organization, theme);
       await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
 
@@ -624,7 +654,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "セッションIDが不正です" }, { status: 400 });
       }
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "refine_sessions")}?select=organization,category&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "refine_sessions")}?select=organization,category,base_doc,base_doc_name&id=eq.${sessionId}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -639,7 +669,11 @@ export async function POST(req: NextRequest) {
       if (history.length === 0) {
         return NextResponse.json({ error: "壁打ちの内容がありません" }, { status: 400 });
       }
-      const context = await fetchContext(supabaseUrl, anonKey, organization);
+      const context = withBaseDoc(
+        await fetchContext(supabaseUrl, anonKey, organization),
+        srows?.[0]?.base_doc,
+        srows?.[0]?.base_doc_name
+      );
 
       const transcript = history
         .map((m) => `${m.role === "user" ? "吉井" : "参謀"}: ${m.content}`)
