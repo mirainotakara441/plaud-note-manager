@@ -453,19 +453,10 @@ export default function Home() {
         )}
       </section>
 
-      {/* 「今朝の気づき」は作戦盤のすぐ下。各ダッシュボードは見に行けば分かるが、
-          見に行かなければ分からない。溜まったデータ側から声をかける役をここに置く。 */}
-      <AdvisorCard />
-
-      {/* 次に攻める相手。このOSの目的は成約で、ホームは機能の棚である前に
-          「今日どの相手に何をするか」から始まるべき。/status の抜粋。 */}
-      <NextTargetsCard />
-
-      {/* セッションの鮮度。並行して抱えている本数が多く、どれがどこまで進んだか
-          分からなくなる。進捗率は測れない（セッションに「完了」の定義が無い）ので、
-          出すのは動きの鮮度と詰まり方だけ。放置されている帯が薄い塊として浮かぶ。 */}
-      <CodeSessionBoard />
-
+      {/* 並びは2026-08-10に吉井さんの指定で入れ替えた。
+          上＝毎日必ず使う入口（作戦盤＋機能カード）、下＝様子を見るもの（気づき・
+          攻める相手・セッション）、最下＝取込。読むより先に「押す」画面なので、
+          押す物を上に置く。 */}
       <GroupNav />
 
       <FeatureGroup id="g-record" title="📥 記録する" features={RECORD_FEATURES} />
@@ -476,9 +467,20 @@ export default function Home() {
         id="g-life"
         title="🌱 ライフスタイル・ヘルス"
         features={LIFESTYLE_HEALTH_FEATURES}
-        collapsible
       />
-      <FeatureGroup id="g-system" title="🛠 システム" features={SYSTEM_FEATURES} collapsible />
+      <FeatureGroup id="g-system" title="🛠 システム" features={SYSTEM_FEATURES} />
+
+      {/* 「今朝の気づき」。各ダッシュボードは見に行けば分かるが、見に行かなければ
+          分からない。溜まったデータ側から声をかける役。 */}
+      <AdvisorCard />
+
+      {/* 次に攻める相手。★の順（★3が最優先）。/status の抜粋。 */}
+      <NextTargetsCard />
+
+      {/* セッションの鮮度。並行して抱えている本数が多く、どれがどこまで進んだか
+          分からなくなる。進捗率は測れない（セッションに「完了」の定義が無い）ので、
+          出すのは動きの鮮度と詰まり方だけ。 */}
+      <CodeSessionBoard />
 
       <IntegrationPanel />
 

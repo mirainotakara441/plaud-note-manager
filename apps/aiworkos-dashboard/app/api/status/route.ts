@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { anonCreds, restHeaders, serviceCreds } from "@/lib/supabase";
+import { fetchCrmIndex, orgKey, isExcluded } from "@/lib/orgTargets";
 import { normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
 
 // 監視ダッシュボード用エンドポイント。
@@ -101,14 +102,6 @@ function extractNotionTitle(page: Record<string, unknown>): string {
 // 団体名の表記ゆれを吸収する突合キー。
 // 例: stakeholders は「アトラス情報サービス」、会議記憶は「アトラス情報サービス株式会社」。
 // 法人格・空白の有無だけの違いは同じ団体として扱う（それ以上の推測はしない）。
-function orgKey(name: string): string {
-  return name
-    .replace(/(株式会社|有限会社|合同会社|一般社団法人|一般財団法人|公益財団法人|公益社団法人)/g, "")
-    .replace(/（株）|\(株\)|（有）|\(有\)/g, "")
-    .replace(/[\s　]/g, "")
-    .toLowerCase();
-}
-
 // 団体名 → 正準8分類の対応表を作る。
 // 優先度は stakeholders（団体マスタ）> weekly_reports（週報の章立て）。
 // weekly_reports の `全体`/`支店`/`プロモーション` は団体の種類ではないため
@@ -179,37 +172,8 @@ async function fetchOrgCategoryMap(): Promise<Map<string, OrgCategory>> {
 // キャッシュしない理由:
 //   「対象外にする」を押した直後にこの索引が古いと、Notionでは外れているのに
 //   画面には残る（＝画面と実態が食い違う）。70件程度のSELECT1回なので毎回引く。
-type CrmOrg = { notion_page_id: string; name: string; status: string | null };
 
-async function fetchNotionOrgIndex(): Promise<Map<string, CrmOrg>> {
-  const map = new Map<string, CrmOrg>();
-  const c = anonCreds();
-  if (!c) return map;
-  try {
-    const res = await fetch(
-      `${c.url}/rest/v1/notion_organizations?select=notion_page_id,name,status&limit=2000`,
-      { headers: restHeaders(c.key), cache: "no-store", signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) return map;
-    const rows = await res.json();
-    if (!Array.isArray(rows)) return map;
-    for (const r of rows as CrmOrg[]) {
-      const name = typeof r?.name === "string" ? r.name.trim() : "";
-      if (!name || typeof r?.notion_page_id !== "string") continue;
-      const k = orgKey(name);
-      // 表記ゆれで同じキーに複数当たったら、正確な名前の行を優先する
-      // （「アトラス情報サービス」と「アトラス情報サービス株式会社」のような対）。
-      if (!map.has(k) || map.get(k)!.name.length > name.length) {
-        map.set(k, { notion_page_id: r.notion_page_id, name, status: r.status ?? null });
-      }
-    }
-    return map;
-  } catch (err) {
-    // 索引が引けなくても一覧そのものは出す（ボタンが出ないだけ）。
-    console.error("GET /api/status: 顧客CRM索引の取得失敗", err);
-    return map;
-  }
-}
+
 
 export async function GET() {
   const c = serviceCreds();
@@ -234,7 +198,7 @@ export async function GET() {
       }),
       fetchNotion(),
       fetchOrgCategoryMap(),
-      fetchNotionOrgIndex(),
+      fetchCrmIndex(),
     ]);
 
     if (!supaRes.ok) {
@@ -267,7 +231,7 @@ export async function GET() {
             // 行の表示名とCRM上の名前が違うことがある（法人格の有無）。
             // 確認ダイアログでどのページを触るのか正直に見せるために返す。
             crm_name: crm?.name ?? null,
-            _excluded: crm?.status === "対象外",
+            _excluded: isExcluded(name, crmIndex),
           };
         })
         .filter((o: Record<string, unknown>) => o._excluded !== true)

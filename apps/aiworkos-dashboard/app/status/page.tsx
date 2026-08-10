@@ -80,6 +80,10 @@ type OrgStatus = {
   party_rank?: number;
 };
 
+// 優先順位（★1〜3）。ホームの「次に攻める相手」と同じ org_priority を読む。
+// 順位を決めるのはこの画面（全団体が見える）で、ホームはその結果を上位だけ映す。
+type StarMap = Record<string, number>;
+
 // 対象外にした団体（GET /api/status/exclude）。
 type ExcludedOrg = { notion_page_id: string; name: string; category: string | null };
 type NewsRecent = {
@@ -749,10 +753,16 @@ function OrgRow({
   o,
   onExclude,
   busy,
+  stars,
+  starBusy,
+  onStar,
 }: {
   o: OrgStatus;
   onExclude: (o: OrgStatus) => void;
   busy: boolean;
+  stars: number;
+  starBusy: boolean;
+  onStar: (n: number) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [whyDisabled, setWhyDisabled] = useState(false);
@@ -767,9 +777,32 @@ function OrgRow({
   return (
     <li
       className={`flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border px-2.5 py-1.5 ${
-        o.has_proposal ? "border-gray-100 bg-gray-50" : "border-rose-200 bg-rose-50"
+        stars >= 3
+          ? "border-amber-300 bg-amber-50"
+          : o.has_proposal
+          ? "border-gray-100 bg-gray-50"
+          : "border-rose-200 bg-rose-50"
       }`}
     >
+      {/* 優先順位。ホームの「次に攻める相手」の並びがこれで決まる。
+          同じ数を押すと解除。 */}
+      <span className="inline-flex shrink-0 items-center">
+        {[1, 2, 3].map((n) => (
+          <button
+            key={n}
+            type="button"
+            disabled={starBusy}
+            onClick={() => onStar(stars === n ? 0 : n)}
+            aria-label={`優先度★${n}`}
+            title={stars === n ? "押すと解除" : `★${n}にする（★3が最優先）`}
+            className={`px-0.5 text-sm leading-none transition active:scale-90 disabled:opacity-40 ${
+              n <= stars ? "text-amber-500" : "text-gray-300"
+            }`}
+          >
+            ★
+          </button>
+        ))}
+      </span>
       {/* 団体名は最低7remを確保する。狭い画面では名前を潰すのではなく、
           後ろのバッジ・導線が次の行へ折り返す（「熊...」のような潰れ防止）。 */}
       <span className="min-w-[7rem] flex-1 basis-[7rem] truncate text-sm font-semibold text-gray-800">
@@ -961,6 +994,55 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [pending, setPending] = useState<string | null>(null); // 処理中のページID
   const [exErr, setExErr] = useState<string | null>(null);
+  const [stars, setStars] = useState<StarMap>({});
+  const [starBusy, setStarBusy] = useState<string | null>(null);
+
+  const loadStars = useCallback(async () => {
+    try {
+      const res = await fetch("/api/next-targets?all=true", { cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && Array.isArray(json?.targets)) {
+        const m: StarMap = {};
+        for (const t of json.targets as { name: string; stars: number }[]) {
+          if (t.stars > 0) m[t.name] = t.stars;
+        }
+        setStars(m);
+      }
+    } catch {
+      // ★が取れなくても一覧は出す（付随情報で本体を止めない）
+    }
+  }, []);
+
+  // ★の設定。押した瞬間に反映し、失敗したら元に戻す（実態と食い違わせない）。
+  async function setStarFor(name: string, n: number) {
+    if (starBusy) return;
+    setStarBusy(name);
+    const before = stars[name] ?? 0;
+    setStars((prev) => {
+      const next = { ...prev };
+      if (n === 0) delete next[name];
+      else next[name] = n;
+      return next;
+    });
+    try {
+      const res = await fetch("/api/next-targets", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, stars: n }),
+      });
+      if (!res.ok) throw new Error("failed");
+    } catch {
+      setStars((prev) => {
+        const next = { ...prev };
+        if (before === 0) delete next[name];
+        else next[name] = before;
+        return next;
+      });
+      setExErr("優先順位の保存に失敗しました");
+    } finally {
+      setStarBusy(null);
+    }
+  }
 
   const loadExcluded = useCallback(async () => {
     try {
@@ -974,7 +1056,8 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
 
   useEffect(() => {
     loadExcluded();
-  }, [loadExcluded]);
+    loadStars();
+  }, [loadExcluded, loadStars]);
 
   // exclude=true で対象外へ、false で戻す。どちらもNotionが正。
   async function setExcludedState(pageId: string, exclude: boolean) {
@@ -1143,6 +1226,9 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
                         key={o.name}
                         o={o}
                         busy={pending === o.notion_page_id}
+                        stars={stars[o.name] ?? 0}
+                        starBusy={starBusy === o.name}
+                        onStar={(n) => setStarFor(o.name, n)}
                         onExclude={(org) =>
                           org.notion_page_id && setExcludedState(org.notion_page_id, true)
                         }

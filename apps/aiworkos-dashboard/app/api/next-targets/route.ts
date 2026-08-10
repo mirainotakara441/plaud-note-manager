@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
+import { fetchCrmIndex, isExcluded } from "@/lib/orgTargets";
 
 // ホームの「🎯 次に攻める相手」。/status の「次に攻める団体」から、いま手を
 // 付けるべき上位だけを軽く返す。
@@ -70,7 +71,7 @@ export async function GET(req: NextRequest) {
   const showAll = new URL(req.url).searchParams.get("all") === "true";
 
   try {
-    const [res, priority] = await Promise.all([
+    const [res, priority, crm] = await Promise.all([
       fetch(`${c.url}/rest/v1/rpc/dashboard_stats`, {
         method: "POST",
         headers: {
@@ -82,6 +83,7 @@ export async function GET(req: NextRequest) {
         cache: "no-store",
       }),
       loadPriority(c),
+      fetchCrmIndex(),
     ]);
     if (!res.ok) {
       return NextResponse.json({ error: `取得失敗 ${res.status}` }, { status: 502 });
@@ -97,6 +99,10 @@ export async function GET(req: NextRequest) {
     };
 
     const all: NextTarget[] = rows
+      // 「対象外」にした団体は出さない。dashboard_stats は会議記録・週報からも
+      // 団体を組み立てるので、CRM側で対象外にしても会議側の枝から残る。
+      // ここを掛け忘れていたため、対象外にしたはずの銀行3行が毎朝先頭に並んでいた。
+      .filter((o) => !isExcluded(o.name, crm))
       .map((o) => ({
         name: o.name,
         meetings: o.meetings,
