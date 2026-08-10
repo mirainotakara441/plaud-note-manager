@@ -148,6 +148,38 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
     }
   }
 
+  // 記録の削除。写真の保存や下書き生成の途中で止まった半端な行を片付けるためのもの。
+  // 消えると戻せないので、店名を出して一度確かめる。Xへ投稿済みのものはサーバー側が
+  // 409で止めるので、その時だけ「Xの投稿だけ残る」ことを承知のうえで押し直してもらう。
+  async function remove(force = false) {
+    const label = `${fmtDate(log.eaten_on)}の「${log.shop || "無題"}」`;
+    if (!force && !window.confirm(`${label}を削除します。写真も一緒に消えます。\n元に戻せません。よろしいですか？`)) {
+      return;
+    }
+    setBusy("del");
+    setErr(null);
+    try {
+      const res = await fetch(
+        `/api/ramen?id=${log.id}${force ? "&force=true" : ""}`,
+        { method: "DELETE" }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        if (window.confirm(`${label}は既にXへ投稿済みです。\n削除するとXの投稿だけが残ります。それでも消しますか？`)) {
+          setBusy(null);
+          return remove(true);
+        }
+        return;
+      }
+      if (!res.ok) throw new Error(json?.error ?? `削除に失敗しました（${res.status}）`);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "削除に失敗しました");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <article className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
       <div className="flex items-baseline gap-2">
@@ -301,6 +333,15 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
         {log.photo_count > 0 && (
           <span className="text-xs text-gray-400">📷 {log.photo_count}枚</span>
         )}
+        <button
+          type="button"
+          disabled={busy !== null}
+          onClick={() => remove()}
+          aria-label="この一杯を削除"
+          className="ml-auto rounded-full px-2 py-1 text-xs text-gray-300 transition active:bg-gray-100 active:text-rose-500 disabled:opacity-40"
+        >
+          {busy === "del" ? "削除中…" : "🗑 削除"}
+        </button>
       </div>
     </article>
   );
@@ -315,6 +356,46 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("読み込みに失敗しました"));
     reader.readAsDataURL(file);
   });
+}
+
+// 送る前に必ず縮める。
+//
+// iPhoneの写真は1枚2〜5MBあり、base64にすると約1.33倍に膨らむ。Vercelの
+// リクエスト上限は4.5MBなので、原寸のまま送ると1枚でも超えて 413 が返る
+// （本文だけの投稿は通るのに写真つきだけ落ちる、という症状の正体がこれ）。
+// Xの上限5MBにも同時に効く。
+//
+// canvas に描き直すので、iPhoneのHEICもJPEGになる。XはHEICを受け付けないため
+// この変換自体にも意味がある。
+const MAX_EDGE = 2048;
+const JPEG_QUALITY = 0.85;
+
+async function downscaleToJpeg(file: File): Promise<{ dataUrl: string; type: string }> {
+  const original = await fileToDataUrl(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("画像を読み込めませんでした"));
+      el.src = original;
+    });
+
+    const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvasが使えませんでした");
+    ctx.drawImage(img, 0, 0, w, h);
+    return { dataUrl: canvas.toDataURL("image/jpeg", JPEG_QUALITY), type: "image/jpeg" };
+  } catch {
+    // 縮小に失敗しても、そのまま送って上限に当たるよりはマシ……ではない。
+    // ここで諦めて原寸を返すと結局413になるので、呼び出し側で大きさを見て弾く。
+    return { dataUrl: original, type: file.type || "image/jpeg" };
+  }
 }
 
 function CaptureForm({ onSaved }: { onSaved: () => void }) {
@@ -356,15 +437,38 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
       // 写真は先にStorageへ上げてパスだけ受け取り、その後の記録本体にpathを渡す
       // （Xへの投稿時にはこのpathからサーバーが写真を取り出す）。
       const photo_urls: string[] = [];
-      for (const file of photos) {
-        const dataUrl = await fileToDataUrl(file);
+      for (let i = 0; i < photos.length; i++) {
+        const file = photos[i];
+        const { dataUrl, type } = await downscaleToJpeg(file);
+        // base64 の実バイト数で見張る。Vercelの上限4.5MBに当たると、
+        // 返ってくるのはJSONではないので下の parse も失敗して原因が分からなくなる。
+        const approxBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75);
+        if (approxBytes > 4_000_000) {
+          throw new Error(
+            `${i + 1}枚目の写真が大きすぎます（約${(approxBytes / 1024 / 1024).toFixed(1)}MB）。` +
+              `別の写真を選ぶか、サイズを小さくしてください。`
+          );
+        }
         const up = await fetch("/api/ramen/photo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: dataUrl, content_type: file.type || "image/jpeg" }),
+          body: JSON.stringify({ data: dataUrl, content_type: type }),
         });
-        const upJson = await up.json();
+        // 413などサーバー手前で弾かれると本文がJSONではない。素の json() だと
+        // 「Unexpected token」になって、写真が原因だと分からなくなる。
+        const upText = await up.text();
+        let upJson: { path?: string; error?: string } = {};
+        try {
+          upJson = JSON.parse(upText);
+        } catch {
+          throw new Error(
+            up.status === 413
+              ? `${i + 1}枚目の写真が大きすぎて送れませんでした（サーバー上限）`
+              : `${i + 1}枚目の写真の保存に失敗しました（${up.status}）`
+          );
+        }
         if (!up.ok) throw new Error(upJson?.error ?? "写真の保存に失敗しました");
+        if (!upJson.path) throw new Error("保存先のパスが返りませんでした");
         photo_urls.push(upJson.path);
       }
 
