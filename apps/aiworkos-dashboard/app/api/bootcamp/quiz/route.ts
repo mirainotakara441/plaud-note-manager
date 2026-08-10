@@ -69,6 +69,21 @@ const SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
+// LLMは「正解→もっともらしい誤答3つ」の順で書く癖があり、schema通りに
+// そのまま保存すると answer_index が0（先頭）に偏る（2026-08-10 実データで確認、
+// 45問中24問が0番目）。選択肢そのものをシャッフルし、正解の新しい位置に
+// answer_index を付け替える。
+function shuffleChoices(q: QuizQuestion): QuizQuestion {
+  const correct = q.choices[q.answer_index];
+  const order = q.choices.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const choices = order.map((i) => q.choices[i]);
+  return { ...q, choices, answer_index: choices.indexOf(correct) };
+}
+
 function materialFromQaSession(qa: QaSession): string {
   return qa.chapters
     .map((c) => {
@@ -141,7 +156,7 @@ export async function POST(req: NextRequest) {
 
     const quiz = {
       generated_at: new Date().toISOString(),
-      questions: result.questions,
+      questions: result.questions.map(shuffleChoices),
     };
 
     const patchRes = await fetch(
