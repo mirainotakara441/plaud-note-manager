@@ -45,7 +45,8 @@ type ApiResponse = { logs: BootcampLog[]; error?: string };
 export default function BootcampPage() {
   const [logs, setLogs] = useState<BootcampLog[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sprint, setSprint] = useState<string>("Sprint1");
+  // 開いた時に今やっているSprintが出るようにしている（2026-08時点はSprint3）。
+  const [sprint, setSprint] = useState<string>("Sprint3");
   const [phase, setPhase] = useState<Phase>("Learn");
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);

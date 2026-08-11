@@ -16,9 +16,10 @@
 // ── Sprintとフェーズ ──────────────────────────────────────────────
 //
 // 運営アプリの進捗表と同じ並びにしてある（往復しても迷わないように）。
-// ビジネストラックはSprint1・Sprint2の2本立て。
+// ビジネストラックが実際に踏むのはSprint1とSprint3。
+// Sprint2は自分の受講対象に無く、器だけ置いても常に0件になるので外した。
 
-export const SPRINTS = ["Sprint1", "Sprint2"] as const;
+export const SPRINTS = ["Sprint1", "Sprint3"] as const;
 export type Sprint = (typeof SPRINTS)[number];
 
 export const PHASES = [
