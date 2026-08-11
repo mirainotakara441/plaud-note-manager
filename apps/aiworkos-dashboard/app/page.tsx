@@ -6,6 +6,7 @@ import IntegrationPanel from "@/app/components/IntegrationPanel";
 import AdvisorCard from "@/app/components/AdvisorCard";
 import CodeSessionBoard from "@/app/components/CodeSessionBoard";
 import NextTargetsCard from "@/app/components/NextTargetsCard";
+import WeeklyFocusCard from "@/app/components/WeeklyFocusCard";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
@@ -452,6 +453,10 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {/* 「今週おこなうこと」は作戦盤のすぐ下、機能カードより前。
+          今週の的を5つに絞る場所で、ホームを開いて最初に目に入るべきもの。 */}
+      <WeeklyFocusCard />
 
       {/* 並びは2026-08-10に吉井さんの指定で入れ替えた。
           上＝毎日必ず使う入口（作戦盤＋機能カード）、下＝様子を見るもの（気づき・
