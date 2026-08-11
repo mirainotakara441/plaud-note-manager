@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { windowChunks } from "@/lib/chunks";
 import {
   validateDraft,
   PERIOD_TYPES,
@@ -60,6 +61,95 @@ export async function GET() {
   });
 
   return NextResponse.json({ items });
+}
+
+
+// ---------------------------------------------------------------------------
+// 記憶層への反映
+// ---------------------------------------------------------------------------
+
+/**
+ * 振り返りを memory_chunks へ載せ直す。
+ *
+ * これまで retrospectives は書いても他のどこからも参照されず袋小路だった。
+ * 横断検索にも壁打ちにも提案エージェントにも出てこないため、月次で絞り出した
+ * 示唆が翌月の提案づくりに一切効いていなかった。日記が同じ状態だったのを
+ * 2026-07-26に直したのと同じ穴。
+ *
+ * 保存のたびに古いチャンクを消してから入れ直す（source_idの接頭辞で一掃）。
+ * 追記にすると、編集で短くなった回の古い本文が残って検索に混ざる。
+ *
+ * ここが失敗しても振り返り本体の保存は成功として返す。記憶層への反映は
+ * 付随処理で、これを理由に「保存できませんでした」と出すと書き直しを促して
+ * しまうため（本体はもう入っている）。
+ */
+async function syncToMemory(
+  c: { url: string; key: string },
+  id: string,
+  draft: RetroDraft
+): Promise<void> {
+  const anon = anonCreds();
+  if (!anon) return;
+
+  const prefix = `retrospective:${id}`;
+  const label = `${draft.period_type} ${draft.period_start}〜${draft.period_end}`;
+
+  // 検索で引ける本文を組む。節ごとの★と箇条書きも入れる——「何をしたか」は
+  // 総括ではなく節の中身に書かれているため。
+  const parts: string[] = [];
+  if (draft.one_liner) parts.push(`【一言】${draft.one_liner}`);
+  if (draft.insights.length > 0) {
+    parts.push(`【示唆】\n${draft.insights.map((x) => `・${x}`).join("\n")}`);
+  }
+  for (const sec of draft.sections) {
+    const head = sec.rating ? `【${sec.category}】★${sec.rating}` : `【${sec.category}】`;
+    const items = sec.items
+      .map((i) => `  - ${i.name}${i.eval ? `（${i.eval}）` : ""}: ${i.move}`)
+      .join("\n");
+    parts.push([head, sec.body, items].filter(Boolean).join("\n"));
+  }
+  if (draft.next_plans.length > 0) {
+    parts.push(
+      `【次期の予定】\n${draft.next_plans.map((p) => `・${p.date} ${p.label}`).join("\n")}`
+    );
+  }
+  const body = parts.join("\n\n").trim();
+  if (!body) return;
+
+  try {
+    await fetch(`${anon.url}/functions/v1/purge-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id_prefix: prefix }),
+      cache: "no-store",
+    });
+
+    const chunks = windowChunks(body);
+    await Promise.all(
+      chunks.map((chunk, i) =>
+        fetch(`${anon.url}/functions/v1/store-memory`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_type: "振り返り",
+            source_id: `${prefix}:${i + 1}`,
+            title: `${draft.title || label}｜${label}｜${i + 1}/${chunks.length}`,
+            content: chunk,
+            event_date: draft.period_end || draft.period_start,
+            metadata: {
+              種別: "振り返り",
+              期間: draft.period_type,
+              開始: draft.period_start,
+              終了: draft.period_end,
+            },
+          }),
+          cache: "no-store",
+        })
+      )
+    );
+  } catch (err) {
+    console.error("振り返りの記憶層反映に失敗:", err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +309,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: secErr }, { status: 502 });
   }
 
+  await syncToMemory(c, id, draft);
   return NextResponse.json({ id });
 }
 
@@ -261,6 +352,7 @@ export async function PATCH(request: Request) {
   const secErr = await replaceSections(c, id, draft);
   if (secErr) return NextResponse.json({ error: secErr }, { status: 502 });
 
+  await syncToMemory(c, id, draft);
   return NextResponse.json({ id });
 }
 
@@ -280,6 +372,21 @@ export async function DELETE(request: Request) {
     const detail = await res.text().catch(() => "");
     console.error("振り返り削除エラー:", res.status, detail.slice(0, 300));
     return NextResponse.json({ error: `削除失敗 ${res.status}` }, { status: 502 });
+  }
+
+  // 記憶層からも消す。残すと、消したはずの内容が横断検索や壁打ちに出てくる。
+  const anon = anonCreds();
+  if (anon) {
+    try {
+      await fetch(`${anon.url}/functions/v1/purge-memory`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ source_id_prefix: `retrospective:${id}` }),
+        cache: "no-store",
+      });
+    } catch (err) {
+      console.error("振り返りの記憶層削除に失敗:", err);
+    }
   }
   return NextResponse.json({ ok: true });
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Trend from "./Trend";
 import RetrospectiveForm from "./RetrospectiveForm";
+import MonthView from "./MonthView";
 import {
   PERIOD_TYPES,
   averageRating,
@@ -163,7 +164,7 @@ export default function RetrospectivePage() {
         <p className="mt-1 text-sm leading-relaxed text-gray-500">
           週次・月次の★評価と総括・示唆・次期の予定。
           <br />
-          事実のログは週報、ここに溜めるのは解釈です。
+          月次では、書いた解釈だけでなく<strong>その月に実際に何があったか</strong>も出します。
         </p>
       </header>
 
@@ -199,6 +200,10 @@ export default function RetrospectivePage() {
 
       {!loading && !error && (
         <>
+          {/* 月次のときだけ「その月に何があったか」を先に出す。振り返りを書く前に
+              読む面であり、書いていない月でも中身がある（記録は毎日溜まっているため）。 */}
+          {periodType === "月次" && <MonthView />}
+
           <Trend items={filtered} periodType={periodType} />
 
           <div className="mb-3 flex items-baseline justify-between">

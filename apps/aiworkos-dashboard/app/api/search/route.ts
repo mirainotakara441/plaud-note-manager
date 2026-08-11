@@ -5,7 +5,19 @@ import { NextRequest, NextResponse } from "next/server";
 // （エラーにならないので、UIでは絞り込んだつもりなのに全件から検索されてしまう）。
 // 2026-07-30まで ["日記","会議","学び"] しか無く、検索UIが出していた`成果物`(246件)と
 // `学会`(10件) の絞り込みが効いていなかった。
-const VALID_SOURCE_TYPES = ["日記", "会議", "学び", "成果物", "学会", "PDF", "その他"];
+// 2026-08-10 に `振り返り` を追加。同じ罠を二度踏んだ——振り返りを記憶層へ載せた直後、
+// 絞り込んだのに全件から返ってきて原因が分からなかった。
+// **memory_chunks の CHECK制約を変えたら、必ずこの配列も直すこと。**
+const VALID_SOURCE_TYPES = [
+  "日記",
+  "会議",
+  "学び",
+  "成果物",
+  "振り返り",
+  "学会",
+  "PDF",
+  "その他",
+];
 
 export async function POST(req: NextRequest) {
   const supabaseUrl = process.env.SUPABASE_URL;

@@ -15,7 +15,7 @@ type SearchResult = {
   similarity: number;
 };
 
-const SOURCE_FILTERS = ["すべて", "日記", "会議", "学び", "成果物", "学会"] as const;
+const SOURCE_FILTERS = ["すべて", "日記", "会議", "学び", "成果物", "振り返り", "学会"] as const;
 type SourceFilter = (typeof SOURCE_FILTERS)[number];
 
 const MATCH_COUNTS = [5, 10, 20] as const;
