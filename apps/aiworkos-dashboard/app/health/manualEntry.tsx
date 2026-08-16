@@ -20,9 +20,11 @@ export type ManualMetric = "sleep_hours" | "morning_walk" | "business_trip";
 /** { "2026-08-03": { sleep_hours: 6.5, morning_walk: 1 } } */
 export type ManualEntries = Record<string, Partial<Record<ManualMetric, number>>>;
 
-// よく使う睡眠時間。53歳・多忙という前提で 5.0〜8.0 を 0.5 刻み。
-// これで大半の日が1タップで入る。外れ値は「その他」から入れる。
-const SLEEP_PRESETS = [5, 5.5, 6, 6.5, 7, 7.5, 8];
+// よく使う睡眠時間。4.5〜6.5 を 0.5 刻み。
+// 当初は 5.0〜8.0 に置いていたが、実際は短い日が多く、下限の5時間が
+// いちばん押される＝端に張り付いていた（2026-08-15に吉井さんの指定で下げた）。
+// これで大半の日が1タップで入る。7時間以上や端数は「その他」から入れる。
+const SLEEP_PRESETS = [4.5, 5, 5.5, 6, 6.5];
 
 /** 日付チップに出す日数。前日の睡眠を翌朝入れる・数日ぶんまとめて入れる用途をこれで賄う。 */
 const QUICK_DAYS = 7;

@@ -129,11 +129,51 @@ export async function PATCH(req: NextRequest) {
   return NextResponse.json({ item: rows[0] ?? null });
 }
 
-// 1件削除
+// 削除。?id=… で1件、?ids=…,…,… で複数件。
+//
+// 一括のときも「消す対象のidを画面から明示的に受け取る」形にしている。
+// 「done=true のものを全部消す」のような条件で消すと、画面に出ていない行
+// （別のタブで完了にした行・同期で後から入った行）まで巻き込む。
+// 消えたことに気づけない削除を作らないため、条件ではなくid列で受ける。
+const MAX_DELETE_IDS = 200;
+
 export async function DELETE(req: NextRequest) {
   const c = serviceCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
-  const id = req.nextUrl.searchParams.get("id");
+
+  const { searchParams } = req.nextUrl;
+  const idsParam = searchParams.get("ids");
+
+  if (idsParam !== null) {
+    const ids = idsParam
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (ids.length === 0) return NextResponse.json({ error: "idsが必要です" }, { status: 400 });
+    if (ids.length > MAX_DELETE_IDS) {
+      return NextResponse.json(
+        { error: `一度に削除できるのは${MAX_DELETE_IDS}件までです` },
+        { status: 400 }
+      );
+    }
+    const idList = ids.map((id) => encodeURIComponent(id)).join(",");
+    const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=in.(${idList})`, {
+      method: "DELETE",
+      // 実際に何件消えたかを返したいので representation を要求する
+      headers: headers(c.key, "return=representation"),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return NextResponse.json(
+        { error: `一括削除失敗 ${res.status}: ${t.slice(0, 200)}` },
+        { status: 502 }
+      );
+    }
+    const rows = await res.json().catch(() => []);
+    return NextResponse.json({ ok: true, count: Array.isArray(rows) ? rows.length : 0 });
+  }
+
+  const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "idが必要です" }, { status: 400 });
   const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",

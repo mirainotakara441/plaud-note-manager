@@ -500,6 +500,90 @@ export default function ActionsPage() {
     completeMany(ids);
   }
 
+  // 納期ありのToDoを、貼って使える文字列にして書き出す。
+  //
+  // 画面の外（メール・議事メモ・Notion）へ持ち出すためのもの。
+  // 営業ToDoだけでなく日々のToDoに納期を付けたぶんも拾う。
+  // 「納期あり」セクションは時系列表示にしか出ないが、書き出しはどちらの表示でも
+  // 使えるようヘッダー側に置いている。
+  function dueListText(): string {
+    const today = jstToday();
+    const rows: { due: string; genre: string; text: string }[] = [
+      ...strategic
+        .filter((t) => t.due_date && t.status !== "完了")
+        .map((t) => ({ due: t.due_date!, genre: t.genre || "その他", text: t.task_name })),
+      ...items
+        .filter((it) => it.due_date && !it.done)
+        .map((it) => ({ due: it.due_date!, genre: KIND_META[it.kind].label, text: it.content })),
+    ].sort((a, b) => (a.due === b.due ? 0 : a.due < b.due ? -1 : 1));
+
+    const lines = [`【納期ありToDo】${today} 時点・${rows.length}件`, "────────────────"];
+    for (const r of rows) {
+      const dm = dueMeta(r.due, false);
+      const [, m, d] = r.due.split("-");
+      lines.push(`■ ${Number(m)}/${Number(d)}（${dm.rel}）［${r.genre}］`);
+      lines.push(`　${r.text}`);
+    }
+    return lines.join("\n");
+  }
+
+  async function copyDueList() {
+    const text = dueListText();
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice(`納期ありToDoをコピーしました（${dueExportCount}件）`);
+    } catch {
+      // iPhoneのSafariなど、クリップボードが使えない場面がある。
+      // 黙って失敗すると「押したのに何も起きない」になるので、選択できる形で出す。
+      window.prompt("コピーしてください", text);
+    }
+  }
+
+  // チェック済みをまとめて消す。1件ずつの ✕ は残したまま、後片付け用に足したもの。
+  //
+  // 対象は「画面に出ている済みの行」だけを id で明示して送る。
+  // 「done のものを全部」という条件で消すと、別のタブで完了にした行や
+  // 同期で後から入った行まで一緒に消えて、消えたことに気づけない。
+  async function removeDone(its: Item[]) {
+    if (its.length === 0 || bulkBusy) return;
+    if (
+      !window.confirm(
+        `チェック済みの${its.length}件をまとめて削除します。元に戻せません。よろしいですか？`
+      )
+    )
+      return;
+
+    setBulkBusy(true);
+    setError(null);
+    setNotice(null);
+    const before = items;
+    const ids = its.map((x) => x.id);
+    const idSet = new Set(ids);
+    setItems((prev) => prev.filter((x) => !idSet.has(x.id)));
+    try {
+      // URLが長くなりすぎないよう小分けにする（idはUUIDで1件36文字）
+      let removed = 0;
+      for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        const res = await fetch(
+          `/api/actions?ids=${chunk.map(encodeURIComponent).join(",")}`,
+          { method: "DELETE" }
+        );
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.error ?? "一括削除に失敗しました");
+        removed += data?.count ?? chunk.length;
+      }
+      setNotice(`チェック済み${removed}件を削除しました`);
+    } catch (e) {
+      setItems(before);
+      setError(e instanceof Error ? e.message : "一括削除に失敗しました");
+      await load();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   // 削除は元に戻せない。日記由来の行は自動で起票されるので、消したつもりが
   // 別の行だった、という取り違えが起きやすい。内容を出して一度確かめる。
   async function remove(it: Item) {
@@ -730,6 +814,14 @@ export default function ActionsPage() {
     }
     return Array.from(byDate.entries());
   }, [items, strategic, dueRows]);
+
+  // 書き出しの対象件数（ボタンの表示に使う）。納期があって未完のものだけ。
+  const dueExportCount = useMemo(
+    () =>
+      strategic.filter((t) => t.due_date && t.status !== "完了").length +
+      items.filter((it) => it.due_date && !it.done).length,
+    [strategic, items]
+  );
 
   const doneItems = useMemo(
     () => items.filter((x) => x.done).sort((a, b) => (a.entry_date < b.entry_date ? 1 : -1)),
@@ -1166,6 +1258,27 @@ export default function ActionsPage() {
                 {bulkBusy ? "処理中…" : `✓ 未完${remaining}件をすべて完了に`}
               </button>
             )}
+            {/* 納期ありの書き出し。どちらの表示でも押せるようここに置く。 */}
+            {dueExportCount > 0 && (
+              <button
+                type="button"
+                onClick={copyDueList}
+                className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-600 transition active:bg-gray-100"
+              >
+                📋 納期あり{dueExportCount}件をコピー
+              </button>
+            )}
+            {/* チェック済みの後片付け。時系列表示でも押せるよう、済み一覧とは別にここにも置く。 */}
+            {doneItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => removeDone(doneItems)}
+                disabled={bulkBusy}
+                className="shrink-0 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-sm font-semibold text-rose-600 transition active:bg-rose-50 disabled:opacity-50"
+              >
+                {bulkBusy ? "処理中…" : `🗑 済み${doneItems.length}件をまとめて消す`}
+              </button>
+            )}
           </div>
         </div>
         <p className="mt-1 text-sm text-gray-500">
@@ -1408,17 +1521,29 @@ export default function ActionsPage() {
           {/* 済み一覧（日々のToDo・折りたたみ） */}
           {doneItems.length > 0 && (
             <section className="mt-8">
-              <button
-                type="button"
-                onClick={() => setDoneOpen((v) => !v)}
-                className="flex w-full items-center gap-2 rounded-lg px-1 py-2 text-sm font-bold text-gray-500 transition active:bg-gray-50"
-              >
-                <span>{doneOpen ? "▼" : "▶"}</span>
-                ✓ 済み（日々のToDo）
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
-                  {doneItems.length}
-                </span>
-              </button>
+              {/* 見出しの折りたたみと「まとめて消す」は別のボタン。
+                  入れ子にすると押し分けられないので横に並べる。 */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDoneOpen((v) => !v)}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-2 text-sm font-bold text-gray-500 transition active:bg-gray-50"
+                >
+                  <span>{doneOpen ? "▼" : "▶"}</span>
+                  ✓ 済み（日々のToDo）
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-500">
+                    {doneItems.length}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeDone(doneItems)}
+                  disabled={bulkBusy}
+                  className="shrink-0 rounded-lg border border-rose-200 px-2.5 py-1.5 text-[0.75rem] font-medium text-rose-600 transition active:scale-95 active:bg-rose-50 disabled:opacity-40"
+                >
+                  {bulkBusy ? "処理中…" : `🗑 ${doneItems.length}件をまとめて消す`}
+                </button>
+              </div>
               {doneOpen && (
                 <div className="mt-2 space-y-2 opacity-80">{doneItems.map(renderItem)}</div>
               )}

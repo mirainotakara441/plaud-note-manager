@@ -20,6 +20,8 @@ import {
   type ManualMetric,
 } from "./manualEntry";
 import { IngestAlertBanner, IngestStatusSection, type StatusResponse } from "./ingestStatus";
+import { PhotoImportCard } from "./photoImport";
+import { ConditionsCard, type Condition } from "./conditions";
 
 // 健康ダッシュボード（体重・体脂肪率・歩数・摂取カロリー・歩行の質の推移）。
 // データは /api/health（Supabase Edge Function `health-dashboard-data` 経由・読み取り専用）。
@@ -30,6 +32,8 @@ import { IngestAlertBanner, IngestStatusSection, type StatusResponse } from "./i
 //   /api/health/manual … 睡眠・朝の散歩・出張の手入力（health_metrics の source='manual'）
 //   /api/health/status … 取り込み状況（どの指標が・いつ・どこから入っているか）
 //   /api/health/ramen  … ramen_logs の読み取り専用（食べた日の印・平均の比較に使う）
+//   /api/health/photo-steps … 歩数計アプリのスクショから歩数を入れる（source='photo'）
+//   /api/health/conditions  … 体調の記録（health_conditions。期間つきなので別テーブル）
 //
 // 並びの意図: 医師から1日6,000歩を求められているので、歩数を体重より先に置いている。
 // 手入力カードはさらにその上（毎日いちばん触るものが最初に来る）。
@@ -141,6 +145,8 @@ export default function HealthPage() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   // ラーメン（読み取り専用）
   const [ramenLogs, setRamenLogs] = useState<RamenLog[]>([]);
+  // 体調の記録（発熱・診断名など）
+  const [conditions, setConditions] = useState<Condition[]>([]);
 
   const statusRef = useRef<HTMLDivElement>(null);
 
@@ -200,6 +206,10 @@ export default function HealthPage() {
         .then((r) => r.json())
         .then((j) => setRamenLogs(Array.isArray(j?.logs) ? j.logs : []))
         .catch(() => setRamenLogs([]));
+      fetch(`/api/health/conditions?from=${from}&to=${to}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((j) => setConditions(Array.isArray(j?.items) ? j.items : []))
+        .catch(() => setConditions([]));
     } catch {
       setError("通信エラーが発生しました");
       setData(null);
@@ -319,6 +329,33 @@ export default function HealthPage() {
     const m = status?.metrics?.find((x) => x.metric === "step_count");
     return m && m.severity === "alert" ? m.notes : null;
   }, [status]);
+
+  // 体調を崩していた日。歩数の達成率をそのまま読むと「サボった日」に見えるが、
+  // 熱で寝込んでいた日はそもそも歩けない。数字の隣に事実として置いておく。
+  const sickDays = useMemo(() => {
+    if (days.length === 0 || conditions.length === 0) return { count: 0, labels: [] as string[] };
+    const from = days[0].day;
+    const to = days[days.length - 1].day;
+    const set = new Set<string>();
+    const labels: string[] = [];
+    for (const c of conditions) {
+      const start = c.start_day < from ? from : c.start_day;
+      const end = c.end_day == null || c.end_day > to ? to : c.end_day;
+      if (start > end) continue;
+      for (let d = start; d <= end; ) {
+        set.add(d);
+        const [y, m, dd] = d.split("-").map(Number);
+        const nx = new Date(y, m - 1, dd + 1);
+        d = `${nx.getFullYear()}-${String(nx.getMonth() + 1).padStart(2, "0")}-${String(
+          nx.getDate()
+        ).padStart(2, "0")}`;
+      }
+      labels.push(
+        `${fmtDay(c.start_day)}〜${c.end_day ? fmtDay(c.end_day) : "（続いている）"} ${c.title}`
+      );
+    }
+    return { count: set.size, labels };
+  }, [days, conditions]);
 
   // 体重の目標との差。目標未設定なら null。
   const weightGoal = goals.weight_kg ?? null;
@@ -529,6 +566,23 @@ export default function HealthPage() {
               </div>
             )}
 
+            {/* 体調を崩していた日があるなら、達成率の前に事実として置く。 */}
+            {sickDays.count > 0 && (
+              <div className="mb-3 rounded-xl bg-rose-50 px-3 py-2">
+                <p className="text-xs font-semibold text-rose-900">
+                  この期間に体調を崩した日が{sickDays.count}日あります
+                </p>
+                {sickDays.labels.map((l, i) => (
+                  <p key={i} className="mt-0.5 text-xs text-rose-800">
+                    ・{l}
+                  </p>
+                ))}
+                <p className="mt-1 text-xs leading-relaxed text-rose-700">
+                  寝込んでいた日は歩けないので、下の達成率はその日数ぶん下がります。
+                </p>
+              </div>
+            )}
+
             {stepsAchievement && stepsGoal != null && (
               <div className="mb-3 grid grid-cols-3 gap-2">
                 <StatTile
@@ -620,6 +674,18 @@ export default function HealthPage() {
                 </ul>
               </div>
             )}
+
+            {/* 写メから歩数を入れる。連携が止まった期間を後から埋めるための入口。 */}
+            <PhotoImportCard
+              kind="steps"
+              title="写メから歩数を入れる"
+              hint="歩数計アプリの一覧画面を撮って送ると、日付ごとに読み取ります"
+              today={todayLocal()}
+              onSaved={() => {
+                load(rangeDays);
+                loadStatus();
+              }}
+            />
           </Section>
 
           {/* 体重・体脂肪率 */}
@@ -727,6 +793,18 @@ export default function HealthPage() {
                 valueFormat={(v) => v.toFixed(1)}
               />
             </div>
+
+            {/* 写メから体重・体脂肪率を入れる。HealthPlanetの連携が飛んだ日を後から埋める。 */}
+            <PhotoImportCard
+              kind="weight"
+              title="写メから体重・体脂肪率を入れる"
+              hint="体組成計アプリの一覧画面を撮って送ると、日付ごとに読み取ります"
+              today={todayLocal()}
+              onSaved={() => {
+                load(rangeDays);
+                loadStatus();
+              }}
+            />
           </Section>
 
           {/* 睡眠（手入力） */}
@@ -764,6 +842,13 @@ export default function HealthPage() {
               （health_metrics の source=&quot;manual&quot;）。
             </p>
           </Section>
+
+          {/* 体調の記録（発熱・診断名・違った検査） */}
+          <ConditionsCard
+            items={conditions}
+            today={todayLocal()}
+            onChanged={() => load(rangeDays)}
+          />
 
           {/* 摂取カロリーと体重の関係（ラーメンの印つき） */}
           <Section>
