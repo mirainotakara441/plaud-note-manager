@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { BriefingsSection } from "./briefings";
 
 // 月報ドラフト自動生成：暦月を選ぶと、その月の週報（weekly_reports）を集計した
 // KPIと、AIが書いた「今月を一言で」「団体別ハイライト」「来月への引き継ぎ」を
@@ -543,6 +544,10 @@ export default function MonthlyReportPage() {
           )}
         </>
       )}
+
+      {/* 上長への報告（議事メモ）。月報ドラフトの下に置き、同じ月で
+          「何をやったか」→「何を報告して何を言われたか」を続けて読めるようにする。 */}
+      <BriefingsSection month={month} />
 
       <div className="mt-8 text-center">
         <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
