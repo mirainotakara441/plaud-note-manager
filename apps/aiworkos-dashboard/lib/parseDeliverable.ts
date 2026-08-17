@@ -2,6 +2,7 @@
 // pptx/docx は OOXML = zip なので JSZip で解凍し、テキストラン(<a:t>/<w:t>)を取り出す。
 // ブラウザでもNode でも同じ JSZip で動くため、抽出ロジックは手元でも検証できる。
 import JSZip from "jszip";
+import { CHUNK_SIZE, CHUNK_OVERLAP } from "@/lib/chunks";
 
 export type Chunk = { pos: string; content: string };
 
@@ -35,11 +36,15 @@ function matchAll(xml: string, re: RegExp): string[] {
 }
 
 // 長文を文字数ウィンドウで分割(日本語想定・gte-small ~512tok に収める)。
+// size は lib/chunks.ts の CHUNK_SIZE と揃える。gte-small は日本語およそ500字で
+// 頭打ちになり、超過分は**エラーを出さずに切り捨てられる**ため、800字で刻むと
+// 各チャンクの後ろ約3割が検索に一切効かない幽霊テキストになる（2026-08-17に実測。
+// 成果物45件が500字超で、最大9,178字＝95%が検索不能だった）。
 export function windowChunks(
   text: string,
   prefix: string,
-  size = 800,
-  overlap = 100
+  size = CHUNK_SIZE,
+  overlap = CHUNK_OVERLAP
 ): Chunk[] {
   const t = text.trim();
   if (!t) return [];
