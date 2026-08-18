@@ -158,6 +158,13 @@ const LEARN_FEATURES: Feature[] = [
     accent: "bg-indigo-100 text-indigo-700",
   },
   {
+    href: "/glossary",
+    icon: "📖",
+    title: "用語集",
+    desc: "分からんかった言葉を、辞書の説明やなく「なぜ要るのか」から引く",
+    accent: "bg-violet-100 text-violet-700",
+  },
+  {
     href: "/salt2",
     icon: "🎓",
     title: "SALT2人脈DB",
