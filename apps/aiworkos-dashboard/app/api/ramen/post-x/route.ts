@@ -23,6 +23,25 @@ function contentTypeOf(path: string): string {
   return "image/jpeg";
 }
 
+// x_post_lock（排他ロック）の解除・引き渡し用。ベストエフォート
+// （ここが落ちても既に返すレスポンスは変えない。ログにだけ残す）。
+//   null                       … まだXへ投稿していない失敗。通常どおり再試行可能に戻す
+//   "post_failed_needs_review" … Xへの投稿自体は成功したが書き戻しに失敗。二重投稿防止のため止めたまま残す
+async function releaseLock(svc: { url: string; key: string }, id: number, nextLock: string | null) {
+  try {
+    const res = await fetch(`${svc.url}/rest/v1/ramen_logs?id=eq.${id}`, {
+      method: "PATCH",
+      headers: restHeaders(svc.key),
+      body: JSON.stringify({ x_post_lock: nextLock, updated_at: new Date().toISOString() }),
+    });
+    if (!res.ok) {
+      console.error("Xロック解除に失敗:", res.status, await res.text().catch(() => ""));
+    }
+  } catch (e) {
+    console.error("Xロック解除に失敗:", e);
+  }
+}
+
 export async function POST(req: NextRequest) {
   if (!(await captureAuthorized(req))) {
     return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
@@ -60,7 +79,7 @@ export async function POST(req: NextRequest) {
   }
 
   const getRes = await fetch(
-    `${anon.url}/rest/v1/ramen_logs?select=id,eaten_on,draft_x,x_url,photo_urls&id=eq.${id}`,
+    `${anon.url}/rest/v1/ramen_logs?select=id,eaten_on,draft_x,x_url,x_post_lock,photo_urls&id=eq.${id}`,
     { headers: restHeaders(anon.key), cache: "no-store" }
   );
   if (!getRes.ok) {
@@ -78,12 +97,43 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // 排他予約: 上のチェックだけだと「読んでから書くまで」の間に別リクエストが割り込める
+  // （check-then-act の隙）。x_url IS NULL かつ x_post_lock IS NULL の行だけを
+  // 'posting' へ原子的にUPDATEし、実際に更新できた行が0件なら
+  // 「別リクエストが先に取った／投稿処理中／要確認で止まっている」ため中断する。
+  // x_post_lock は投稿の排他制御専用の列で、記録全体のライフサイクルを表す
+  // 既存の status 列（captured/drafted/posted）とは別物。
+  // forceのときは既存仕様どおりガードごと飛ばして上書きする。
+  const claimFilter = force
+    ? `id=eq.${id}`
+    : `id=eq.${id}&x_url=is.null&x_post_lock=is.null`;
+  const claimRes = await fetch(`${svc.url}/rest/v1/ramen_logs?${claimFilter}`, {
+    method: "PATCH",
+    headers: restHeaders(svc.key, { Prefer: "return=representation" }),
+    body: JSON.stringify({ x_post_lock: "posting", updated_at: new Date().toISOString() }),
+  });
+  if (!claimRes.ok) {
+    return NextResponse.json({ error: `投稿予約に失敗（${claimRes.status}）` }, { status: 502 });
+  }
+  const claimedRows = await claimRes.json();
+  if (!Array.isArray(claimedRows) || claimedRows.length === 0) {
+    return NextResponse.json(
+      {
+        error: "この一杯はすでにXへ投稿済み、または投稿処理中です",
+        x_url: row.x_url ?? null,
+      },
+      { status: 409 }
+    );
+  }
+
   const text = (overrideText ?? row.draft_x ?? "").trim();
   if (!text) {
+    await releaseLock(svc, id, null);
     return NextResponse.json({ error: "X用の下書きがありません" }, { status: 400 });
   }
   // URL入りは1本$0.20（通常の13倍）になるため、事故を金額の面でも止める。
   if (/https?:\/\//i.test(text)) {
+    await releaseLock(svc, id, null);
     return NextResponse.json(
       { error: "本文にURLが含まれています。URL入りは課金単価が跳ね上がるため送信しません。" },
       { status: 400 }
@@ -106,6 +156,8 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) {
     console.error("X画像アップロード失敗:", e);
+    // まだXへは投稿していない失敗なので、ロックを戻して通常どおり再試行できるようにする。
+    await releaseLock(svc, id, null);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "写真のアップロードに失敗しました" },
       { status: 502 }
@@ -117,6 +169,8 @@ export async function POST(req: NextRequest) {
     posted = await postTweet(text, mediaIds, x);
   } catch (e) {
     console.error("X投稿失敗:", e);
+    // Xへの投稿自体が失敗している（まだ投稿されていない）ので、これも再試行可能に戻す。
+    await releaseLock(svc, id, null);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "X投稿に失敗しました" },
       { status: 502 }
@@ -131,12 +185,17 @@ export async function POST(req: NextRequest) {
       x_posted_on: row.eaten_on,
       x_posted_at: new Date().toISOString(),
       x_excerpt: text.split("\n")[0].slice(0, 120),
+      x_post_lock: null,
       updated_at: new Date().toISOString(),
     }),
   });
   if (!upd.ok) {
-    // 投稿は成功しているので、書き戻し失敗は警告にとどめてURLは返す。
+    // Xへの投稿はすでに成功している。ここで x_post_lock を null に戻すと
+    // x_url が空のまま次のリクエストが「未投稿」と見なして再投稿してしまうため、
+    // post_failed_needs_review のまま残して二重投稿を防ぎ、要人力確認とする
+    // （ベストエフォート。これ自体が失敗してもログにだけ残し、レスポンスは変えない）。
     console.error("X投稿後の書き戻し失敗:", upd.status, await upd.text().catch(() => ""));
+    await releaseLock(svc, id, "post_failed_needs_review");
     return NextResponse.json({
       ok: true,
       x_url: posted.url,

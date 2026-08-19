@@ -5,6 +5,7 @@ import { DEFAULT_MODEL, isAuthError, isLlmConfigured, llmClient } from "@/lib/ll
 import { windowChunks } from "@/lib/chunks";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 import { parseSegmentTarget } from "@/lib/categories";
+import { sha256Hex } from "@/lib/auth";
 
 // 武器生成。/agent が出した打ち手のうち「これでいく」と決めたものを受け取り、
 // 現場で使える形（想定ストーリー・想定問答・スライド構成案）に落とす。
@@ -287,8 +288,8 @@ function formatDocs(docs: MemoResult[], empty: string): string {
 
 // weaponId は決定した施策から決まるため、同じ施策で作り直す・保存し直すと上書きされ、増殖しない。
 // 生成直後の保存(POSTハンドラ)と、あとからの修正保存(save/route.ts)の両方でこの式を使う。
-export function weaponIdOf(organization: string, actions: string[]): string {
-  return `${organization}:${actions.join("|")}`.slice(0, 100);
+export async function weaponIdOf(organization: string, actions: string[]): Promise<string> {
+  return sha256Hex(`${organization}:${actions.join("|")}`);
 }
 
 /** 武器の1種類を、記憶に戻すための1本のテキストにする */
@@ -535,7 +536,7 @@ ${instruction}
     }
 
     // 作った武器を成果物として記憶へ戻す。次に /agent や /refine を開いたとき土台に入る。
-    const weaponId = weaponIdOf(organization, actions);
+    const weaponId = await weaponIdOf(organization, actions);
     const title = `${organization} ${actions[0]}${
       actions.length > 1 ? ` ほか${actions.length - 1}件` : ""
     }｜武器`;

@@ -240,6 +240,14 @@ async function replaceSections(
   retroId: string,
   draft: RetroDraft
 ): Promise<string | null> {
+  // 消す前に現状を控えておく。INSERTが失敗した時にこれで元へ戻す
+  // （POSTの新規行では常に空、PATCHの既存行では復元対象になる）。
+  const prevRes = await fetch(
+    `${c.url}/rest/v1/${SECTIONS}?retrospective_id=eq.${encodeURIComponent(retroId)}&select=category,rating,body,items,position`,
+    { headers: restHeaders(c.key) }
+  );
+  const prevRows: Record<string, unknown>[] = prevRes.ok ? await prevRes.json().catch(() => []) : [];
+
   const del = await fetch(
     `${c.url}/rest/v1/${SECTIONS}?retrospective_id=eq.${encodeURIComponent(retroId)}`,
     { method: "DELETE", headers: restHeaders(c.key) }
@@ -259,6 +267,13 @@ async function replaceSections(
   if (!ins.ok) {
     const t = await ins.text().catch(() => "");
     console.error("振り返り節の登録エラー:", ins.status, t.slice(0, 300));
+    if (prevRows.length > 0) {
+      await fetch(`${c.url}/rest/v1/${SECTIONS}`, {
+        method: "POST",
+        headers: restHeaders(c.key, { Prefer: "return=minimal" }),
+        body: JSON.stringify(prevRows.map((r) => ({ ...r, retrospective_id: retroId }))),
+      }).catch(() => undefined);
+    }
     return "節の登録に失敗しました";
   }
   return null;

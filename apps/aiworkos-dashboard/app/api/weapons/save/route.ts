@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "保存する内容がありません" }, { status: 400 });
   }
 
-  const weaponId = weaponIdOf(organization, actions);
+  const weaponId = await weaponIdOf(organization, actions);
   const resolvedTitle =
     title || `${organization} ${actions[0]}${actions.length > 1 ? ` ほか${actions.length - 1}件` : ""}｜武器`;
 

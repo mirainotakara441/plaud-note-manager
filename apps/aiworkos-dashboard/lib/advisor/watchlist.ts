@@ -27,6 +27,11 @@ export const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: numbe
   { job: "shinchoku-board", label: "盤面の随時更新", staleHours: 36 },
   // 週次バックアップは1回飛ばしたら気づきたいので8日。
   { job: "aiworkos-backup", label: "週次バックアップ", staleHours: 24 * 8 },
+  // AI基盤のgitバックアップも週次。2026-08-17にlaunchdの週次発火自体が
+  // 飛んだ（Macがスリープ/DarkWakeのままで起きず、GUIのLaunchAgentが
+  // 発火する隙が無かった）のに、aiworkos-backupと違いここが監視対象に
+  // 入っておらず誰も気づけなかった（2026-08-19判明）。同じ8日閾値で追加する。
+  { job: "ai-git-backup", label: "AI基盤の週次gitバックアップ", staleHours: 24 * 8 },
   { job: "ramen-x-followers", label: "ラーメンXのフォロワー記録", staleHours: 48 },
 ];
 

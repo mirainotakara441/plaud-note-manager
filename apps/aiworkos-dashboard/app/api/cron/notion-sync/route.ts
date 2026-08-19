@@ -26,6 +26,8 @@ import {
 // ★安全弁★ Notionから0件しか返ってこなかった場合は削除を実行しない。
 //   APIの一時障害やトークン失効で空応答になったとき、sweepが写しを全消しするのを防ぐ。
 //   「同期が失敗したら写しが空になる」のは一番タチの悪い壊れ方なので、必ず残すこと。
+//   orgsとcontactsは別々のNotionクエリで取得しているため片方だけ失敗しうる。
+//   両方0件なら全体を中断、片方だけ0件ならそのテーブルのupsert/sweepだけをスキップする。
 
 export const dynamic = "force-dynamic";
 
@@ -113,7 +115,10 @@ async function run(req: NextRequest) {
 
     // 安全弁（上記コメント参照）。取得0件は「Notionが空」より「取得に失敗した」の
     // 可能性がはるかに高いので、写しには一切手を付けずに失敗として返す。
-    if (orgs.length === 0 && contacts.length === 0) {
+    const orgsFailed = orgs.length === 0;
+    const contactsFailed = contacts.length === 0;
+
+    if (orgsFailed && contactsFailed) {
       return NextResponse.json(
         {
           error:
@@ -125,20 +130,32 @@ async function run(req: NextRequest) {
       );
     }
 
-    await upsertAll(c, "notion_organizations", orgs, runStamp);
-    await upsertAll(c, "notion_contacts", contacts, runStamp);
+    let orgDeleted = 0;
+    let contactDeleted = 0;
 
-    const orgDeleted = await sweep(c, "notion_organizations", runStamp);
-    const contactDeleted = await sweep(c, "notion_contacts", runStamp);
+    if (!orgsFailed) {
+      await upsertAll(c, "notion_organizations", orgs, runStamp);
+      orgDeleted = await sweep(c, "notion_organizations", runStamp);
+    }
+    if (!contactsFailed) {
+      await upsertAll(c, "notion_contacts", contacts, runStamp);
+      contactDeleted = await sweep(c, "notion_contacts", runStamp);
+    }
 
     return NextResponse.json({
       ok: true,
       syncedAt: runStamp,
-      organizations: { upserted: orgs.length, deleted: orgDeleted, skipped: orgSkipped },
+      organizations: {
+        upserted: orgs.length,
+        deleted: orgDeleted,
+        skipped: orgSkipped,
+        failed: orgsFailed,
+      },
       contacts: {
         upserted: contacts.length,
         deleted: contactDeleted,
         skipped: contactSkipped,
+        failed: contactsFailed,
       },
     });
   } catch (err) {
