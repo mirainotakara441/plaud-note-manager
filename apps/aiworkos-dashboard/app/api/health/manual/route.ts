@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
+import { toJstDateString } from "@/lib/date";
 
 // 手入力の健康記録（睡眠・朝の散歩・出張）。
 //
@@ -115,10 +116,7 @@ export async function PUT(req: NextRequest) {
   }
 
   // 未来の日付は事故のもとなので閉じる（前日ぶんを翌朝入れる運用は過去日なので通る）
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(
-    today.getDate()
-  ).padStart(2, "0")}`;
+  const todayStr = toJstDateString(new Date().toISOString());
   if (day > todayStr) {
     return NextResponse.json({ error: "未来の日付には記録できません" }, { status: 400 });
   }

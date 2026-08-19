@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { structured, isLlmConfigured, isAuthError, AUTH_ERROR_MESSAGE } from "@/lib/llm";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 import { correctTranscription, summarizeCorrections } from "@/lib/transcriptionDictionary";
+import { toJstDateString } from "@/lib/date";
 
 // 一行日記の断絶解消（本命）：
 //   断絶A: Claude Projects → Notion一行日記DB への転記が「週1回まとめて手動」で滞る
@@ -123,7 +124,7 @@ const DIARY_SYSTEM_PROMPT = `あなたは、富士フイルムシステムサー
 - 出力は必ず指定されたJSONスキーマに従うこと。`;
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return toJstDateString(new Date().toISOString());
 }
 
 function buildDiaryUserPrompt(text: string): string {
@@ -486,7 +487,9 @@ export async function POST(req: NextRequest) {
     results.push({
       date: e.date,
       title: e.title,
-      status: "created",
+      // Notion登録が済んでいても、記憶層(memory_chunks)への保存が失敗していれば
+      // createdとしては数えない（黙って成功扱いにすると断絶Bが再発するため）。
+      status: stored ? "created" : "error",
       notionUrl,
       reason: stored ? undefined : "Notion登録は完了しましたが、記憶(Supabase)への登録に失敗しました",
     });

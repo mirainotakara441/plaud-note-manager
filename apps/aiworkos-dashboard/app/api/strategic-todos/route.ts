@@ -157,6 +157,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `追加失敗 ${res.status}: ${t}` }, { status: 502 });
   }
   const rows = await res.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return NextResponse.json({ error: "追加結果を取得できませんでした" }, { status: 502 });
+  }
   const item = rows[0];
 
   // Supabaseへの登録は済んでいる。ここから先が失敗しても追加そのものは成功扱い。
@@ -243,6 +246,9 @@ export async function PATCH(req: NextRequest) {
     }
     const rows = await res.json();
     const updated: { notion_page_id: string | null }[] = Array.isArray(rows) ? rows : [];
+    if (updated.length === 0) {
+      return NextResponse.json({ error: "対象が見つかりません" }, { status: 404 });
+    }
 
     // 対象ページを逐次でNotionへ反映（レート制限 約3req/秒に配慮）。
     // 1件でも失敗したら全体を failed 扱いにする（部分成功を「ok」と言わないため）。
@@ -362,7 +368,10 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: `更新失敗 ${res.status}: ${t}` }, { status: 502 });
   }
   const rows = await res.json();
-  const item = rows[0] ?? null;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return NextResponse.json({ error: "対象が見つかりません" }, { status: 404 });
+  }
+  const item = rows[0];
 
   const pageId: string | null =
     typeof item?.notion_page_id === "string" && item.notion_page_id !== ""
@@ -393,8 +402,11 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: `削除失敗 ${res.status}` }, { status: 502 });
   }
   const rows = await res.json().catch(() => null);
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return NextResponse.json({ error: "対象が見つかりません" }, { status: 404 });
+  }
   const pageId: string | null =
-    Array.isArray(rows) && typeof rows[0]?.notion_page_id === "string" && rows[0].notion_page_id !== ""
+    typeof rows[0]?.notion_page_id === "string" && rows[0].notion_page_id !== ""
       ? rows[0].notion_page_id
       : null;
 

@@ -2,10 +2,11 @@
 //
 // 「タイムライン」（/api/organizations/timeline）と「タイムライン以外」
 // （/api/organizations/profile）の両方が、同じ取得ロジック・同じ名寄せルールを
-// 使えるように切り出したもの。取得元は3つ:
+// 使えるように切り出したもの。取得元は3つ、いずれも organization 完全一致（eq）:
 //   - 会議   : Edge Function org-history（memory_chunks の source_type=会議、organization 完全一致）
 //   - 成果物 : memory_chunks 直叩き（source_type=成果物、organization 完全一致）
-//   - 週報   : weekly_reports（organization ILIKE 部分一致）
+//   - 週報   : weekly_reports（organization 完全一致。2026-08-19以前はILIKE部分一致で、
+//              「横浜市」検索が「尾崎横浜市議会議員」まで拾う誤爆があった）
 //
 // memory_chunks は RLS で anon の SELECT を許可していないため必ず serviceCreds()。
 // weekly_reports / stakeholders は anon に SELECT を許可しているため anonCreds() でよい。
@@ -144,11 +145,13 @@ export async function fetchWeeklyReports(
   key: string,
   org: string
 ): Promise<WeeklyReportRow[]> {
-  // ILIKE 部分一致。encodeURIComponent は "*" をエンコードしないため、
-  // PostgREST の ilike.*pattern* ワイルドカード構文をそのまま使える。
-  const pattern = encodeURIComponent(`*${org}*`);
+  // 完全一致（eq）。org は /api/organizations が返す確定済みの団体名がそのまま
+  // 渡ってくる（自由入力ではない）ため、ILIKE部分一致にする必要が無い。
+  // 以前は ILIKE *org* を使っていたため「横浜市」で「尾崎横浜市議会議員」のような
+  // 無関係なレコードまで拾ってしまっていた（2026-08-19 総点検で報告・修正）。
+  const orgParam = encodeURIComponent(org);
   const res = await fetch(
-    `${url}/rest/v1/weekly_reports?select=id,week_start,category,organization,summary,insight,tactic,created_at&organization=ilike.${pattern}&order=week_start.desc`,
+    `${url}/rest/v1/weekly_reports?select=id,week_start,category,organization,summary,insight,tactic,created_at&organization=eq.${orgParam}&order=week_start.desc`,
     { headers: restHeaders(key), cache: "no-store" }
   );
   if (!res.ok) {

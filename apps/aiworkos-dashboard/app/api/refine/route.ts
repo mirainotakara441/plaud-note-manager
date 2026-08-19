@@ -5,6 +5,8 @@ import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { windowChunks } from "@/lib/chunks";
 import {
   categoryReadAliases,
+  isOrgCategory,
+  ORG_CATEGORIES,
   parseCategoryWideName,
   type OrgCategory,
 } from "@/lib/categories";
@@ -563,8 +565,14 @@ export async function POST(req: NextRequest) {
     if (action === "start") {
       const organization =
         typeof body.organization === "string" ? body.organization.trim() : "";
-      const category =
-        typeof body.category === "string" ? body.category : "自治体";
+      const categoryRaw = body.category;
+      if (categoryRaw !== undefined && !isOrgCategory(categoryRaw)) {
+        return NextResponse.json(
+          { error: `カテゴリーは次から選んでください: ${ORG_CATEGORIES.join(" / ")}` },
+          { status: 400 }
+        );
+      }
+      const category: OrgCategory = isOrgCategory(categoryRaw) ? categoryRaw : "自治体";
       const theme =
         typeof body.theme === "string" && body.theme.trim()
           ? body.theme.trim()

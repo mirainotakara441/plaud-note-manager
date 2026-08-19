@@ -63,11 +63,12 @@ export async function GET() {
       fetchJobs(c, `created_at=gte.${encodeURIComponent(since)}&order=created_at.desc&limit=50`),
       fetchJobs(c, `status=in.(queued,running)&order=created_at.desc&limit=50`),
     ]);
-    if (recent === null && pending === null) {
-      return NextResponse.json({ jobs: [], since, days: RECENT_DAYS });
+    if (recent === null || pending === null) {
+      console.error("GET /api/jobs: 取得失敗（fetchがエラーを返しました）");
+      return NextResponse.json({ error: "ジョブ一覧の取得に失敗しました" }, { status: 502 });
     }
     const byId = new Map<string, Record<string, unknown>>();
-    for (const row of [...(recent ?? []), ...(pending ?? [])]) {
+    for (const row of [...recent, ...pending]) {
       const id = typeof row.id === "string" ? row.id : String(row.id);
       if (!byId.has(id)) byId.set(id, row);
     }
@@ -77,7 +78,7 @@ export async function GET() {
     return NextResponse.json({ jobs, since, days: RECENT_DAYS });
   } catch (err) {
     console.error("GET /api/jobs: 取得失敗", err);
-    return NextResponse.json({ jobs: [], since, days: RECENT_DAYS });
+    return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
   }
 }
 

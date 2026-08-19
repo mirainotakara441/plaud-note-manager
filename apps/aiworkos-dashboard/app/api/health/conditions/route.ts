@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
+import { isValidCalendarDate } from "@/lib/date";
 
 // 体調の記録（health_conditions）。
 //
@@ -56,13 +57,15 @@ function cleanTags(v: unknown): string[] {
 /** 登録・更新の共通チェック。問題があればメッセージを返す。 */
 function validate(b: Body): { error: string } | { fields: Record<string, unknown> } {
   const start = b.start_day;
-  if (typeof start !== "string" || !DAY_RE.test(start)) {
+  if (typeof start !== "string" || !DAY_RE.test(start) || !isValidCalendarDate(start)) {
     return { error: "始まりの日を入れてください" };
   }
   // 終わりの日は空でよい（まだ治っていない＝継続中）
   let end: string | null = null;
   if (typeof b.end_day === "string" && b.end_day.trim() !== "") {
-    if (!DAY_RE.test(b.end_day)) return { error: "終わりの日の形式が不正です" };
+    if (!DAY_RE.test(b.end_day) || !isValidCalendarDate(b.end_day)) {
+      return { error: "終わりの日の形式が不正です" };
+    }
     if (b.end_day < start) return { error: "終わりの日が始まりの日より前になっています" };
     end = b.end_day;
   }

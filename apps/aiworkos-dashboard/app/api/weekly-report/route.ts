@@ -150,8 +150,8 @@ export async function PATCH(request: Request) {
   const [fixedSummary, fixedInsight, fixedTactic] = corrected.texts;
 
   const update: Record<string, string | null> = {};
-  if (rawSummary !== null) {
-    update.summary = fixedSummary;
+  if ("summary" in body) {
+    update.summary = rawSummary !== null ? fixedSummary : null;
   }
   if ("insight" in body) {
     update.insight = rawInsight !== null ? fixedInsight : null;
@@ -161,7 +161,7 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${id}`, {
+    const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: {
         ...headers(c.key),
@@ -178,8 +178,14 @@ export async function PATCH(request: Request) {
       );
     }
     const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return NextResponse.json(
+        { error: "更新対象の週報が見つかりません" },
+        { status: 404 }
+      );
+    }
     return NextResponse.json({
-      row: rows?.[0] ?? null,
+      row: rows[0],
       corrections: corrected.replacements,
       correctionTotal: corrected.total,
       correctionMessage: summarizeCorrections(corrected.replacements, corrected.total),

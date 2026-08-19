@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
 import { runAdvisor } from "@/lib/advisor";
 import { jstToday } from "@/lib/advisor/types";
+import { isValidCalendarDate } from "@/lib/date";
 
 // ホームの「今朝の気づき」の中身。
 //
@@ -104,8 +105,15 @@ export async function PATCH(req: NextRequest) {
     patch.dismissed_at = body.dismissed ? new Date().toISOString() : null;
   }
   const isDay = (v: unknown): v is string =>
-    typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
-  if (body.due_date === null || isDay(body.due_date)) patch.due_date = body.due_date;
+    typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && isValidCalendarDate(v);
+  if (body.due_date === null) {
+    patch.due_date = null;
+  } else if (body.due_date !== undefined) {
+    if (!isDay(body.due_date)) {
+      return NextResponse.json({ error: "期限の日付が不正です" }, { status: 400 });
+    }
+    patch.due_date = body.due_date;
+  }
 
   if (!("dismissed_at" in patch) && !("due_date" in patch)) {
     return NextResponse.json({ error: "変更する項目がありません" }, { status: 400 });

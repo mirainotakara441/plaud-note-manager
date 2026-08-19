@@ -10,6 +10,23 @@ export const dynamic = "force-dynamic";
 
 const TABLE = "home_visit_members";
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_AGE_YEARS = 120;
+
+// 形式（正規表現）だけでは `2026-02-30` のような実在しない日付や、未来日・
+// 120年以上前（入力ミスの可能性が高い）を弾けない。実在する日付かどうかは
+// UTCでの年月日往復チェックで確認する。
+function isValidBirthDate(v: string): boolean {
+  if (!DAY_RE.test(v)) return false;
+  const [y, m, d] = v.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) {
+    return false;
+  }
+  const now = new Date();
+  if (dt.getTime() > now.getTime()) return false;
+  if (y < now.getUTCFullYear() - MAX_AGE_YEARS) return false;
+  return true;
+}
 
 type Body = {
   id?: number | string;
@@ -63,6 +80,12 @@ export async function POST(req: NextRequest) {
 
   const age = toInt(body.age_manual);
   const birth = text(body.birth_date);
+  if (birth && !isValidBirthDate(birth)) {
+    return NextResponse.json(
+      { error: "生年月日が不正です（実在する日付・未来日でない・120年以内であることを確認してください）" },
+      { status: 400 }
+    );
+  }
 
   const row = {
     name,
@@ -71,8 +94,8 @@ export async function POST(req: NextRequest) {
     block: text(body.block),
     role: text(body.role),
     // 生年月日が入っていれば年齢は都度計算するので、手入力の年齢は捨てる
-    birth_date: birth && DAY_RE.test(birth) ? birth : null,
-    age_manual: birth && DAY_RE.test(birth) ? null : age != null && age >= 0 && age < 130 ? age : null,
+    birth_date: birth ?? null,
+    age_manual: birth ? null : age != null && age >= 0 && age < 130 ? age : null,
     address: text(body.address),
     note: text(body.note),
     active: body.active !== false,

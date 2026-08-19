@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
 import { homeVisitAuthorized } from "@/lib/homeVisitAuth";
+import { isValidCalendarDate } from "@/lib/date";
 
 // 訪問1回分の記録・修正・削除。
 // met は3値で持つ： null＝これからの予定 / true＝会えた / false＝会えなかった。
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
   }
 
   const visitDate = body.visit_date;
-  if (!visitDate || !DAY_RE.test(visitDate)) {
+  if (!visitDate || !DAY_RE.test(visitDate) || !isValidCalendarDate(visitDate)) {
     return NextResponse.json({ error: "日付を入れてください" }, { status: 400 });
   }
 

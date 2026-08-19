@@ -170,7 +170,7 @@ export async function POST(req: NextRequest) {
     if (!patchRes.ok) {
       const detail = await patchRes.text().catch(() => "");
       console.error("bootcamp quiz save失敗:", detail);
-      // 生成はできたので、保存に失敗しても画面には返す
+      return NextResponse.json({ error: "テストの保存に失敗しました" }, { status: 502 });
     }
 
     return NextResponse.json({ quiz });

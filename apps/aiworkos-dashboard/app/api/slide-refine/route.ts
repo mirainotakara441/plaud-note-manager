@@ -5,6 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { isLlmConfigured, structured, text as llmText } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { findTemplate, sectionNames, type SlideTemplate } from "@/lib/slideTemplates";
+import { toJstDateString } from "@/lib/date";
 
 // スライド壁打ち。/refine（対象との関係の熟成）のスライド版。
 // お題（伝えたいこと）を軸に、目的・聞き手・ゴールをAIが深掘り → スライド構成案 → 簡易ビジュアル →
@@ -76,7 +77,7 @@ const NO_FABRICATION_INSTRUCTION =
 // 知らないまま期間計算をして誤る事故が実際に起きた（例:「残り約5年」の誤り。正しくは約3年）。
 // 呼び出し時点の日付をプロンプトに明示することで、期間の言及がある場合に基準日を与える。
 function todayContext(): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toJstDateString(new Date().toISOString());
   return `【今日の日付】${today}。期間・残り年数などに言及する場合は、本文に明記された年月とこの日付から計算した場合に限り許可する。それ以外の期間・残り年数を憶測で書かないこと。`;
 }
 
@@ -305,7 +306,7 @@ async function loadMessages(
   sessionId: string
 ): Promise<Msg[]> {
   const res = await fetch(
-    `${restUrl(supabaseUrl, "slide_refine_messages")}?select=role,content&session_id=eq.${sessionId}&order=created_at.asc`,
+    `${restUrl(supabaseUrl, "slide_refine_messages")}?select=role,content&session_id=eq.${encodeURIComponent(sessionId)}&order=created_at.asc`,
     { headers: restHeaders(anonKey), cache: "no-store" }
   );
   if (!res.ok) return [];
@@ -320,19 +321,21 @@ async function saveMessage(
   sessionId: string,
   role: Msg["role"],
   content: string
-): Promise<void> {
-  await fetch(restUrl(supabaseUrl, "slide_refine_messages"), {
+): Promise<boolean> {
+  const inserted = await fetch(restUrl(supabaseUrl, "slide_refine_messages"), {
     method: "POST",
     headers: restHeaders(serviceKey),
     body: JSON.stringify({ session_id: sessionId, role, content }),
     cache: "no-store",
   });
-  await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+  if (!inserted.ok) return false;
+  const touched = await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${encodeURIComponent(sessionId)}`, {
     method: "PATCH",
     headers: restHeaders(serviceKey),
     body: JSON.stringify({ updated_at: new Date().toISOString() }),
     cache: "no-store",
   });
+  return touched.ok;
 }
 
 async function askClaude(
@@ -400,7 +403,7 @@ export async function GET(req: NextRequest) {
   if (sessionId) {
     const messages = await loadMessages(supabaseUrl, anonKey, sessionId);
     const sres = await fetch(
-      `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=purpose,slides,visuals,visual_candidates,template_id&id=eq.${sessionId}`,
+      `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=purpose,slides,visuals,visual_candidates,template_id&id=eq.${encodeURIComponent(sessionId)}`,
       { headers: restHeaders(anonKey), cache: "no-store" }
     );
     const srows = sres.ok ? await sres.json() : [];
@@ -517,12 +520,16 @@ export async function POST(req: NextRequest) {
       const baseHistory: Msg[] = [];
       if (hasBase) {
         const baseMessage = buildBaseDeckMessage(baseSlides, baseScript);
-        await saveMessage(supabaseUrl, serviceKey, session.id, "user", baseMessage);
+        if (!(await saveMessage(supabaseUrl, serviceKey, session.id, "user", baseMessage))) {
+          return NextResponse.json({ error: "既存スライドの登録に失敗しました" }, { status: 502 });
+        }
         baseHistory.push({ role: "user", content: baseMessage });
       }
 
       const reply = await askClaude(theme, baseHistory, organization, category, purpose, hasBase);
-      await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply);
+      if (!(await saveMessage(supabaseUrl, serviceKey, session.id, "assistant", reply))) {
+        return NextResponse.json({ error: "メッセージの保存に失敗しました" }, { status: 502 });
+      }
 
       return NextResponse.json({
         sessionId: session.id,
@@ -541,7 +548,7 @@ export async function POST(req: NextRequest) {
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,purpose&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,purpose&id=eq.${encodeURIComponent(sessionId)}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -553,7 +560,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "セッションが見つかりません" }, { status: 404 });
       }
 
-      await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message);
+      if (!(await saveMessage(supabaseUrl, serviceKey, sessionId, "user", message))) {
+        return NextResponse.json({ error: "メッセージの保存に失敗しました" }, { status: 502 });
+      }
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       // 既存スライドの改善モードかは、履歴のマーカーで判別する（列を増やさない方針）。
       const reply = await askClaude(
@@ -564,7 +573,9 @@ export async function POST(req: NextRequest) {
         purpose,
         hasBaseDeck(history)
       );
-      await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply);
+      if (!(await saveMessage(supabaseUrl, serviceKey, sessionId, "assistant", reply))) {
+        return NextResponse.json({ error: "メッセージの保存に失敗しました" }, { status: 502 });
+      }
 
       return NextResponse.json({ messages: await loadMessages(supabaseUrl, anonKey, sessionId) });
     }
@@ -582,7 +593,7 @@ export async function POST(req: NextRequest) {
       const requestedTemplateId =
         typeof body.templateId === "string" && body.templateId.trim() ? body.templateId.trim() : null;
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,template_id&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,template_id&id=eq.${encodeURIComponent(sessionId)}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -642,7 +653,7 @@ ${slideCountInstruction}${baseDeckInstruction}
       });
       const constraints = Array.isArray(parsed.constraints) ? parsed.constraints.filter(Boolean) : [];
 
-      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+      const outlineSaved = await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${encodeURIComponent(sessionId)}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
         body: JSON.stringify({
@@ -652,6 +663,9 @@ ${slideCountInstruction}${baseDeckInstruction}
         }),
         cache: "no-store",
       });
+      if (!outlineSaved.ok) {
+        return NextResponse.json({ error: "構成案の保存に失敗しました" }, { status: 502 });
+      }
 
       return NextResponse.json({ slides: parsed.slides, constraints, templateId: template.id });
     }
@@ -666,7 +680,7 @@ ${slideCountInstruction}${baseDeckInstruction}
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints&id=eq.${encodeURIComponent(sessionId)}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -698,12 +712,15 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
       });
       const candidates = parsed.proposals.map((p) => p.candidates);
 
-      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+      const candidatesSaved = await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${encodeURIComponent(sessionId)}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
         body: JSON.stringify({ slides, visual_candidates: candidates }),
         cache: "no-store",
       });
+      if (!candidatesSaved.ok) {
+        return NextResponse.json({ error: "図解候補の保存に失敗しました" }, { status: 502 });
+      }
 
       return NextResponse.json({ candidates });
     }
@@ -719,7 +736,7 @@ slidesと同じ順・同じ枚数で、指定のJSONスキーマで返してく�
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,constraints&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,constraints&id=eq.${encodeURIComponent(sessionId)}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -755,12 +772,15 @@ ${todayContext()}
 choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してください。`,
       });
 
-      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+      const visualsSaved = await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${encodeURIComponent(sessionId)}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
         body: JSON.stringify({ visuals: parsed.visuals }),
         cache: "no-store",
       });
+      if (!visualsSaved.ok) {
+        return NextResponse.json({ error: "ビジュアルの保存に失敗しました" }, { status: 502 });
+      }
 
       return NextResponse.json({ visuals: parsed.visuals });
     }
@@ -778,7 +798,7 @@ choicesと同じ順・同じ枚数で、指定のJSONスキーマで返してく
         : [];
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints,template_id&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints,template_id&id=eq.${encodeURIComponent(sessionId)}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -828,7 +848,7 @@ ${todayContext()}
       }
 
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints,template_id&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,constraints,template_id&id=eq.${encodeURIComponent(sessionId)}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -888,12 +908,15 @@ ${todayContext()}
       if (!purged.ok) {
         return NextResponse.json({ error: "取り消しに失敗しました" }, { status: 502 });
       }
-      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+      const titleCleared = await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${encodeURIComponent(sessionId)}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
         body: JSON.stringify({ title: null }),
         cache: "no-store",
       });
+      if (!titleCleared.ok) {
+        return NextResponse.json({ error: "取り消しに失敗しました" }, { status: 502 });
+      }
       return NextResponse.json({ retracted: true });
     }
 
@@ -904,7 +927,7 @@ ${todayContext()}
         return NextResponse.json({ error: "セッションIDが不正です" }, { status: 400 });
       }
       const sres = await fetch(
-        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,slides,visuals,constraints&id=eq.${sessionId}`,
+        `${restUrl(supabaseUrl, "slide_refine_sessions")}?select=theme,organization,category,slides,visuals,constraints&id=eq.${encodeURIComponent(sessionId)}`,
         { headers: restHeaders(anonKey), cache: "no-store" }
       );
       const srows = sres.ok ? await sres.json() : [];
@@ -932,12 +955,15 @@ ${todayContext()}
       }
 
       // 確定した一覧（削除・編集後）をセッションにも反映しておく。
-      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+      const finalizedSaved = await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${encodeURIComponent(sessionId)}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
         body: JSON.stringify({ slides, visuals }),
         cache: "no-store",
       });
+      if (!finalizedSaved.ok) {
+        return NextResponse.json({ error: "確定内容の保存に失敗しました" }, { status: 502 });
+      }
 
       const history = await loadMessages(supabaseUrl, anonKey, sessionId);
       const transcript = history
@@ -970,7 +996,7 @@ ${visualsText || "（なし）"}
 目的・聞き手・ゴール、確定した構成、ビジュアルの狙いを必ず反映し、指定のJSONスキーマで返してください。`,
       });
 
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toJstDateString(new Date().toISOString());
       const chunks = windowChunks(parsed.content);
       if (chunks.length === 0) {
         return NextResponse.json({ error: "熟成した内容が空でした" }, { status: 502 });
@@ -978,12 +1004,15 @@ ${visualsText || "（なし）"}
 
       // 同じセッションで再度「確定して登録」すると内容が変わりチャンク数がずれるので、
       // 古いチャンクを先に一掃してから積み直す（/refine の save と同じ理由）。
-      await fetch(`${supabaseUrl}/functions/v1/purge-memory`, {
+      const purgedBeforeSave = await fetch(`${supabaseUrl}/functions/v1/purge-memory`, {
         method: "POST",
         headers: { Authorization: `Bearer ${anonKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ source_id_prefix: `slide-refine:${sessionId}` }),
         cache: "no-store",
       });
+      if (!purgedBeforeSave.ok) {
+        return NextResponse.json({ error: "登録に失敗しました" }, { status: 502 });
+      }
 
       const results = await Promise.all(
         chunks.map((chunk, i) =>
@@ -1014,12 +1043,15 @@ ${visualsText || "（なし）"}
         return NextResponse.json({ error: "登録に失敗しました" }, { status: 502 });
       }
 
-      await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${sessionId}`, {
+      const titleSaved = await fetch(`${restUrl(supabaseUrl, "slide_refine_sessions")}?id=eq.${encodeURIComponent(sessionId)}`, {
         method: "PATCH",
         headers: restHeaders(serviceKey),
         body: JSON.stringify({ title: parsed.title }),
         cache: "no-store",
       });
+      if (!titleSaved.ok) {
+        return NextResponse.json({ error: "タイトルの保存に失敗しました" }, { status: 502 });
+      }
 
       return NextResponse.json({ saved: true, title: parsed.title, chunks: chunks.length });
     }

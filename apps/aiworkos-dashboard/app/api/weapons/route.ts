@@ -6,6 +6,7 @@ import { windowChunks } from "@/lib/chunks";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 import { parseSegmentTarget } from "@/lib/categories";
 import { sha256Hex } from "@/lib/auth";
+import { toJstDateString } from "@/lib/date";
 
 // 武器生成。/agent が出した打ち手のうち「これでいく」と決めたものを受け取り、
 // 現場で使える形（想定ストーリー・想定問答・スライド構成案）に落とす。
@@ -325,7 +326,7 @@ export async function savePart(
   text: string
 ): Promise<number> {
   const chunks = windowChunks(text);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toJstDateString(new Date().toISOString());
 
   // 同じ武器を作り直すとチャンク数が変わるため、この種類の前回分を一掃してから入れ直す
   await fetch(`${supabaseUrl}/functions/v1/purge-memory`, {

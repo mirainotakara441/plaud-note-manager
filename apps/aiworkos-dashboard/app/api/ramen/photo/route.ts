@@ -63,9 +63,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "画像データが空です" }, { status: 400 });
   }
 
+  // id は ramen_logs の自動採番（整数）主キー。パスに連結する前に数字のみへ絞り、
+  // "../" 等でバケット外へ出られないようにする（web側は id を送らず "unassigned" のまま使う）。
+  const rawId = body.id;
+  let idSegment = "unassigned";
+  if (rawId !== undefined && rawId !== null && rawId !== "") {
+    if (!/^\d+$/.test(String(rawId))) {
+      return NextResponse.json({ error: "idの形式が不正です" }, { status: 400 });
+    }
+    idSegment = String(rawId);
+  }
+
   const stamp = new Date().toISOString().replace(/[^\d]/g, "").slice(0, 14);
   const rand = Math.random().toString(36).slice(2, 8);
-  const path = `${body.id ?? "unassigned"}/${stamp}-${rand}.${ext}`;
+  const path = `${idSegment}/${stamp}-${rand}.${ext}`;
 
   const res = await fetch(`${c.url}/storage/v1/object/${BUCKET}/${path}`, {
     method: "POST",

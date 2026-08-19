@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
+import { toJstDateString } from "@/lib/date";
 
 // 取り込み状況（health_metrics に何が・いつ・どこから入っているか）。
 //
@@ -140,9 +141,8 @@ export async function GET(req: NextRequest) {
   const windowDays =
     Number.isFinite(rawDays) && rawDays >= 14 && rawDays <= 365 ? Math.floor(rawDays) : DEFAULT_WINDOW_DAYS;
 
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  const fromDate = new Date(today);
+  const todayStr = toJstDateString(new Date().toISOString());
+  const fromDate = new Date(`${todayStr}T00:00:00Z`);
   fromDate.setUTCDate(fromDate.getUTCDate() - (windowDays - 1));
   const from = fromDate.toISOString().slice(0, 10);
 

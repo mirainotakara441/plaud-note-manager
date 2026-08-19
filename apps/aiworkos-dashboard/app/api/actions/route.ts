@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { isValidCalendarDate } from "@/lib/date";
 
 // 「日々のToDo」= 一行日記の やってみよう(action) / 本日のポイント(point) を
 // 日付ごとに積み上げるテーブル daily_actions のCRUD。
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
   const entry_date: string | undefined = body?.entry_date;
   const kind: string | undefined = body?.kind;
   const content: string = (body?.content ?? "").trim();
-  if (!entry_date || !/^\d{4}-\d{2}-\d{2}$/.test(entry_date)) {
+  if (!entry_date || !/^\d{4}-\d{2}-\d{2}$/.test(entry_date) || !isValidCalendarDate(entry_date)) {
     return NextResponse.json({ error: "日付が不正です" }, { status: 400 });
   }
   if (kind !== "action" && kind !== "point") {
@@ -112,9 +113,22 @@ export async function PATCH(req: NextRequest) {
     if (!content) return NextResponse.json({ error: "内容が空です" }, { status: 400 });
     patch.content = content;
   }
-  const isDay = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
-  if (isDay(body.entry_date)) patch.entry_date = body.entry_date;
-  if (body.due_date === null || isDay(body.due_date)) patch.due_date = body.due_date;
+  const isDay = (v: unknown): v is string =>
+    typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && isValidCalendarDate(v);
+  if (body.entry_date !== undefined) {
+    if (!isDay(body.entry_date)) {
+      return NextResponse.json({ error: "日付が不正です" }, { status: 400 });
+    }
+    patch.entry_date = body.entry_date;
+  }
+  if (body.due_date === null) {
+    patch.due_date = null;
+  } else if (body.due_date !== undefined) {
+    if (!isDay(body.due_date)) {
+      return NextResponse.json({ error: "期限の日付が不正です" }, { status: 400 });
+    }
+    patch.due_date = body.due_date;
+  }
 
   const res = await fetch(`${c.url}/rest/v1/${TABLE}?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",

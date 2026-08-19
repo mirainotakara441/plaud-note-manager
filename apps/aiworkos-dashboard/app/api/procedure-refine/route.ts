@@ -18,6 +18,7 @@ import {
   type ProcedureItem,
   type ProcedureTemplate,
 } from "@/lib/procedureTemplates";
+import { toJstDateString } from "@/lib/date";
 
 // 提出文書 壁打ち。/slide-refine の文書版。
 // 実施理由書・実施要領書・スキーム整理など、相手方に出して判断・合意を得る文書を扱う。
@@ -95,7 +96,7 @@ const NO_FABRICATION_INSTRUCTION =
   "用語は会話に出た表記に一字一句合わせ、言い換えないこと（例:「定額小為替」を「郵便小為替」等に変えない）。";
 
 function todayContext(): string {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toJstDateString(new Date().toISOString());
   return `【今日の日付】${today}。スケジュールを書く場合、この日付と会話に出た予定日から素直に導ける範囲にとどめ、根拠のない具体日を置かないこと。`;
 }
 
@@ -887,7 +888,7 @@ ${items.map((it, i) => `${i + 1}. ${it.title}`).join("\n")}
         `${organization ? `${organization} ` : ""}${template.label}`;
 
       const markdown = procedureToMarkdown(title, items, openItems);
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toJstDateString(new Date().toISOString());
       const chunks = windowChunks(markdown);
       if (chunks.length === 0) {
         return NextResponse.json({ error: "登録する本文が空でした" }, { status: 502 });

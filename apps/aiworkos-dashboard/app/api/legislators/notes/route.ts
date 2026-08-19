@@ -72,7 +72,11 @@ export async function PUT(request: Request) {
   }
   const rows: unknown = await res.json().catch(() => null);
   const note = Array.isArray(rows) ? (rows[0] as LegislatorNote | undefined) : undefined;
-  return NextResponse.json({ note: note ?? null });
+  if (!note) {
+    console.error("議員メモ保存エラー: upsertの返り値が空でした", nameKey);
+    return NextResponse.json({ error: "手書きメモの保存に失敗しました" }, { status: 502 });
+  }
+  return NextResponse.json({ note });
 }
 
 export async function DELETE(request: Request) {

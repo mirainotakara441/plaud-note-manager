@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
 import { structured, isLlmConfigured } from "@/lib/llm";
+import { toJstDateString } from "@/lib/date";
 
 // 健康アプリのスクリーンショットを読んで health_metrics に入れる。
 // 歩数（歩数計アプリの一覧）と、体重・体脂肪率（体組成計アプリの一覧）に対応する。
@@ -197,10 +198,7 @@ function parseImage(input: unknown): { media_type: string; data: string } | null
 }
 
 function todayLocalFallback(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
+  return toJstDateString(new Date().toISOString());
 }
 
 /**

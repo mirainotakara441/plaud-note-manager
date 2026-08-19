@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { DELIVERABLE_CATEGORIES } from "@/lib/categories";
 import { correctTranscriptionMany, summarizeCorrections } from "@/lib/transcriptionDictionary";
+import { toJstDateString } from "@/lib/date";
 
 // 成果物アップロードUIから、ブラウザ側で抽出済みのテキストチャンクを受け取り、
 // store-memory Edge Function 経由で memory_chunks(source_type=成果物) に登録する。
@@ -73,10 +74,6 @@ export async function POST(req: NextRequest) {
 
   const organization =
     typeof body.organization === "string" ? body.organization.trim() : "";
-  const category =
-    typeof body.category === "string" && CATEGORIES.includes(body.category)
-      ? body.category
-      : "自治体";
   const docType = typeof body.docType === "string" ? body.docType : "";
   const title =
     typeof body.title === "string" && body.title.trim()
@@ -89,11 +86,18 @@ export async function POST(req: NextRequest) {
   const date =
     typeof body.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
       ? body.date
-      : new Date().toISOString().slice(0, 10);
+      : toJstDateString(new Date().toISOString());
 
   if (!organization) {
     return NextResponse.json({ error: "団体名を入力してください" }, { status: 400 });
   }
+  if (typeof body.category !== "string" || !CATEGORIES.includes(body.category)) {
+    return NextResponse.json(
+      { error: `カテゴリーは次から選んでください: ${CATEGORIES.join(" / ")}` },
+      { status: 400 }
+    );
+  }
+  const category = body.category;
   if (!DOC_TYPES.includes(docType)) {
     return NextResponse.json(
       { error: `種別は次から選んでください: ${DOC_TYPES.join(" / ")}` },

@@ -12,7 +12,7 @@ import {
 } from "@/lib/organizations";
 
 // 団体別攻略／タイムライン：会議（org-history）・成果物（memory_chunks 直叩き）・
-// 週報（weekly_reports、organization ILIKE 部分一致）を統合し、日付降順の
+// 週報（weekly_reports、organization 完全一致）を統合し、日付降順の
 // タイムラインとして返す。日記は search-memory の意味検索で「関連しそうな日記」
 // として別枠を返す（失敗しても他セクションに影響しないよう握りつぶす）。
 //

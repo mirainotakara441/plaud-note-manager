@@ -38,6 +38,28 @@ function cleanPaths(v: unknown): string[] {
   return v.filter((p): p is string => typeof p === "string" && isSafePhotoPath(p));
 }
 
+const MAX_COST = 10_000_000;
+
+// stars・cost は未入力なら null で通すが、値が入っているのに範囲外・非数値なら
+// 黙って null に落とさずエラーを返す（入力ミスに気づけないと評価・出費の記録が壊れる）。
+function parseStars(v: unknown): { value: number | null } | { error: string } {
+  if (v == null || v === "") return { value: null };
+  const n = toInt(v);
+  if (n == null || n < 1 || n > 5) {
+    return { error: "評価（★）は1〜5の整数で入力してください" };
+  }
+  return { value: n };
+}
+
+function parseCost(v: unknown): { value: number | null } | { error: string } {
+  if (v == null || v === "") return { value: null };
+  const n = toInt(v);
+  if (n == null || n < 0 || n > MAX_COST) {
+    return { error: `費用は0〜${MAX_COST.toLocaleString("ja-JP")}円の範囲で入力してください` };
+  }
+  return { value: n };
+}
+
 function buildRow(body: Body) {
   const title = body.title?.trim();
   if (!title) return { error: "タイトル（何をしたか）は必須です" as const };
@@ -47,7 +69,11 @@ function buildRow(body: Body) {
       ? body.happened_on
       : toJstDateString(new Date().toISOString());
 
-  const stars = toInt(body.stars);
+  const starsResult = parseStars(body.stars);
+  if ("error" in starsResult) return { error: starsResult.error };
+
+  const costResult = parseCost(body.cost);
+  if ("error" in costResult) return { error: costResult.error };
 
   return {
     row: {
@@ -61,8 +87,8 @@ function buildRow(body: Body) {
         : [],
       memo: body.memo?.trim() || null,
       highlight: body.highlight?.trim() || null,
-      stars: stars != null && stars >= 1 && stars <= 5 ? stars : null,
-      cost: toInt(body.cost),
+      stars: starsResult.value,
+      cost: costResult.value,
       photo_paths: cleanPaths(body.photo_paths),
     },
   };

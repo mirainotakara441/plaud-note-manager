@@ -82,6 +82,10 @@ export async function GET(req: NextRequest) {
   const service = serviceCreds();
   if (!anon || !service) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
 
+  // このジョブ自体の失敗を「0件でした」に化けさせないためのフラグ。
+  // 途中のどこかでfetchが失敗（!res.ok含む）したら true にし、最後の応答に反映する。
+  let hadError = false;
+
   // ①日記からの自動取込（RPCは書き込みを伴うので service role）
   let added = 0;
   try {
@@ -93,10 +97,14 @@ export async function GET(req: NextRequest) {
     if (res.ok) {
       const n = await res.json();
       added = typeof n === "number" ? n : 0;
+    } else {
+      console.error("cron/daily-todo: import_diary_actions失敗", res.status);
+      hadError = true;
     }
   } catch (err) {
     // 取込に失敗しても、通知（未完件数のお知らせ）は続行する
     console.error("cron/daily-todo: import_diary_actions失敗", err);
+    hadError = true;
   }
 
   // ②未完件数（HEADリクエスト＋Prefer:count=exactで、行本体を取らずに件数だけ得る。読み取りなのでanon）
@@ -106,11 +114,17 @@ export async function GET(req: NextRequest) {
       method: "HEAD",
       headers: restHeaders(anon.key, { Prefer: "count=exact" }),
     });
-    const range = res.headers.get("content-range"); // 例: "0-9/23"
-    remaining = range ? Number(range.split("/")[1] ?? 0) : 0;
+    if (res.ok) {
+      const range = res.headers.get("content-range"); // 例: "0-9/23"
+      remaining = range ? Number(range.split("/")[1] ?? 0) : 0;
+    } else {
+      console.error("cron/daily-todo: 未完件数の取得失敗", res.status);
+      hadError = true;
+    }
   } catch (err) {
     // 件数が取れなくても通知自体は試みる（0件表示にはしない＝下のガードで送信自体をスキップ）
     console.error("cron/daily-todo: 未完件数の取得失敗", err);
+    hadError = true;
   }
 
   // ③日記の途絶検知（source_type=日記のmax(event_date)。書き込みではないが、
@@ -129,9 +143,13 @@ export async function GET(req: NextRequest) {
       if (latest) {
         diaryStaleDays = daysBetween(jstTodayStr(), latest);
       }
+    } else {
+      console.error("cron/daily-todo: 日記の最終登録日取得失敗", res.status);
+      hadError = true;
     }
   } catch (err) {
     console.error("cron/daily-todo: 日記の最終登録日取得失敗", err);
+    hadError = true;
   }
   const diaryStale = diaryStaleDays !== null && diaryStaleDays >= DIARY_STALE_THRESHOLD_DAYS;
 
@@ -157,9 +175,13 @@ export async function GET(req: NextRequest) {
         const verdict = judgeJob(w, beats.get(w.job), now);
         if (verdict) staleAlerts.push(verdict.push);
       }
+    } else {
+      console.error("cron/daily-todo: ジョブ心拍の取得失敗", res.status);
+      hadError = true;
     }
   } catch (err) {
     console.error("cron/daily-todo: ジョブ心拍の取得失敗", err);
+    hadError = true;
   }
 
   // ④-2 Claudeスケジュールタスクの自己申告（service_health）。
@@ -183,9 +205,13 @@ export async function GET(req: NextRequest) {
           staleAlerts.push(`${w.label}が${days}日止まっています`);
         }
       }
+    } else {
+      console.error("cron/daily-todo: service_healthの取得失敗", res.status);
+      hadError = true;
     }
   } catch (err) {
     console.error("cron/daily-todo: service_healthの取得失敗", err);
+    hadError = true;
   }
 
   // ④-3 健康データの新しさ
@@ -199,17 +225,31 @@ export async function GET(req: NextRequest) {
       const rows: { day: string | null }[] = await res.json();
       const latest = rows[0]?.day ?? null;
       if (latest) healthStaleDays = daysBetween(jstTodayStr(), latest);
+    } else {
+      console.error("cron/daily-todo: 健康データの最終日取得失敗", res.status);
+      hadError = true;
     }
   } catch (err) {
     console.error("cron/daily-todo: 健康データの最終日取得失敗", err);
+    hadError = true;
   }
   if (healthStaleDays !== null && healthStaleDays >= HEALTH_STALE_THRESHOLD_DAYS) {
     staleAlerts.push(`健康データが${healthStaleDays}日ぶん未取込です`);
   }
 
   // 新規取込も無く、未完も無く、日記も自動化も滞っていなければ、静かに終わる
-  // （毎朝「0件です」を送って邪魔しない）
+  // （毎朝「0件です」を送って邪魔しない）。
+  // ただし、それが「本当に何も無かった」のか「内部のfetchが軒並み失敗して
+  // 0件に見えているだけ」なのかは区別する。後者を無言の200にしてしまうと、
+  // このジョブ自身の途絶検知役が意味を持たなくなる（このファイル冒頭のコメント参照）。
   if (added === 0 && remaining === 0 && !diaryStale && staleAlerts.length === 0) {
+    if (hadError) {
+      console.error("cron/daily-todo: 内部処理が失敗したため異常終了します");
+      return NextResponse.json(
+        { error: "内部データの取得に失敗しました（詳細はログ参照）", added, remaining, diaryStaleDays, healthStaleDays, staleAlerts },
+        { status: 502 }
+      );
+    }
     return NextResponse.json({
       added,
       remaining,
@@ -232,8 +272,8 @@ export async function GET(req: NextRequest) {
   if (!vapidPublic || !vapidPrivate) {
     errors.push("VAPIDキーが未設定です");
   } else {
-    webpush.setVapidDetails("mailto:mirainotakara441@gmail.com", vapidPublic, vapidPrivate);
     try {
+      webpush.setVapidDetails("mailto:mirainotakara441@gmail.com", vapidPublic, vapidPrivate);
       const subsRes = await fetch(`${anon.url}/rest/v1/push_subscriptions?select=endpoint,p256dh,auth`, {
         headers: restHeaders(anon.key),
       });
@@ -284,6 +324,14 @@ export async function GET(req: NextRequest) {
       console.error("push送信処理全体でエラー", e);
       errors.push(`全体エラー: ${e instanceof Error ? e.message : String(e)}`);
     }
+  }
+
+  if (hadError) {
+    console.error("cron/daily-todo: 一部の内部処理に失敗しました");
+    return NextResponse.json(
+      { added, remaining, sent, removed, errors, diaryStaleDays, healthStaleDays, staleAlerts },
+      { status: 502 }
+    );
   }
 
   return NextResponse.json({
