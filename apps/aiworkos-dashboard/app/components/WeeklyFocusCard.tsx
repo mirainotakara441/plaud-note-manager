@@ -117,7 +117,23 @@ export default function WeeklyFocusCard() {
     }
   }
 
-  if (failed) return null;
+  // 取れない日もカードの枠は残す。今週の的を書き足す窓口はここにしか無いので、
+  // 黙って消すと「書こうと思ったのに入口が無い」になる（消えた理由も分からない）。
+  if (failed) {
+    return (
+      <section className="mb-6 rounded-2xl border-2 border-indigo-200 bg-white p-4 shadow-sm">
+        <p className="text-sm font-bold text-gray-900">🎯 今週おこなうこと</p>
+        <p className="mt-1 text-sm text-gray-500">読み込めませんでした</p>
+        <button
+          type="button"
+          onClick={load}
+          className="mt-2 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-bold text-gray-600 transition active:bg-gray-50"
+        >
+          再読み込み
+        </button>
+      </section>
+    );
+  }
   if (!data) {
     return <div className="mb-6 h-[136px] animate-pulse rounded-2xl border border-gray-200 bg-gray-100" />;
   }
@@ -173,7 +189,9 @@ export default function WeeklyFocusCard() {
                     autoFocus
                     onChange={(e) => setEditText(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && editText.trim()) {
+                      // isComposing中のEnterは日本語変換の確定。ここで保存すると
+                      // 変換を確定しただけのつもりが編集終了になってしまう
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing && editText.trim()) {
                         patch(row.id, { content: editText.trim() });
                         setEditId(null);
                       }
@@ -234,7 +252,8 @@ export default function WeeklyFocusCard() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") add();
+              // 日本語変換の確定Enterで誤送信しない（isComposing中は無視）
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) add();
             }}
             disabled={adding}
             placeholder={`今週やることを書く（あと${max - items.length}件）`}

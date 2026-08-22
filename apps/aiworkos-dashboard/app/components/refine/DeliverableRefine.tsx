@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -189,6 +190,9 @@ export default function DeliverableRefine() {
     setMessages([]);
     setSaved(null);
     setCurrentClosed(false);
+    // 「対象を変える」と同じ理由で、元資料もここで消す。
+    setBaseDoc("");
+    setBaseDocName("");
   }
 
   async function send() {
@@ -311,7 +315,7 @@ export default function DeliverableRefine() {
             {loading ? "土台を読み込み中..." : "壁打ちを始める"}
           </button>
           {error && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
           )}
         </div>
       )}
@@ -338,6 +342,10 @@ export default function DeliverableRefine() {
                 setMessages([]);
                 setSaved(null);
                 setCurrentClosed(false);
+                // 元資料も必ず消す。残すと画面上は「ファイル未選択」なのに、
+                // 次の壁打ちで前の資料が土台として送られてしまう。
+                setBaseDoc("");
+                setBaseDocName("");
               }}
               className="ml-auto text-sm font-medium text-gray-500 active:opacity-70"
             >
@@ -483,12 +491,20 @@ export default function DeliverableRefine() {
           </div>
 
           {error && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
           )}
           {saved && (
-            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
-              ✅「{saved}」を成果物として登録しました。次回の提案の土台になります。
-            </p>
+            <div className="rounded-lg bg-emerald-50 px-3 py-2">
+              <p className="text-sm font-medium text-emerald-800">
+                ✅「{saved}」を成果物として登録しました。次回の提案の土台になります。
+              </p>
+              <Link
+                href="/search"
+                className="mt-1 inline-block text-sm font-medium text-emerald-700 underline active:opacity-70"
+              >
+                登録した内容を見る →
+              </Link>
+            </div>
           )}
         </div>
       )}
@@ -586,7 +602,7 @@ export default function DeliverableRefine() {
                         type="button"
                         onClick={() => askDelete(s)}
                         disabled={busy}
-                        className="text-xs font-medium text-red-600 active:opacity-70 disabled:opacity-40"
+                        className="text-xs font-medium text-rose-600 active:opacity-70 disabled:opacity-40"
                       >
                         削除
                       </button>

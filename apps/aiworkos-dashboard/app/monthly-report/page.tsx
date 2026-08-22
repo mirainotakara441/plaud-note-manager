@@ -221,9 +221,17 @@ export default function MonthlyReportPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(2.5rem,env(safe-area-inset-top))]">
       <header className="mb-6">
-        <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
-          ← ホーム
-        </Link>
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
+            ← ホーム
+          </Link>
+          <Link
+            href="/weekly-report"
+            className="text-sm font-medium text-indigo-500 active:opacity-70"
+          >
+            📅 週報ダッシュボード →
+          </Link>
+        </div>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">
           月報ドラフト自動生成
         </h1>
@@ -272,7 +280,19 @@ export default function MonthlyReportPage() {
           <div className="mb-5 flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => generate(!!report)}
+              onClick={() => {
+                // 再生成は、手直し済みドラフトもNotion側の文面も新しい生成結果で置き換える。
+                // 黙って上書きすると手直しが消えるので、既存がある時だけ確認を挟む。
+                if (
+                  report &&
+                  !window.confirm(
+                    "既存の月報を作り直します。手直しした文面は残りません。よろしいですか？"
+                  )
+                ) {
+                  return;
+                }
+                generate(!!report);
+              }}
               disabled={generating || !!draft}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition active:bg-indigo-700 disabled:opacity-40"
             >

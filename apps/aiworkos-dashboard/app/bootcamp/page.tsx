@@ -353,12 +353,26 @@ function RegisterSheet({
     }
   }
 
+  // 入力が1つでもあれば、背景タップでは閉じない（誤タップで入力が全部消えるため）。
+  // 閉じたいときは「閉じる」ボタンから明示的に閉じる。
+  const hasInput = !!(
+    topic.trim() ||
+    sourceContent.trim() ||
+    sourceUrl.trim() ||
+    notes.trim() ||
+    decisions.trim() ||
+    application.trim()
+  );
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
-      onClick={onClose}
+      onClick={() => {
+        if (hasInput) return;
+        onClose();
+      }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -711,7 +725,13 @@ function QuizPlayer({
 
       <button
         type="button"
-        onClick={onRegenerate}
+        onClick={() => {
+          // ここに来ている時点で保存済みのクイズが存在する。無確認で上書きしない。
+          if (!window.confirm("保存済みのテストを新しく作り直します。今の問題は上書きされます。よろしいですか？")) {
+            return;
+          }
+          onRegenerate();
+        }}
         disabled={regenerating}
         className="text-xs text-indigo-500 active:opacity-70 disabled:opacity-50"
       >

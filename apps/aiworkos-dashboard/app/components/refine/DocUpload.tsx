@@ -117,7 +117,7 @@ export default function DocUpload({ label, hint, onExtracted, disabled }: Props)
         )}
       </div>
       <p className="mt-1 text-xs text-gray-400">{hint}</p>
-      {err && <p className="mt-1 text-xs text-red-600">{err}</p>}
+      {err && <p className="mt-1 text-xs text-rose-600">{err}</p>}
     </div>
   );
 }

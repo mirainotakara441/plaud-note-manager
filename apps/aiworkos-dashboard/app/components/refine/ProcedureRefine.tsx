@@ -195,6 +195,12 @@ export default function ProcedureRefine() {
   );
 
   function resetToForm() {
+    // 登録前の成果（チャット・章立て）が1つでもあるうちは、確認なしで破棄しない。
+    // 登録済み（saved）からの「新しい壁打ちを始める」は成果が保存済みなので確認不要。
+    const hasUnsaved = !saved && (messages.length > 0 || items.length > 0);
+    if (hasUnsaved && !window.confirm("作り直した内容は保存されていません。破棄しますか？")) {
+      return;
+    }
     setSessionId(null);
     setStage("form");
     setMessages([]);
@@ -210,6 +216,19 @@ export default function ProcedureRefine() {
     setShowFullText(false);
     setSaved(null);
     setError(null);
+    setInput("");
+    // 入力系も初期値へ戻す。前回の団体・元資料（baseDoc）が残ったまま次の壁打ちに入ると、
+    // A市の資料を土台にB市の文書が作られる事故につながる。
+    setTheme("");
+    setBaseDoc("");
+    setBaseDocName("");
+    setTemplateId(PROCEDURE_TEMPLATES[0].id);
+    setPurposeCategory(PURPOSE_PRESETS[0]);
+    setPurposeCustom("");
+    setPeriod("");
+    setLinkTarget(false);
+    setCategory("自治体");
+    setOrganization("");
   }
 
   async function start() {
@@ -634,7 +653,7 @@ export default function ProcedureRefine() {
           >
             {loading ? "準備しています..." : "壁打ちを始める"}
           </button>
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         </div>
       )}
 
@@ -776,7 +795,7 @@ export default function ProcedureRefine() {
             </div>
           </div>
 
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         </div>
       )}
 
@@ -995,7 +1014,7 @@ export default function ProcedureRefine() {
                         type="button"
                         onClick={() => setDeleted((prev) => ({ ...prev, [i]: true }))}
                         disabled={isBusy}
-                        className="ml-auto rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 active:bg-red-50 disabled:opacity-40"
+                        className="ml-auto rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-medium text-rose-600 active:bg-rose-50 disabled:opacity-40"
                       >
                         🗑 削除
                       </button>
@@ -1050,7 +1069,7 @@ export default function ProcedureRefine() {
                 </p>
               )}
               {error && (
-                <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+                <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
               )}
             </div>
           ) : (
@@ -1077,6 +1096,12 @@ export default function ProcedureRefine() {
                   ホームに戻る
                 </Link>
               </div>
+              <Link
+                href="/search"
+                className="mt-3 inline-block text-sm font-medium text-emerald-700 underline active:opacity-70"
+              >
+                登録した内容を見る →
+              </Link>
               <p className="mt-3 text-xs leading-relaxed text-emerald-800">
                 Word化したいときは「全文をコピー」でMarkdownを持ち出し、Macの実行役（Claude
                 Code）に渡してください。
@@ -1085,12 +1110,12 @@ export default function ProcedureRefine() {
                 type="button"
                 onClick={retractSave}
                 disabled={retracting}
-                className="mt-3 text-xs font-medium text-red-600 underline decoration-dotted active:opacity-70 disabled:opacity-40"
+                className="mt-3 text-xs font-medium text-rose-600 underline decoration-dotted active:opacity-70 disabled:opacity-40"
               >
                 {retracting ? "取り消しています..." : "この登録を取り消す（記憶から削除）"}
               </button>
               {error && (
-                <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+                <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
               )}
             </div>
           )}

@@ -284,7 +284,11 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
                   <button
                     type="button"
                     disabled={busy !== null}
-                    onClick={() => call("/api/ramen/post-x", { id: log.id }, "x")}
+                    onClick={() => {
+                      // 公開かつ取り消せない操作。隣がコピーボタンなので、押し間違いをここで止める。
+                      if (!window.confirm("この本文と写真をXへ公開します。取り消せません。")) return;
+                      call("/api/ramen/post-x", { id: log.id }, "x");
+                    }}
                     className="rounded-full bg-violet-600 px-3 py-1 text-xs font-bold text-white active:scale-95 disabled:opacity-50"
                   >
                     {busy === "x" ? "投稿中…" : "Xへ投稿"}
@@ -608,8 +612,17 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
   );
 }
 
-function MonthlyDrafts({ months }: { months: string[] }) {
-  const [month, setMonth] = useState(months[0] ?? "");
+// month は同一ページ下部の月セレクトと同じ状態（ページ側で1つに持つ）。
+// ここに別のuseStateを置くと「上で選んだ月」と「下で選んだ月」がズレる。
+function MonthlyDrafts({
+  months,
+  month,
+  onMonthChange,
+}: {
+  months: string[];
+  month: string;
+  onMonthChange: (m: string) => void;
+}) {
   const [drafts, setDrafts] = useState<Record<string, string> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -640,7 +653,7 @@ function MonthlyDrafts({ months }: { months: string[] }) {
       <div className="flex items-center gap-2">
         <select
           value={month}
-          onChange={(e) => setMonth(e.target.value)}
+          onChange={(e) => onMonthChange(e.target.value)}
           className="rounded-xl border border-gray-200 px-3 py-2 text-sm"
         >
           {months.map((m) => (
@@ -687,6 +700,7 @@ export default function RamenPage() {
   const [month, setMonth] = useState<string>("");
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       const res = await fetch("/api/ramen", { cache: "no-store" });
       const d = await res.json();
@@ -784,7 +798,14 @@ export default function RamenPage() {
 
       {error && (
         <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-          {error}
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={load}
+            className="mt-2 rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white active:scale-95"
+          >
+            再読み込み
+          </button>
         </div>
       )}
 
@@ -795,6 +816,10 @@ export default function RamenPage() {
           ))}
         </div>
       )}
+
+      {/* 記録0件や取得失敗の日でも「一杯を記録する」だけは失わないよう、
+          一覧の条件分岐の外でも出す（一覧がある時は従来どおり積み上げの下に出る）。 */}
+      {!loading && (!items || items.length === 0) && <CaptureForm onSaved={load} />}
 
       {items && items.length > 0 && (
         <>
@@ -874,7 +899,7 @@ export default function RamenPage() {
             </Section>
           )}
 
-          <MonthlyDrafts months={months} />
+          <MonthlyDrafts months={months} month={month} onMonthChange={setMonth} />
 
           <div className="mb-3 mt-8 flex flex-wrap items-center gap-2">
             <select

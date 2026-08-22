@@ -329,17 +329,18 @@ function NoteEditor({
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+  // 保存/削除の成功バッジ（同じ枠に「保存しました」「削除しました」を出す）
+  const [flash, setFlash] = useState<string | null>(null);
 
   // 団体・セクションを切り替えたときは呼び出し側の key で作り直されるため、
   // ここで編集状態をリセットする必要はない（リセットすると保存直後の
   // 「保存しました」表示まで消えてしまう）。
 
   useEffect(() => {
-    if (savedAt === null) return;
-    const timer = setTimeout(() => setSavedAt(null), 3000);
+    if (flash === null) return;
+    const timer = setTimeout(() => setFlash(null), 3000);
     return () => clearTimeout(timer);
-  }, [savedAt]);
+  }, [flash]);
 
   function startEditing() {
     setDraft(note?.content ?? "");
@@ -359,13 +360,21 @@ function NoteEditor({
     setBusy(false);
     if (ok) {
       setEditing(false);
-      setSavedAt(Date.now());
+      setFlash("保存しました");
     } else {
       setError("保存に失敗しました。通信状況を確認してもう一度お試しください。");
     }
   }
 
   async function handleDelete() {
+    // 「取消」の真横にあるボタンなので、誤タップで即消えないよう必ず確認を挟む
+    if (
+      !window.confirm(
+        `「${section}」の手書きメモを削除します。元に戻せません。よろしいですか？`
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
     const ok = await onDelete(section);
@@ -373,6 +382,7 @@ function NoteEditor({
     if (ok) {
       setEditing(false);
       setDraft("");
+      setFlash("削除しました");
     } else {
       setError("削除に失敗しました。");
     }
@@ -385,9 +395,9 @@ function NoteEditor({
           手書きメモ
         </span>
         <span className="text-xs text-amber-800">吉井さんが書いた「{section}」</span>
-        {savedAt !== null && (
+        {flash !== null && (
           <span className="ml-auto text-xs font-semibold text-emerald-700">
-            保存しました
+            {flash}
           </span>
         )}
       </div>
@@ -410,7 +420,7 @@ function NoteEditor({
               type="button"
               onClick={handleSave}
               disabled={busy}
-              className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white active:opacity-70 disabled:opacity-50"
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white active:opacity-70 disabled:opacity-50"
             >
               {busy ? "保存中…" : "保存"}
             </button>
@@ -430,7 +440,7 @@ function NoteEditor({
                 type="button"
                 onClick={handleDelete}
                 disabled={busy}
-                className="ml-auto text-sm font-medium text-red-600 active:opacity-70 disabled:opacity-50"
+                className="ml-auto text-sm font-medium text-rose-600 active:opacity-70 disabled:opacity-50"
               >
                 削除
               </button>
@@ -471,7 +481,7 @@ function NoteEditor({
         </div>
       )}
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-2 text-sm text-rose-600">{error}</p>}
     </section>
   );
 }
@@ -709,7 +719,7 @@ function InfluencePersonChip({ person }: { person: InfluencePerson }) {
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-sm font-bold text-gray-900">{person.name}</span>
         {person.flag && (
-          <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[0.625rem] font-semibold text-rose-700">
+          <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-rose-700">
             {person.flag}
           </span>
         )}
@@ -723,7 +733,7 @@ function InfluencePersonChip({ person }: { person: InfluencePerson }) {
 function RelationArrow({ relation }: { relation: string }) {
   return (
     <span className="flex shrink-0 flex-col items-center px-0.5 text-gray-400">
-      <span className="text-[0.625rem] font-semibold leading-none text-gray-500">
+      <span className="text-xs font-semibold leading-none text-gray-500">
         {relation}
       </span>
       <svg width="44" height="10" viewBox="0 0 44 10" aria-hidden="true" className="mt-0.5">
@@ -785,7 +795,7 @@ function InfluenceEdgeRow({
           type="button"
           onClick={() => onDelete(edge.id)}
           disabled={busy}
-          className="ml-auto text-xs font-medium text-red-600 active:opacity-70 disabled:opacity-50"
+          className="ml-auto text-xs font-medium text-rose-600 active:opacity-70 disabled:opacity-50"
         >
           削除
         </button>
@@ -807,10 +817,19 @@ function Spinner({ label }: { label: string }) {
   );
 }
 
-function ErrorBox({ message }: { message: string }) {
+function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+    <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
       {message}
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 block rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-sm font-semibold text-rose-700 active:opacity-70"
+        >
+          もう一度読み込む
+        </button>
+      )}
     </div>
   );
 }
@@ -828,6 +847,8 @@ function OrganizationsInner() {
 
   const [orgs, setOrgs] = useState<Organization[] | null>(null);
   const [orgsError, setOrgsError] = useState<string | null>(null);
+  // 取得失敗時に「再試行」で fetch し直すためのキー
+  const [orgsReloadKey, setOrgsReloadKey] = useState(0);
 
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -858,6 +879,7 @@ function OrganizationsInner() {
     let active = true;
     (async () => {
       try {
+        setOrgsError(null);
         const res = await fetch("/api/organizations?include=weekly", {
           cache: "no-store",
         });
@@ -881,7 +903,7 @@ function OrganizationsInner() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [orgsReloadKey]);
 
   const loadProfile = useCallback(async (org: string) => {
     setProfileLoading(true);
@@ -1044,6 +1066,14 @@ function OrganizationsInner() {
   }, []);
 
   const deleteEdge = useCallback(async (id: string) => {
+    // 目視で確定した営業インテリジェンスが根拠メモごと消えるため、必ず確認を挟む
+    if (
+      !window.confirm(
+        "この関係の線を削除します。根拠メモも一緒に消えます。元に戻せません。よろしいですか？"
+      )
+    ) {
+      return;
+    }
     setEdgeBusyId(id);
     try {
       const res = await fetch(
@@ -1259,7 +1289,17 @@ function OrganizationsInner() {
 
   function renderInfluenceTab() {
     if (influenceLoading) return <Spinner label="影響力マップを読み込み中…" />;
-    if (!influence && influenceError) return <ErrorBox message={influenceError} />;
+    if (!influence && influenceError)
+      return (
+        <ErrorBox
+          message={influenceError}
+          onRetry={() => {
+            // 取得済みガードを倒してから effect に再fetchさせる
+            setInfluenceError(null);
+            setInfluenceRequestedFor(null);
+          }}
+        />
+      );
     if (!influence) return null;
 
     // 下書き（要確認）を上に出し、確認待ちが埋もれないようにする。
@@ -1288,7 +1328,7 @@ function OrganizationsInner() {
           {extractMessage && (
             <p className="mt-2 text-sm font-medium text-emerald-700">{extractMessage}</p>
           )}
-          {influenceError && <p className="mt-2 text-sm text-red-600">{influenceError}</p>}
+          {influenceError && <p className="mt-2 text-sm text-rose-600">{influenceError}</p>}
         </section>
 
         <BlockCard title="人物" hint="人脈DB（Notionの写し）から">
@@ -1333,7 +1373,17 @@ function OrganizationsInner() {
 
   function renderTimelineTab() {
     if (timelineLoading) return <Spinner label="タイムラインを読み込み中…" />;
-    if (timelineError) return <ErrorBox message={timelineError} />;
+    if (timelineError)
+      return (
+        <ErrorBox
+          message={timelineError}
+          onRetry={() => {
+            // 取得済みガードを倒してから effect に再fetchさせる
+            setTimelineError(null);
+            setTimelineRequestedFor(null);
+          }}
+        />
+      );
     if (!timeline) return null;
     return (
       <div className="space-y-8">
@@ -1374,9 +1424,17 @@ function OrganizationsInner() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
       <header className="mb-6">
-        <Link href="/" className="text-sm font-medium text-indigo-600 active:opacity-70">
-          ← ホーム
-        </Link>
+        <div className="flex items-center justify-between">
+          <Link href="/" className="text-sm font-medium text-indigo-600 active:opacity-70">
+            ← ホーム
+          </Link>
+          <Link
+            href="/legislators"
+            className="text-sm font-medium text-indigo-600 active:opacity-70"
+          >
+            🏛️ 議員リスト →
+          </Link>
+        </div>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">
           団体別攻略
         </h1>
@@ -1393,7 +1451,13 @@ function OrganizationsInner() {
         {/* チップは PC でもスマホでも押しやすいよう、折り返し・十分な余白で並べる */}
         <div className="mt-2 flex flex-wrap gap-2">
           {!orgs ? (
-            <span className="text-sm text-gray-400">読み込み中...</span>
+            orgsError ? (
+              <span className="text-sm text-rose-600">
+                団体一覧を読み込めませんでした
+              </span>
+            ) : (
+              <span className="text-sm text-gray-400">読み込み中...</span>
+            )
           ) : genreCounts.length === 0 ? (
             <span className="text-sm text-gray-400">団体がまだ登録されていません</span>
           ) : (
@@ -1467,7 +1531,9 @@ function OrganizationsInner() {
         >
           <option value="">
             {!orgs
-              ? "読み込み中..."
+              ? orgsError
+                ? "団体一覧を取得できませんでした"
+                : "読み込み中..."
               : !activeGenre
                 ? "先にジャンルを選んでください"
                 : "団体を選んでください"}
@@ -1478,7 +1544,14 @@ function OrganizationsInner() {
             </option>
           ))}
         </select>
-        {orgsError && <p className="mt-2 text-sm text-red-600">{orgsError}</p>}
+        {orgsError && (
+          <div className="mt-2">
+            <ErrorBox
+              message={orgsError}
+              onRetry={() => setOrgsReloadKey((k) => k + 1)}
+            />
+          </div>
+        )}
       </div>
 
       {!selected && (

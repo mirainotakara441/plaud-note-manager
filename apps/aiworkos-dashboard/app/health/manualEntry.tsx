@@ -179,13 +179,17 @@ export function ManualEntryCard({
 
       {/* 朝の散歩・出張: トグル1つ = 1タップ */}
       <div className="space-y-2">
+        {/* 入っている状態での再タップは「記録を消す」操作なので、無言で消さず確認を挟む */}
         <ToggleRow
           label="朝の散歩"
           emoji="🚶"
           on={walked}
           busy={busy === "morning_walk"}
           onColor="emerald"
-          onToggle={() => save("morning_walk", walked ? null : 1)}
+          onToggle={() => {
+            if (walked && !window.confirm(`${fmtDay(day, true)}の「朝の散歩」の記録を消します。よろしいですか？`)) return;
+            save("morning_walk", walked ? null : 1);
+          }}
         />
         <ToggleRow
           label="出張"
@@ -193,7 +197,10 @@ export function ManualEntryCard({
           on={tripped}
           busy={busy === "business_trip"}
           onColor="sky"
-          onToggle={() => save("business_trip", tripped ? null : 1)}
+          onToggle={() => {
+            if (tripped && !window.confirm(`${fmtDay(day, true)}の「出張」の記録を消します。よろしいですか？`)) return;
+            save("business_trip", tripped ? null : 1);
+          }}
         />
       </div>
 
@@ -213,7 +220,12 @@ export function ManualEntryCard({
                 key={v}
                 type="button"
                 disabled={busy === "sleep_hours"}
-                onClick={() => save("sleep_hours", on ? null : v)}
+                // 同じ値の再タップは何もしない（以前は無言で記録が消えていた）。
+                // 消したいときは「その他」の中の「記録を消す」から。
+                onClick={() => {
+                  if (on) return;
+                  save("sleep_hours", v);
+                }}
                 aria-pressed={on}
                 className={`min-h-[2.75rem] rounded-lg text-sm font-semibold tabular-nums transition active:scale-95 disabled:opacity-50 ${
                   on ? "bg-amber-500 text-white" : "bg-white text-gray-700 ring-1 ring-gray-200"
@@ -263,7 +275,10 @@ export function ManualEntryCard({
             {sleep != null && (
               <button
                 type="button"
-                onClick={() => save("sleep_hours", null)}
+                onClick={() => {
+                  if (!window.confirm(`${fmtDay(day, true)}の睡眠の記録（${sleep}時間）を消します。よろしいですか？`)) return;
+                  save("sleep_hours", null);
+                }}
                 className="ml-auto text-sm text-rose-600 active:opacity-70"
               >
                 記録を消す

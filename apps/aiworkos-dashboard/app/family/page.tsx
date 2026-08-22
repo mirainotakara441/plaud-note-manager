@@ -407,13 +407,29 @@ function LogCard({ log, onDeleted }: { log: Log; onDeleted: () => void }) {
   const [zoom, setZoom] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const remove = async () => {
     setBusy(true);
-    const res = await fetch(`/api/family/capture?id=${log.id}`, { method: "DELETE" });
-    setBusy(false);
-    setConfirming(false);
-    if (res.ok) onDeleted();
+    setRemoveError(null);
+    try {
+      const res = await fetch(`/api/family/capture?id=${log.id}`, { method: "DELETE" });
+      if (res.ok) {
+        onDeleted();
+      } else {
+        const json = await res.json().catch(() => ({}));
+        setRemoveError(
+          typeof json?.error === "string"
+            ? `削除できませんでした：${json.error}`
+            : `削除できませんでした（${res.status}）`
+        );
+      }
+    } catch {
+      setRemoveError("通信エラーで削除できませんでした。接続を確認してください。");
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
   };
 
   return (
@@ -525,12 +541,18 @@ function LogCard({ log, onDeleted }: { log: Log; onDeleted: () => void }) {
           <button
             type="button"
             onClick={() => setConfirming(true)}
-            className="ml-auto text-xs text-gray-300 active:opacity-70"
+            className="ml-auto text-xs text-rose-600 active:opacity-70"
           >
             削除
           </button>
         )}
       </div>
+
+      {removeError && (
+        <p className="mt-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {removeError}
+        </p>
+      )}
 
       {zoom && (
         <div

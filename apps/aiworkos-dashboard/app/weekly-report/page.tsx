@@ -206,6 +206,13 @@ export default function WeeklyReportPage() {
   }, [fetchStatus, statusWeeks]);
 
   function goToWeek(week: string) {
+    // 編集中に週を移動すると load() で行が入れ替わり、編集内容が黙って消える。
+    // 週送り・帯タップ・日付指定のすべてがここを通るので、確認はこの1か所に置く。
+    if (editingId !== null) {
+      if (!window.confirm("編集中の内容が消えます。週を移動しますか？")) return;
+      setEditingId(null);
+      setEditError(null);
+    }
     load(week);
   }
 
@@ -408,9 +415,17 @@ export default function WeeklyReportPage() {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(2.5rem,env(safe-area-inset-top))]">
       <header className="mb-6">
-        <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
-          ← ホーム
-        </Link>
+        <div className="flex items-center justify-between gap-2">
+          <Link href="/" className="text-sm text-indigo-500 active:opacity-70">
+            ← ホーム
+          </Link>
+          <Link
+            href="/monthly-report"
+            className="text-sm font-medium text-indigo-500 active:opacity-70"
+          >
+            📊 月報 →
+          </Link>
+        </div>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">
           週報ダッシュボード
         </h1>
@@ -442,7 +457,7 @@ export default function WeeklyReportPage() {
         </div>
 
         {statusError && (
-          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+          <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm leading-relaxed text-rose-700">
             {statusError}
           </p>
         )}
@@ -480,7 +495,7 @@ export default function WeeklyReportPage() {
                           ? "bg-emerald-100 text-emerald-700"
                           : entry.isCurrentWeek
                             ? "bg-gray-200 text-gray-500"
-                            : "bg-red-50 text-red-600"
+                            : "bg-rose-50 text-rose-600"
                       }`}
                     >
                       {entry.registered ? `済 ${entry.count}` : "未"}
@@ -525,7 +540,7 @@ export default function WeeklyReportPage() {
             </p>
 
             {postError && (
-              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+              <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm leading-relaxed text-rose-700">
                 {postError}
               </p>
             )}

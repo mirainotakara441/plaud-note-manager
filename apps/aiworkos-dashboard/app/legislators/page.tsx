@@ -215,7 +215,7 @@ function SiteBadges({ candidate }: { candidate: Candidate }) {
 function MunicipalityRefsLine({ refs }: { refs: MunicipalityRefs }) {
   if (refs.rosterLabels.length === 0 && refs.minutesLabels.length === 0) return null;
   return (
-    <p className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs leading-relaxed text-gray-500">
+    <p className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm leading-relaxed text-gray-500">
       {refs.rosterLabels.length > 0 && (
         <span>
           <span className="font-bold text-gray-400">議会HPの名簿：</span>
@@ -250,6 +250,8 @@ function ContactStateBadge({ hasContact }: { hasContact: boolean }) {
 // ---------------------------------------------------------------------------
 
 // 自動導出（週報・記憶・戦略ToDo）と混ざらないよう、手書きメモは琥珀色で区別する。
+// onSave / onDelete は成功なら null、失敗なら表示用のエラーメッセージを返す
+// （APIの error を握り潰さず、そのまま画面に出すため）。
 function NoteEditor({
   nameKey,
   note,
@@ -258,20 +260,21 @@ function NoteEditor({
 }: {
   nameKey: string;
   note: LegislatorNote | null;
-  onSave: (nameKey: string, content: string) => Promise<boolean>;
-  onDelete: (nameKey: string) => Promise<boolean>;
+  onSave: (nameKey: string, content: string) => Promise<string | null>;
+  onDelete: (nameKey: string) => Promise<string | null>;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+  // 保存/削除の成功バッジ（同じ枠に「保存しました」「削除しました」を出す）
+  const [flash, setFlash] = useState<string | null>(null);
 
   useEffect(() => {
-    if (savedAt === null) return;
-    const timer = setTimeout(() => setSavedAt(null), 3000);
+    if (flash === null) return;
+    const timer = setTimeout(() => setFlash(null), 3000);
     return () => clearTimeout(timer);
-  }, [savedAt]);
+  }, [flash]);
 
   async function handleSave() {
     const content = draft.trim();
@@ -281,26 +284,33 @@ function NoteEditor({
     }
     setBusy(true);
     setError(null);
-    const ok = await onSave(nameKey, content);
+    const err = await onSave(nameKey, content);
     setBusy(false);
-    if (ok) {
+    if (err === null) {
       setEditing(false);
-      setSavedAt(Date.now());
+      setFlash("保存しました");
     } else {
-      setError("保存に失敗しました。通信状況を確認してもう一度お試しください。");
+      setError(err);
     }
   }
 
   async function handleDelete() {
+    // 「取消」の真横にあるボタンなので、誤タップで即消えないよう必ず確認を挟む
+    if (
+      !window.confirm("この議員の手書きメモを削除します。元に戻せません。よろしいですか？")
+    ) {
+      return;
+    }
     setBusy(true);
     setError(null);
-    const ok = await onDelete(nameKey);
+    const err = await onDelete(nameKey);
     setBusy(false);
-    if (ok) {
+    if (err === null) {
       setEditing(false);
       setDraft("");
+      setFlash("削除しました");
     } else {
-      setError("削除に失敗しました。");
+      setError(err);
     }
   }
 
@@ -311,8 +321,8 @@ function NoteEditor({
           手書きメモ
         </span>
         <span className="text-xs text-amber-800">この議員について自分で書いておくこと</span>
-        {savedAt !== null && (
-          <span className="ml-auto text-xs font-semibold text-emerald-700">保存しました</span>
+        {flash !== null && (
+          <span className="ml-auto text-xs font-semibold text-emerald-700">{flash}</span>
         )}
       </div>
 
@@ -352,7 +362,7 @@ function NoteEditor({
                 type="button"
                 onClick={handleDelete}
                 disabled={busy}
-                className="ml-auto text-sm font-medium text-red-600 active:opacity-70 disabled:opacity-50"
+                className="ml-auto text-sm font-medium text-rose-600 active:opacity-70 disabled:opacity-50"
               >
                 削除
               </button>
@@ -387,7 +397,7 @@ function NoteEditor({
         </div>
       )}
 
-      {error && <p className="mt-2 text-sm font-medium text-red-600">{error}</p>}
+      {error && <p className="mt-2 text-sm font-medium text-rose-600">{error}</p>}
     </section>
   );
 }
@@ -451,8 +461,8 @@ function Detail({
   legislator: Legislator;
   note: LegislatorNote | null;
   onBack: () => void;
-  onSave: (nameKey: string, content: string) => Promise<boolean>;
-  onDelete: (nameKey: string) => Promise<boolean>;
+  onSave: (nameKey: string, content: string) => Promise<string | null>;
+  onDelete: (nameKey: string) => Promise<string | null>;
 }) {
   const l = legislator;
   // 本人名で当たった記録と、所属議連の名前で当たった記録は混ぜない
@@ -580,7 +590,7 @@ function Detail({
           <h3 className="text-sm font-bold text-slate-700">
             🏛 所属議連・勉強会としての記録（参考） {groupHistory.length + groupPlans.length}件
           </h3>
-          <p className="mt-1 text-xs leading-relaxed text-slate-500">
+          <p className="mt-1 text-sm leading-relaxed text-slate-500">
             本人の名前ではなく、所属している議連・勉強会の名前で拾った記録です。
             この方が主語とは限らないので、参考として分けています。
           </p>
@@ -617,8 +627,8 @@ function CandidateDetail({
   candidate: Candidate;
   note: LegislatorNote | null;
   onBack: () => void;
-  onSave: (nameKey: string, content: string) => Promise<boolean>;
-  onDelete: (nameKey: string) => Promise<boolean>;
+  onSave: (nameKey: string, content: string) => Promise<string | null>;
+  onDelete: (nameKey: string) => Promise<string | null>;
 }) {
   const c = candidate;
   return (
@@ -727,7 +737,7 @@ function CandidateCard({
       <div className="mt-2">
         <SiteBadges candidate={c} />
       </div>
-      {c.memo && <p className="mt-1.5 text-xs leading-relaxed text-gray-500">{c.memo}</p>}
+      {c.memo && <p className="mt-1.5 text-sm leading-relaxed text-gray-500">{c.memo}</p>}
     </li>
   );
 }
@@ -914,37 +924,61 @@ export default function LegislatorsPage() {
     [data]
   );
 
-  const saveNote = useCallback(async (nameKey: string, content: string) => {
-    const res = await fetch("/api/legislators/notes", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name_key: nameKey, content }),
-    }).catch(() => null);
-    if (!res || !res.ok) return false;
-    const body = (await res.json().catch(() => null)) as { note?: LegislatorNote } | null;
-    const note = body?.note;
-    if (!note) return false;
-    setData((prev) =>
-      prev
-        ? {
-            ...prev,
-            notes: [...prev.notes.filter((n) => n.name_key !== nameKey), note],
-          }
-        : prev
-    );
-    return true;
-  }, []);
+  // 成功なら null、失敗なら表示用のエラーメッセージを返す。
+  // 通信エラーとAPIエラーを区別して、APIが返した error はそのまま画面に出す。
+  const saveNote = useCallback(
+    async (nameKey: string, content: string): Promise<string | null> => {
+      try {
+        const res = await fetch("/api/legislators/notes", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name_key: nameKey, content }),
+        });
+        const body = (await res.json().catch(() => null)) as
+          | { note?: LegislatorNote; error?: unknown }
+          | null;
+        if (!res.ok) {
+          return typeof body?.error === "string"
+            ? `保存に失敗しました：${body.error}`
+            : "保存に失敗しました。通信状況を確認してもう一度お試しください。";
+        }
+        const note = body?.note;
+        if (!note) return "保存結果を読み取れませんでした。";
+        setData((prev) =>
+          prev
+            ? {
+                ...prev,
+                notes: [...prev.notes.filter((n) => n.name_key !== nameKey), note],
+              }
+            : prev
+        );
+        return null;
+      } catch {
+        return "通信エラーで保存できませんでした。接続を確認してください。";
+      }
+    },
+    []
+  );
 
-  const deleteNote = useCallback(async (nameKey: string) => {
-    const res = await fetch(
-      `/api/legislators/notes?name=${encodeURIComponent(nameKey)}`,
-      { method: "DELETE" }
-    ).catch(() => null);
-    if (!res || !res.ok) return false;
-    setData((prev) =>
-      prev ? { ...prev, notes: prev.notes.filter((n) => n.name_key !== nameKey) } : prev
-    );
-    return true;
+  const deleteNote = useCallback(async (nameKey: string): Promise<string | null> => {
+    try {
+      const res = await fetch(
+        `/api/legislators/notes?name=${encodeURIComponent(nameKey)}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        return typeof body?.error === "string"
+          ? `削除に失敗しました：${body.error}`
+          : "削除に失敗しました。";
+      }
+      setData((prev) =>
+        prev ? { ...prev, notes: prev.notes.filter((n) => n.name_key !== nameKey) } : prev
+      );
+      return null;
+    } catch {
+      return "通信エラーで削除できませんでした。接続を確認してください。";
+    }
   }, []);
 
   const selected =
@@ -958,9 +992,15 @@ export default function LegislatorsPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(1.5rem,env(safe-area-inset-top))]">
-      <div className="mb-4">
+      <div className="mb-4 flex items-center justify-between">
         <Link href="/" className="text-sm font-medium text-indigo-600 active:opacity-70">
           ← ホーム
+        </Link>
+        <Link
+          href="/organizations"
+          className="text-sm font-medium text-indigo-600 active:opacity-70"
+        >
+          🧭 団体別攻略 →
         </Link>
       </div>
 
@@ -973,7 +1013,7 @@ export default function LegislatorsPage() {
       </header>
 
       {error && (
-        <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+        <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
           {error}
         </p>
       )}
@@ -1206,7 +1246,7 @@ function UnmatchedSection({ unmatched }: { unmatched: UnmatchedRecord[] }) {
       <summary className="cursor-pointer text-sm font-bold text-gray-600">
         どの議員にも紐付かなかった記録 {unmatched.length}件
       </summary>
-      <p className="mt-2 text-xs leading-relaxed text-gray-500">
+      <p className="mt-2 text-sm leading-relaxed text-gray-500">
         週報・戦略ToDoに「議員」として書かれているのに、人脈DBの誰とも突合できなかった記録です。
         名簿の抜け（Notionに未登録の議員）を見つける手がかりになります。
       </p>

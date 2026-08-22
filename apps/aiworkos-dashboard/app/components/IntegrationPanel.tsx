@@ -52,16 +52,21 @@ export default function IntegrationPanel() {
   const [since, setSince] = useState<string | null>(null);
   const [enqueuing, setEnqueuing] = useState<Job["kind"] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 一覧取得の失敗と「本当に0件」は必ず区別する。失敗を黙って0件に見せると、
+  // 「さっき押した取込が消えた」と思ってもう一度押し、二重注文になる。
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const loadJobs = useCallback(async () => {
     try {
       const res = await fetch("/api/jobs", { cache: "no-store" });
+      if (!res.ok) throw new Error(`status ${res.status}`);
       const data = await res.json();
       setJobs(Array.isArray(data?.jobs) ? data.jobs : []);
       if (typeof data?.days === "number") setDays(data.days);
       if (typeof data?.since === "string") setSince(data.since);
+      setLoadFailed(false);
     } catch {
-      // 一覧取得失敗は致命的でない
+      setLoadFailed(true);
     }
   }, []);
 
@@ -133,7 +138,12 @@ export default function IntegrationPanel() {
 
         {/* ジョブ一覧（直近3日分＋期間外でも未処理のもの） */}
         <div className="mt-4 space-y-2">
-          {jobs.length === 0 ? (
+          {loadFailed ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              取込履歴を読み込めませんでした。下の「状態を更新」で取り直してください
+              （さっきの注文が消えたわけではありません）。
+            </p>
+          ) : jobs.length === 0 ? (
             <p className="text-xs text-gray-400">
               直近{days}日の取り込みはありません。
             </p>

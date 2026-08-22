@@ -155,7 +155,7 @@ function Tile({
       </p>
       {caption && (
         <p
-          className="mt-0.5 text-[0.625rem] leading-snug"
+          className="mt-0.5 text-xs leading-snug"
           style={{ color: onClick ? C_VISIT : undefined }}
         >
           {caption}
@@ -203,12 +203,21 @@ function VisitForm({
   const [nextAction, setNextAction] = useState(editing?.next_action ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 保存成功の確認表示（保存後にフォームが空へ戻るので、成功したことを明示する）
+  const [saved, setSaved] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (saved === null) return;
+    const timer = setTimeout(() => setSaved(null), 4000);
+    return () => clearTimeout(timer);
+  }, [saved]);
 
   const planning = met === null;
 
   const submit = async () => {
     setBusy(true);
     setError(null);
+    setSaved(null);
     try {
       const res = await fetch("/api/home-visit/log", {
         method: "POST",
@@ -224,6 +233,11 @@ function VisitForm({
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error ?? `保存に失敗しました（${res.status}）`);
+      const m = date.match(/^\d{4}-(\d{2})-(\d{2})$/);
+      const dateLabel = m ? `${Number(m[1])}月${Number(m[2])}日` : date;
+      setSaved(
+        planning ? `${dateLabel}の予定を入れました` : `${dateLabel}の訪問を記録しました`
+      );
       setTopics("");
       setNextAction("");
       setMet(true);
@@ -306,6 +320,12 @@ function VisitForm({
           </button>
         )}
       </div>
+
+      {saved && (
+        <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700">
+          ✓ {saved}
+        </p>
+      )}
     </div>
   );
 }
@@ -440,7 +460,7 @@ function MemberForm({
           </datalist>
         </label>
       </div>
-      <p className="text-[0.625rem] leading-relaxed text-gray-400">
+      <p className="text-xs leading-relaxed text-gray-400">
         部・地区・ブロックは候補から選べますが、そのまま打ち込んでも構いません（女性部、その他 など）。
       </p>
 
@@ -483,7 +503,7 @@ function MemberForm({
           placeholder="例：千早2-13-16"
           className={`${inputClass} bg-white`}
         />
-        <span className="mt-1 block text-[0.625rem] leading-relaxed text-gray-400">
+        <span className="mt-1 block text-xs leading-relaxed text-gray-400">
           町名から書けば地図で開けます（豊島区は「要町」「千早」だけでOK）
         </span>
       </label>
@@ -565,13 +585,25 @@ function LogRow({
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const remove = async () => {
     setBusy(true);
-    const res = await fetch(`/api/home-visit/log?id=${log.id}`, { method: "DELETE" });
-    setBusy(false);
-    setConfirming(false);
-    if (res.ok) onChanged();
+    setRemoveError(null);
+    try {
+      const res = await fetch(`/api/home-visit/log?id=${log.id}`, { method: "DELETE" });
+      if (res.ok) {
+        onChanged();
+      } else {
+        const json = await res.json().catch(() => ({}));
+        setRemoveError(json.error ?? `削除に失敗しました（${res.status}）`);
+      }
+    } catch {
+      setRemoveError("通信エラーで削除できませんでした。接続を確認してください。");
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
   };
 
   if (editing) {
@@ -626,7 +658,7 @@ function LogRow({
               <button
                 type="button"
                 onClick={() => setConfirming(true)}
-                className="text-xs text-gray-300 active:opacity-70"
+                className="text-xs text-rose-600 active:opacity-70"
               >
                 削除
               </button>
@@ -634,6 +666,11 @@ function LogRow({
           )}
         </span>
       </div>
+      {removeError && (
+        <p className="mt-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {removeError}
+        </p>
+      )}
       {log.topics && (
         <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-gray-600">
           {log.topics}
@@ -669,6 +706,7 @@ function MemberCard({
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const { member, logs, plans, lastVisit, daysSinceVisit } = state;
 
   const age = useMemo(() => ageOf(member, new Date()), [member]);
@@ -677,10 +715,21 @@ function MemberCard({
 
   const removeMember = async () => {
     setBusy(true);
-    const res = await fetch(`/api/home-visit/member?id=${member.id}`, { method: "DELETE" });
-    setBusy(false);
-    setConfirming(false);
-    if (res.ok) onChanged();
+    setRemoveError(null);
+    try {
+      const res = await fetch(`/api/home-visit/member?id=${member.id}`, { method: "DELETE" });
+      if (res.ok) {
+        onChanged();
+      } else {
+        const json = await res.json().catch(() => ({}));
+        setRemoveError(json.error ?? `削除に失敗しました（${res.status}）`);
+      }
+    } catch {
+      setRemoveError("通信エラーで削除できませんでした。接続を確認してください。");
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
   };
 
   return (
@@ -770,33 +819,45 @@ function MemberCard({
                 }}
                 onCancel={() => setEditing(false)}
               />
-              <div className="flex items-center gap-2">
-                {confirming ? (
-                  <>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  {confirming ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={removeMember}
+                        className="text-xs font-bold text-rose-600 active:opacity-70 disabled:opacity-40"
+                      >
+                        訪問履歴ごと本当に消す
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirming(false)}
+                        className="text-xs text-gray-400 active:opacity-70"
+                      >
+                        やめる
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
-                      disabled={busy}
-                      onClick={removeMember}
-                      className="text-xs font-bold text-rose-600 active:opacity-70 disabled:opacity-40"
+                      onClick={() => setConfirming(true)}
+                      className="text-xs text-rose-600 active:opacity-70"
                     >
-                      訪問履歴ごと本当に消す
+                      このメンバーを名簿から削除
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirming(false)}
-                      className="text-xs text-gray-400 active:opacity-70"
-                    >
-                      やめる
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirming(true)}
-                    className="text-xs text-gray-300 active:opacity-70"
-                  >
-                    このメンバーを名簿から削除
-                  </button>
+                  )}
+                </div>
+                {confirming && (
+                  <p className="text-xs leading-relaxed text-rose-700">
+                    この人の訪問履歴も一緒に消えます。元に戻せません。
+                  </p>
+                )}
+                {removeError && (
+                  <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {removeError}
+                  </p>
                 )}
               </div>
             </div>
@@ -830,7 +891,7 @@ function MemberCard({
             )}
           </div>
 
-          <p className="mt-2 text-right text-[0.625rem] text-gray-300">
+          <p className="mt-2 text-right text-[0.6875rem] text-gray-300">
             {today} 現在
           </p>
         </div>
@@ -1100,9 +1161,9 @@ export default function HomeVisitPage() {
                         >
                           {fmtDate(date)}
                         </span>
-                        <span className="text-[0.625rem] text-gray-400">{rows.length}軒</span>
+                        <span className="text-xs text-gray-400">{rows.length}軒</span>
                         {overdue && (
-                          <span className="text-[0.625rem] font-bold text-rose-600">未記録</span>
+                          <span className="text-xs font-bold text-rose-600">未記録</span>
                         )}
                         {route && (
                           <a

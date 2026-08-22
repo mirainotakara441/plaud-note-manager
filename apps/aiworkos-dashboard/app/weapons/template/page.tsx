@@ -19,14 +19,27 @@ export default function WeaponTemplatePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // 取得に失敗したまま保存すると、空のひな形で本物を差し替えてしまう。
+  // 失敗中は保存ボタンを無効にし、再読み込みで復帰させる。
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    setLoading(true);
+    setLoadFailed(false);
+    setError(null);
     fetch("/api/weapons/template", { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((d) => setSections(toEdit(Array.isArray(d?.sections) ? d.sections : [])))
-      .catch(() => setError("ひな形の取得に失敗しました"))
+      .catch(() => {
+        setError("ひな形の取得に失敗しました。保存はできません（空のひな形で上書きしないため）。");
+        setLoadFailed(true);
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, [reloadKey]);
 
   function update(i: number, patch: Partial<Section>) {
     setSaved(false);
@@ -45,6 +58,16 @@ export default function WeaponTemplatePage() {
   }
 
   function remove(i: number) {
+    const label = sections[i]?.section.trim();
+    if (
+      !window.confirm(
+        label
+          ? `節「${label}」を削除します。よろしいですか？（保存するまで確定はされません）`
+          : "この節を削除します。よろしいですか？（保存するまで確定はされません）"
+      )
+    ) {
+      return;
+    }
     setSaved(false);
     setSections((prev) => prev.filter((_, idx) => idx !== i));
   }
@@ -180,9 +203,18 @@ export default function WeaponTemplatePage() {
           </button>
 
           {error && (
-            <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
               {error}
-            </p>
+              {loadFailed && (
+                <button
+                  type="button"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                  className="mt-2 block rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-sm font-semibold text-rose-700 active:opacity-70"
+                >
+                  もう一度読み込む
+                </button>
+              )}
+            </div>
           )}
           {saved && !error && (
             <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
@@ -193,10 +225,14 @@ export default function WeaponTemplatePage() {
           <button
             type="button"
             onClick={save}
-            disabled={saving}
+            disabled={saving || loadFailed}
             className="mt-4 w-full rounded-xl bg-amber-600 px-4 py-3 text-base font-semibold text-white transition active:bg-amber-700 disabled:opacity-40"
           >
-            {saving ? "保存しています..." : "このひな形で保存"}
+            {loadFailed
+              ? "取得に失敗したため保存できません"
+              : saving
+                ? "保存しています..."
+                : "このひな形で保存"}
           </button>
         </>
       )}

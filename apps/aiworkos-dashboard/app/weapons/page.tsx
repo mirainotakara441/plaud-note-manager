@@ -43,6 +43,9 @@ function WeaponsInner() {
   // 以前は string[] と誤解し <option>{o}</option> でオブジェクトを直接レンダーしてクラッシュしていた
   // （Objects are not valid as a React child → ページ全体が「This page couldn't load」）。
   const [organizations, setOrganizations] = useState<{ name: string; count: number }[]>([]);
+  const [orgsError, setOrgsError] = useState<string | null>(null);
+  // 取得失敗時に「再読み込み」で fetch し直すためのキー
+  const [orgsReloadKey, setOrgsReloadKey] = useState(0);
   const [organization, setOrganization] = useState(presetOrg);
   // 一覧に無い相手（マスタ未登録の団体・任意のジャンル）を自由記入で指定する。
   // "__custom__" を選ぶと入力欄に切り替わる（StakeholderPicker と同じ作法）。
@@ -86,11 +89,17 @@ function WeaponsInner() {
   const [proposalNotice, setProposalNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    setOrgsError(null);
     fetch("/api/organizations", { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((d) => setOrganizations(Array.isArray(d?.organizations) ? d.organizations : []))
-      .catch(() => {});
-  }, []);
+      .catch(() =>
+        setOrgsError("団体一覧の取得に失敗しました（直接入力ではそのまま作れます）")
+      );
+  }, [orgsReloadKey]);
 
   // /agent から渡された打ち手を候補に載せる。
   // 依存は searchParams オブジェクトではなく取り出した文字列にする。searchParams は毎レンダー
@@ -121,6 +130,14 @@ function WeaponsInner() {
     if (actions.length === 0) return setError("武器にする打ち手を1つ以上選んでください");
     const kinds = ORDER.filter((k) => pick[k]);
     if (kinds.length === 0) return setError("作る武器種を1つ以上選んでください");
+    // 手元に提案書がある状態で作り直すと、直した内容ごと消える。
+    // 未保存の修正がある／保存済みの提案書がある場合は必ず確認を挟む。
+    if (
+      (proposalDirty || (weapon.proposal && savedProposalSnapshot !== "")) &&
+      !window.confirm("前に直した提案書は上書きされます。よろしいですか？")
+    ) {
+      return;
+    }
     setError(null);
     setQueued({ slides: false, proposal: false });
     setLoading(true);
@@ -356,6 +373,18 @@ function WeaponsInner() {
                 className="shrink-0 rounded-lg border border-gray-300 px-3 text-sm text-gray-600 active:bg-gray-50"
               >
                 一覧
+              </button>
+            </div>
+          )}
+          {orgsError && (
+            <div className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {orgsError}
+              <button
+                type="button"
+                onClick={() => setOrgsReloadKey((k) => k + 1)}
+                className="mt-1.5 block rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-sm font-semibold text-rose-700 active:opacity-70"
+              >
+                もう一度読み込む
               </button>
             </div>
           )}

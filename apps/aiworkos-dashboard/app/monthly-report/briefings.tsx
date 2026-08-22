@@ -89,14 +89,20 @@ export function BriefingsSection({ month }: { month: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 取得失敗を「0件」と区別する。握り潰して「まだありません」と出すと、
+  // 実際は記録がある月でも空に見えてしまう。
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoadError(null);
     try {
       const res = await fetch(`/api/monthly-report/briefings?month=${month}`, { cache: "no-store" });
       const json = await res.json();
+      if (!res.ok || json?.error) throw new Error(json?.error ?? `取得に失敗しました（${res.status}）`);
       setItems(Array.isArray(json?.items) ? json.items : []);
-    } catch {
+    } catch (e) {
       setItems([]);
+      setLoadError(e instanceof Error ? e.message : "報告記録を読み込めませんでした");
     }
   }, [month]);
 
@@ -269,7 +275,18 @@ export function BriefingsSection({ month }: { month: string }) {
         </div>
       )}
 
-      {items.length === 0 && !draft ? (
+      {loadError ? (
+        <div className="rounded-xl bg-rose-50 px-3 py-3">
+          <p className="text-sm text-rose-700">報告記録を読み込めませんでした（{loadError}）</p>
+          <button
+            type="button"
+            onClick={load}
+            className="mt-2 rounded-full bg-rose-600 px-3 py-1 text-xs font-bold text-white active:scale-95"
+          >
+            再読み込み
+          </button>
+        </div>
+      ) : items.length === 0 && !draft ? (
         <p className="py-3 text-sm text-gray-400">
           この月の報告記録はまだありません。「記録する」から残せます。
         </p>

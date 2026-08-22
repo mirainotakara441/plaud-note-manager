@@ -42,13 +42,22 @@ export default function StakeholderPicker({
 }: Props) {
   const [byCategory, setByCategory] = useState<Record<string, string[]>>({});
   const [custom, setCustom] = useState(false);
+  // 候補取得の失敗と「本当に候補が無い」は区別する。失敗を「候補なし・直接入力へ」と
+  // 同じに見せると、マスタに居る相手まで手打ちさせて表記ゆれを生む。
+  const [loadFailed, setLoadFailed] = useState(false);
   const wideName = categoryWideName(category);
 
   useEffect(() => {
     fetch("/api/stakeholders", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setByCategory(d?.byCategory ?? {}))
-      .catch(() => setByCategory({}));
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
+      .then((d) => {
+        setByCategory(d?.byCategory ?? {});
+        setLoadFailed(false);
+      })
+      .catch(() => {
+        setByCategory({});
+        setLoadFailed(true);
+      });
   }, []);
 
   const names = useMemo(() => byCategory[category] ?? [], [byCategory, category]);
@@ -103,7 +112,11 @@ export default function StakeholderPicker({
             className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
           >
             <option value="">
-              {names.length > 0 ? `${category}を選んでください` : "（候補なし・直接入力へ）"}
+              {names.length > 0
+                ? `${category}を選んでください`
+                : loadFailed
+                ? "（候補を読み込めませんでした）"
+                : "（候補なし・直接入力へ）"}
             </option>
             {allowCategoryWide && (
               <option value={wideName}>{wideName}（相手を特定しない）</option>
@@ -137,6 +150,12 @@ export default function StakeholderPicker({
               一覧
             </button>
           </div>
+        )}
+        {loadFailed && (
+          <p className="mt-1 text-xs text-amber-700">
+            候補一覧を読み込めませんでした。直接入力もできますが、表記ゆれを避けるなら
+            読み込み直してから一覧で選んでください。
+          </p>
         )}
       </div>
     </div>
