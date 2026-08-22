@@ -10,7 +10,13 @@ import { toJstDateString } from "@/lib/date";
 
 export const maxDuration = 60;
 
-const DOC_TYPES = ["提案書", "実習書", "スライド", "報告書", "メモ", "その他"];
+// 種別。社内向けは書くものが違う（議事メモ・実施理由書・QA表）ため、
+// カテゴリー`社内`だけ別の選択肢を出す。APIは両方を受け付ける
+// （過去に登録した成果物の種別が使えなくなると、metadata.種別 での絞り込みが
+// 途中で切れてしまうため、統合した一覧で検証する）。
+const DOC_TYPES_EXTERNAL = ["提案書", "実習書", "スライド", "報告書", "メモ", "その他"];
+const DOC_TYPES_INTERNAL = ["スライド", "議事メモ", "実施理由書", "QA表", "その他"];
+const DOC_TYPES = Array.from(new Set([...DOC_TYPES_EXTERNAL, ...DOC_TYPES_INTERNAL]));
 // 対象のカテゴリー。自治体だけでなく議員・事業者・銀行・委託会社も提案の対象になる。
 // 以前はここが4分類（自治体/議員/事業者/その他）しか許可しておらず、UI
 // （StakeholderPicker）が送れる`銀行``委託会社`が黙って`自治体`に化けていた。

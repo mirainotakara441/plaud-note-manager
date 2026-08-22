@@ -8,23 +8,68 @@ import StakeholderPicker, {
   type Category,
 } from "@/app/components/StakeholderPicker";
 
-const DOC_TYPES = ["提案書", "実習書", "スライド", "報告書", "メモ", "その他"] as const;
-type Mode = "file" | "text";
+// 種別は相手先によって書くものが違う。社内は議事メモ・実施理由書・QA表が主で、
+// 提案書・実習書は出てこない（API側 app/api/deliverables/route.ts と対で持つ）。
+const DOC_TYPES_EXTERNAL = [
+  "提案書",
+  "実習書",
+  "スライド",
+  "報告書",
+  "メモ",
+  "その他",
+] as const;
+const DOC_TYPES_INTERNAL = [
+  "スライド",
+  "議事メモ",
+  "実施理由書",
+  "QA表",
+  "その他",
+] as const;
+
+function docTypesFor(category: Category): readonly string[] {
+  return category === "社内" ? DOC_TYPES_INTERNAL : DOC_TYPES_EXTERNAL;
+}
+
+// 画像はブラウザでは文字を取り出せないので、サーバー（/api/deliverables/image）で
+// AIに読ませる。ChatGPTで作った戦略インフォグラフィックをiPhoneのスクショで
+// 保存する使い方が主。
+const IMAGE_EXT = ["jpg", "jpeg", "png", "gif", "webp"];
+
+function isImageFile(name: string): boolean {
+  const ext = name.toLowerCase().split(".").pop() ?? "";
+  return IMAGE_EXT.includes(ext);
+}
+
+/** File を base64（data URL のヘッダを除いた本体）にする。 */
+function toBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve(result.replace(/^data:[^;]+;base64,/, ""));
+    };
+    reader.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+    reader.readAsDataURL(file);
+  });
+}
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 export default function DeliverablesPage() {
-  const [mode, setMode] = useState<Mode>("file");
   const [organization, setOrganization] = useState("");
   const [category, setCategory] = useState<Category>("自治体");
-  const [docType, setDocType] = useState<(typeof DOC_TYPES)[number]>("提案書");
+  const [docType, setDocType] = useState<string>("提案書");
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(today());
   const [filename, setFilename] = useState("");
   const [text, setText] = useState("");
-  const [chunks, setChunks] = useState<Chunk[]>([]);
+  // ファイル由来とテキスト由来を別々に持ち、登録時に連結する。
+  // 以前は片方しか使えなかったが、インフォグラフィックに口頭の補足を添えたい
+  // ケースが多いため併用できるようにした。
+  const [fileChunks, setFileChunks] = useState<Chunk[]>([]);
+  const [textChunks, setTextChunks] = useState<Chunk[]>([]);
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,17 +81,18 @@ export default function DeliverablesPage() {
     correctionMessage?: string | null;
   } | null>(null);
 
-  function switchMode(next: Mode) {
-    setMode(next);
-    setChunks([]);
-    setError(null);
-    setResult(null);
+  // カテゴリーを変えたとき、その相手先に無い種別が選ばれたままにならないようにする
+  // （社内→自治体で「議事メモ」が残ると、APIは通るが選択肢に無い値が入る）。
+  function onCategoryChange(next: Category) {
+    setCategory(next);
+    const allowed = docTypesFor(next);
+    if (!allowed.includes(docType)) setDocType(allowed[0]);
   }
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     setError(null);
     setResult(null);
-    setChunks([]);
+    setFileChunks([]);
     const file = e.target.files?.[0];
     if (!file) return;
     setFilename(file.name);
@@ -54,12 +100,27 @@ export default function DeliverablesPage() {
     if (!title) setTitle(stem);
     setParsing(true);
     try {
+      if (isImageFile(file.name)) {
+        const data = await toBase64(file);
+        const res = await fetch("/api/deliverables/image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data, filename: file.name }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+          setError(json?.error ?? "画像の読み取りに失敗しました");
+          return;
+        }
+        setFileChunks(json.chunks ?? []);
+        return;
+      }
       const buf = await file.arrayBuffer();
       const parsed = await extractChunks(buf, file.name);
       if (parsed.length === 0) {
         setError("テキストを抽出できませんでした（中身が空の可能性）");
       }
-      setChunks(parsed);
+      setFileChunks(parsed);
     } catch (err) {
       setError(err instanceof Error ? err.message : "ファイルの解析に失敗しました");
     } finally {
@@ -71,7 +132,7 @@ export default function DeliverablesPage() {
     setText(value);
     setError(null);
     setResult(null);
-    setChunks(windowChunks(value, "text"));
+    setTextChunks(windowChunks(value, "text"));
   }
 
   async function onSubmit() {
@@ -79,16 +140,12 @@ export default function DeliverablesPage() {
     setResult(null);
     if (!organization.trim()) return setError(`${category}名を選んでください`);
     if (chunks.length === 0) {
-      return setError(
-        mode === "file"
-          ? "先にファイルを選択してください"
-          : "先にテキストを貼り付けてください"
-      );
+      return setError("ファイルを選ぶか、テキストを貼り付けてください");
     }
     const effectiveTitle = title.trim() || filename || "無題";
-    // テキスト貼り付けは実ファイルが無いので、source_id 安定用に資料名+日付から名前を作る
-    const effectiveFilename =
-      mode === "text" ? `text:${effectiveTitle}:${date}` : filename;
+    // ファイルが無い（テキストだけ）ときは実ファイル名が無いので、
+    // source_id を安定させるために資料名+日付から名前を作る。
+    const effectiveFilename = filename || `text:${effectiveTitle}:${date}`;
 
     setSubmitting(true);
     try {
@@ -125,10 +182,11 @@ export default function DeliverablesPage() {
   }
 
   const busy = parsing || submitting;
+  const chunks = [...fileChunks, ...textChunks];
 
   // 登録に足りていないものを可視化する（押せない理由が分からない状態を作らない）
   const missing: string[] = [];
-  if (chunks.length === 0) missing.push(mode === "file" ? "ファイル" : "テキスト");
+  if (chunks.length === 0) missing.push("ファイルかテキスト");
   if (!organization.trim()) missing.push(`${category}名`);
 
   return (
@@ -144,7 +202,7 @@ export default function DeliverablesPage() {
           成果物を登録
         </h1>
         <p className="mt-1 text-sm text-gray-500">
-          相手先に向けて作った提案書・実習書・スライド・メモを取り込み、提案エージェントの土台にします
+          提案書・スライド・議事メモ・インフォグラフィックを取り込み、提案エージェントの土台にします
         </p>
       </header>
 
@@ -152,70 +210,57 @@ export default function DeliverablesPage() {
         {/* 相手先（カテゴリー → 具体名） */}
         <StakeholderPicker
           category={category}
-          onCategoryChange={setCategory}
+          onCategoryChange={onCategoryChange}
           name={organization}
           onNameChange={setOrganization}
           disabled={busy}
         />
 
-        {/* 入力方法の切替 */}
-        <div className="flex gap-2 border-t border-gray-100 pt-4">
-          {(["file", "text"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => switchMode(m)}
-              disabled={busy}
-              className={`min-h-11 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
-                mode === m
-                  ? "bg-indigo-600 text-white"
-                  : "bg-gray-100 text-gray-600 active:bg-gray-200"
-              }`}
-            >
-              {m === "file" ? "ファイル" : "テキストを貼る"}
-            </button>
-          ))}
+        {/* ファイル（画像も可）。テキストと併用できる */}
+        <div className="border-t border-gray-100 pt-4">
+          <label className="block text-sm font-medium text-gray-600">
+            ファイル（.pptx / .docx / .pdf / 画像）
+          </label>
+          <input
+            type="file"
+            accept=".pptx,.docx,.pdf,.jpg,.jpeg,.png,.gif,.webp"
+            onChange={onFile}
+            disabled={busy}
+            className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-indigo-700 disabled:opacity-50"
+          />
+          {parsing && (
+            <p className="mt-2 text-xs text-gray-400">
+              {filename && isImageFile(filename) ? "画像を読み取り中..." : "解析中..."}
+            </p>
+          )}
+          <p className="mt-2 text-xs text-gray-400">
+            ※インフォグラフィックのスクショはAIが文字を起こします（3.5MBまで）。スキャン画像のPDFは文字を取り出せないことがあります。
+          </p>
         </div>
 
-        {/* ファイル or テキスト */}
-        {mode === "file" ? (
-          <div>
-            <label className="block text-sm font-medium text-gray-600">
-              ファイル（.pptx / .docx / .pdf）
-            </label>
-            <input
-              type="file"
-              accept=".pptx,.docx,.pdf"
-              onChange={onFile}
-              disabled={busy}
-              className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-indigo-700 disabled:opacity-50"
-            />
-            {parsing && <p className="mt-2 text-xs text-gray-400">解析中...</p>}
-            <p className="mt-2 text-xs text-gray-400">
-              ※スキャン画像のPDFや、書き出し方によっては文字を取り出せないことがあります。下のプレビューで中身を確認してください。
-            </p>
-          </div>
-        ) : (
-          <div>
-            <label className="block text-sm font-medium text-gray-600">
-              テキスト（メモ・構成案・メール本文など）
-            </label>
-            <textarea
-              value={text}
-              onChange={(e) => onText(e.target.value)}
-              disabled={busy}
-              rows={8}
-              placeholder="ここに貼り付け"
-              className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
-            />
-          </div>
-        )}
+        {/* テキスト。ファイルへの補足として一緒に登録できる */}
+        <div>
+          <label className="block text-sm font-medium text-gray-600">
+            テキスト（メモ・構成案・メール本文など）
+          </label>
+          <textarea
+            value={text}
+            onChange={(e) => onText(e.target.value)}
+            disabled={busy}
+            rows={6}
+            placeholder="ここに貼り付け（ファイルと一緒に登録できます）"
+            className="mt-2 block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+          />
+        </div>
 
         {/* 抽出プレビュー（何が取り込まれるか目視で確認できるように） */}
         {!parsing && chunks.length > 0 && (
           <div className="rounded-lg bg-purple-50 p-3">
             <p className="text-xs font-medium text-purple-800">
-              {chunks.length}個のチャンクを検出しました（抽出内容の先頭）
+              {chunks.length}個のチャンクを検出しました
+              {fileChunks.length > 0 && textChunks.length > 0
+                ? `（ファイル${fileChunks.length} ＋ テキスト${textChunks.length}）`
+                : ""}
             </p>
             <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-purple-900/70">
               {chunks[0].content.slice(0, 200)}
@@ -229,13 +274,11 @@ export default function DeliverablesPage() {
             <label className="block text-sm font-medium text-gray-600">種別</label>
             <select
               value={docType}
-              onChange={(e) =>
-                setDocType(e.target.value as (typeof DOC_TYPES)[number])
-              }
+              onChange={(e) => setDocType(e.target.value)}
               disabled={busy}
               className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
             >
-              {DOC_TYPES.map((t) => (
+              {docTypesFor(category).map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>

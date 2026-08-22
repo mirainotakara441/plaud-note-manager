@@ -1,15 +1,39 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
-import { correctTranscriptionMany, summarizeCorrections } from "@/lib/transcriptionDictionary";
+import {
+  correctTranscription,
+  correctTranscriptionMany,
+  summarizeCorrections,
+} from "@/lib/transcriptionDictionary";
+import { isLlmConfigured, isAuthError, AUTH_ERROR_MESSAGE, structured } from "@/lib/llm";
 
 // 週報ダッシュボード：週次の営業活動（支店・自治体・事業者・議員・委託会社・銀行・
 // プロモーション・全体）をカテゴリー別に構造化した weekly_reports を読む。
-// 読み取りは anonキー、書き込み（PATCH）は service role キーで叩く
+// 読み取りは anonキー、書き込み（PATCH・POST）は service role キーで叩く
 // （2026-07-25 レビュー対応）。
-
+//
+// POST は「週報テキストを貼るだけで登録」の窓口。従来は週報登録スキル（チャット）
+// 経由でしか登録できなかったが、ダッシュボードからも同じ結果になるよう、
+// スキルの Step 1（カテゴリー読み替え・ユニットの分解・全体の限定）をそのまま
+// システムプロンプトへ移植した。分類基準を変えるときは両方直すこと。
+//
+// thinking 有効時のVercelタイムアウト対策（app/api/diary/route.ts と同じ理由）。
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const TABLE = "weekly_reports";
+
+const CATEGORIES = [
+  "全体",
+  "支店",
+  "自治体",
+  "事業者",
+  "議員",
+  "委託会社",
+  "銀行",
+  "プロモーション",
+] as const;
+type Category = (typeof CATEGORIES)[number];
 
 type WeeklyReportRow = {
   id: string;
@@ -194,4 +218,299 @@ export async function PATCH(request: Request) {
     console.error("PATCH /api/weekly-report: 通信エラー", err);
     return NextResponse.json({ error: "通信エラーが発生しました" }, { status: 502 });
   }
+}
+
+// ============ POST: 週報テキストを貼るだけで登録 ============
+
+type ParsedRow = {
+  category: string;
+  organization: string;
+  summary: string;
+  insight: string;
+  tactic: string;
+};
+
+const WEEKLY_REPORT_SCHEMA = {
+  type: "object",
+  properties: {
+    week_start: {
+      type: "string",
+      description:
+        "その週の月曜日（YYYY-MM-DD）。本文中の日付群のうち最も早い平日が属する週の月曜とする。",
+    },
+    rows: {
+      type: "array",
+      description: "週報を8分類に分解した行の配列。漏れなくすべて抽出すること。",
+      items: {
+        type: "object",
+        properties: {
+          category: {
+            type: "string",
+            enum: [...CATEGORIES],
+            description: "8分類のいずれか。",
+          },
+          organization: {
+            type: "string",
+            description:
+              "対象の団体・支店・案件名。全体カテゴリーの行は空文字にする。",
+          },
+          summary: {
+            type: "string",
+            description: "いつ・誰と・何があったかの事実。",
+          },
+          insight: {
+            type: "string",
+            description: "反応・温度感・示唆。書かれていなければ空文字。",
+          },
+          tactic: {
+            type: "string",
+            description: "次のアクション・宿題・次回訪問予定。書かれていなければ空文字。",
+          },
+        },
+        required: ["category", "organization", "summary", "insight", "tactic"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["week_start", "rows"],
+  additionalProperties: false,
+};
+
+const WEEKLY_REPORT_SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの週報を、8分類に構造化するアシスタントです。
+
+見出しの読み替え（見出し表記は毎回微妙に揺れる。以下の対応で8分類に落とし込むこと）:
+- 【全体】→ 全体行に入れるのは事業部・部全体の話のみ（部月報会・合宿・課金検討・OS部連携等）。同じ【全体】ブロック内でも支店・プロモーションに関する記述は該当カテゴリーへ分離する。特定の自治体名の話が【全体】に埋め込まれていても、既に【自治体】側に同じ団体の行があるなら重複させず、無ければ自治体の行として独立させる。
+- 【支店】またはユニット名に支店が出てくるもの → 支店（organizationは支店名）
+- 【自治体】→ 自治体
+- 【ユニット】セクション（例:「熊本市ユニット」「豊島区・新宿区ユニット」「横浜市・相模原ユニット」）→ 中に出てくる自治体名ごとに自治体カテゴリーの行として分解する（ユニット名自体は行にしない）
+- 国政関連の記述（議員連盟等）→ 議員
+- 【議員】→ 議員（個人名が無く「◯◯市議員（ロビー活動）」「◯◯勉強会」のような案件単位の場合も、その名称をそのままorganizationにしてよい。無理に個人名を作らない）
+- 【事業者】→ 事業者
+- 【委託会社】→ 委託会社（「委託企業」ではなく必ず「委託会社」と表記する）
+- 【銀行】→ 銀行
+- 【プロモーション】→ プロモーション（全体に含めない。独立カテゴリー）
+- 上記どれにも当てはまらない見出しは、最も近いカテゴリーに寄せる（無理に「その他」を作らない。8分類のいずれかに必ず収める）
+
+団体の重複統合:
+- 同じ週報内で同じ団体が【自治体】と【ユニット】など「同じカテゴリーに属するはずの複数セクション」にまたがって出てくる場合は、1つの行にまとめる（summaryを連結）。重複登録しないこと。
+- 一方、同じ団体が【自治体】と【議員】の両方に出てくる場合は、現場交渉と議員ロビー活動という別チャネルの話なので、カテゴリーごとに別行のままでよい（無理に統合しない）。
+
+summary / insight / tactic への振り分け:
+- summary: いつ・誰と・何があったかの事実
+- insight: 反応・温度感・示唆（「係長の反応は低い」等）。書かれていなければ空文字
+- tactic: ★印の宿題、次回訪問予定、次のアクション。書かれていなければ空文字
+- 粒度は簡潔に。原文の体裁を保ったまま無理に整形しすぎない
+
+week_start の決定:
+- 本文中に複数の日付（M/D形式）が出てくる。それらが月〜土に収まっているか確認し、含まれる最も早い平日の週の月曜をweek_startとする。
+- 月日のみの表記は、ユーザープロンプトで渡す「今日の日付」を基準に年を判断すること（通常は同じ年。年をまたぐ場合のみ調整）。
+
+厳守事項:
+- 事実・固有名詞・数字は創作せず、必ず元のテキストに書かれた内容だけを使うこと。音声入力（PLAUD NotePin）由来の誤字脱字は文脈から自然に補正してよいが、内容や意味を変えないこと。
+- 「なし」とだけ書かれたカテゴリーは行を作らない。
+- 出力は必ず指定されたJSONスキーマに従うこと。`;
+
+function todayJst(): string {
+  const jstMs = Date.now() + 9 * 3600 * 1000;
+  return new Date(jstMs).toISOString().slice(0, 10);
+}
+
+function buildWeeklyReportUserPrompt(text: string): string {
+  return `今日の日付: ${todayJst()}
+
+==== 貼り付けられた週報本文 ====
+${text}
+==== ここまで ====
+
+上記を8分類に分解し、指定のJSONスキーマで構造化して返してください。`;
+}
+
+/** YYYY-MM-DD が実在する月曜日かどうか（UTC基準で曜日判定。週の切替キーはlocal日付を使わないため）。 */
+function isMondayDateString(s: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getUTCDay() === 1;
+}
+
+function normalizeRow(raw: unknown): ParsedRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const category = typeof r.category === "string" ? r.category : "";
+  if (!(CATEGORIES as readonly string[]).includes(category)) return null;
+  const summary = typeof r.summary === "string" ? r.summary.trim() : "";
+  if (!summary) return null;
+  return {
+    category,
+    organization: typeof r.organization === "string" ? r.organization.trim() : "",
+    summary,
+    insight: typeof r.insight === "string" ? r.insight.trim() : "",
+    tactic: typeof r.tactic === "string" ? r.tactic.trim() : "",
+  };
+}
+
+async function parseWeeklyReport(
+  text: string
+): Promise<{ week_start: string; rows: ParsedRow[] }> {
+  const parsed = await structured<{ week_start?: unknown; rows?: unknown }>({
+    system: WEEKLY_REPORT_SYSTEM_PROMPT,
+    prompt: buildWeeklyReportUserPrompt(text),
+    schema: WEEKLY_REPORT_SCHEMA,
+    maxTokens: 8000,
+    label: "週報解析",
+  });
+
+  const rawRows = Array.isArray(parsed.rows) ? parsed.rows : [];
+  const rows = rawRows
+    .map((r) => normalizeRow(r))
+    .filter((r): r is ParsedRow => r !== null);
+
+  const weekStart = typeof parsed.week_start === "string" ? parsed.week_start : "";
+  return { week_start: weekStart, rows };
+}
+
+export async function POST(req: NextRequest) {
+  const c = serviceCreds();
+  if (!c) {
+    return NextResponse.json(
+      { error: "サーバー設定エラー: Supabaseの環境変数が設定されていません" },
+      { status: 500 }
+    );
+  }
+  if (!isLlmConfigured()) {
+    return NextResponse.json(
+      { error: "ANTHROPIC_APIキーが未設定です。.env.local に ANTHROPIC_API_KEY を設定してください。" },
+      { status: 500 }
+    );
+  }
+
+  let body: { text?: unknown; week_start?: unknown; replace?: unknown };
+  try {
+    body = await req.json();
+  } catch (err) {
+    console.error("POST /api/weekly-report: リクエストJSON解析失敗", err);
+    return NextResponse.json({ error: "リクエストの形式が不正です" }, { status: 400 });
+  }
+
+  const rawText = typeof body.text === "string" ? body.text.trim() : "";
+  if (!rawText) {
+    return NextResponse.json({ error: "週報本文を貼り付けてください" }, { status: 400 });
+  }
+  const weekOverride =
+    typeof body.week_start === "string" && isMondayDateString(body.week_start)
+      ? body.week_start
+      : null;
+  const replace = body.replace === true;
+
+  // ★音声入力の誤変換を、貼り付け本文が入ってきたこの1か所で直す（app/api/diary/route.ts と同じ理由）。
+  const corrected = await correctTranscription(rawText);
+  const text = corrected.text;
+
+  let parsed: { week_start: string; rows: ParsedRow[] };
+  try {
+    parsed = await parseWeeklyReport(text);
+  } catch (error) {
+    if (isAuthError(error)) {
+      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
+    }
+    console.error("週報解析エラー:", error);
+    return NextResponse.json(
+      { error: "AIによる週報の解析に失敗しました。しばらくしてから再度お試しください。" },
+      { status: 502 }
+    );
+  }
+
+  const weekStart = weekOverride ?? parsed.week_start;
+  if (!isMondayDateString(weekStart)) {
+    return NextResponse.json(
+      {
+        error:
+          "週の判定に失敗しました（月曜日の日付にできませんでした）。対象週を指定して登録し直してください。",
+        detectedWeekStart: parsed.week_start || null,
+      },
+      { status: 422 }
+    );
+  }
+  if (parsed.rows.length === 0) {
+    return NextResponse.json(
+      { error: "週報の内容を認識できませんでした。見出し（【自治体】等）が分かる形で貼り直してください。" },
+      { status: 400 }
+    );
+  }
+
+  // 既に同じ週が登録済みなら、replace指定が無い限り上書きしない（無断の二重登録を防ぐ）。
+  const existingRes = await fetch(
+    `${c.url}/rest/v1/${TABLE}?select=id&week_start=eq.${weekStart}`,
+    { headers: headers(c.key), cache: "no-store" }
+  );
+  if (!existingRes.ok) {
+    const detail = await existingRes.text().catch(() => "");
+    return NextResponse.json(
+      { error: `既存確認に失敗しました ${existingRes.status}`, detail: detail.slice(0, 200) },
+      { status: 502 }
+    );
+  }
+  const existingRows: { id: string }[] = await existingRes.json();
+  if (existingRows.length > 0 && !replace) {
+    return NextResponse.json(
+      {
+        error: `${weekStart} 週は既に${existingRows.length}件登録済みです。上書きする場合は再度「上書きして登録」を選んでください。`,
+        needsConfirmation: true,
+        week_start: weekStart,
+        existingCount: existingRows.length,
+      },
+      { status: 409 }
+    );
+  }
+  if (existingRows.length > 0 && replace) {
+    const delRes = await fetch(`${c.url}/rest/v1/${TABLE}?week_start=eq.${weekStart}`, {
+      method: "DELETE",
+      headers: headers(c.key),
+      cache: "no-store",
+    });
+    if (!delRes.ok) {
+      const detail = await delRes.text().catch(() => "");
+      return NextResponse.json(
+        { error: `既存データの削除に失敗しました ${delRes.status}`, detail: detail.slice(0, 200) },
+        { status: 502 }
+      );
+    }
+  }
+
+  const values = parsed.rows.map((r) => ({
+    week_start: weekStart,
+    category: r.category,
+    organization: r.organization || null,
+    summary: r.summary,
+    insight: r.insight || null,
+    tactic: r.tactic || null,
+  }));
+
+  const insertRes = await fetch(`${c.url}/rest/v1/${TABLE}`, {
+    method: "POST",
+    headers: { ...headers(c.key), Prefer: "return=representation" },
+    body: JSON.stringify(values),
+    cache: "no-store",
+  });
+  if (!insertRes.ok) {
+    const detail = await insertRes.text().catch(() => "");
+    return NextResponse.json(
+      { error: `登録に失敗しました ${insertRes.status}`, detail: detail.slice(0, 200) },
+      { status: 502 }
+    );
+  }
+  const inserted: { category: Category }[] = await insertRes.json();
+
+  const categoryCounts: Record<string, number> = {};
+  for (const row of inserted) {
+    categoryCounts[row.category] = (categoryCounts[row.category] ?? 0) + 1;
+  }
+
+  return NextResponse.json({
+    week_start: weekStart,
+    total: inserted.length,
+    categories: categoryCounts,
+    replaced: existingRows.length > 0 && replace,
+    correctionMessage: summarizeCorrections(corrected.replacements, corrected.total),
+  });
 }

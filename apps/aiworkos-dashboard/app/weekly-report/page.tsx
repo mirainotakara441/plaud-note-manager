@@ -1,11 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // 週報ダッシュボード：自治体・事業者・議員・委託会社まわりの週次活動を、
-// カテゴリー別に1枚で確認する。データは /api/weekly-report（Supabase・読み取り専用）。
-// 登録は週報登録スキル側で行う。このページは閲覧専用。
+// カテゴリー別に1枚で確認する。データは /api/weekly-report（Supabase）。
+//
+// 登録はチャット（週報登録スキル）とこのページの両方からできる。どちらも
+// 最終的に weekly_reports へ同じ形で入る（分類ロジックは /api/weekly-report の
+// システムプロンプト側に集約）。
+//
+// 上部の済/未の帯は /diary と同じ考え方。「どの週まで登録したか」が
+// 開いた瞬間に分かるようにするためで、登録直後も再取得して即反映する。
 
 type Row = {
   id: string;
@@ -31,6 +37,51 @@ type ApiResponse = {
   available_weeks: string[];
   error?: string;
 };
+
+type StatusEntry = {
+  week_start: string;
+  registered: boolean;
+  count: number;
+  isCurrentWeek: boolean;
+};
+
+type StatusResponse = {
+  currentWeek: string;
+  weeks: number;
+  entries: StatusEntry[];
+  latestWeek: string | null;
+  staleWeeks: number | null;
+  error?: string;
+};
+
+type PostResult = {
+  week_start: string;
+  total: number;
+  categories: Record<string, number>;
+  replaced: boolean;
+  correctionMessage: string | null;
+};
+
+const WEEKS_OPTIONS = [
+  { label: "8週", value: 8 },
+  { label: "13週", value: 13 },
+  { label: "26週", value: 26 },
+] as const;
+
+const PLACEHOLDER = `例:
+【全体】
+・戦略合宿　8/21 開催
+　→9月に支店を集め検討会を実施予定
+
+【自治体】
+・新宿区　8/19 面談（戸籍住民課 田中課長）
+　→極めて否定的な反応
+　→議員経由のトップアプローチを設計する
+
+【議員】
+　豊島区　7/23 辻議員による同行
+
+見出し（【自治体】等）ごとに自動で分類して登録します`;
 
 const CATEGORIES = [
   "全体",
@@ -86,6 +137,25 @@ export default function WeeklyReportPage() {
   const [draft, setDraft] = useState<Draft>({ summary: "", insight: "", tactic: "" });
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // 登録フォーム
+  const [showForm, setShowForm] = useState(false);
+  const [text, setText] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
+  const [postResult, setPostResult] = useState<PostResult | null>(null);
+  // 同じ週が既に登録済みのとき、上書きしてよいか確認するための保留状態。
+  // 黙って消さないよう、確認を挟んでから replace:true で投げ直す。
+  const [confirmOverwrite, setConfirmOverwrite] = useState<{
+    week: string;
+    count: number;
+  } | null>(null);
+
+  // 登録状況（済/未の帯）
+  const [statusWeeks, setStatusWeeks] = useState<number>(8);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
   // 保存時に音声入力の誤変換を辞書で直した場合の控えめな通知。
   // 実際に置換したものがある時だけAPIが文言を返す（無ければ null）。
   const [correctionMsg, setCorrectionMsg] = useState<string | null>(null);
@@ -107,12 +177,75 @@ export default function WeeklyReportPage() {
     }
   }
 
+  const fetchStatus = useCallback(async (weeks: number) => {
+    setStatusLoading(true);
+    setStatusError(null);
+    try {
+      const res = await fetch(`/api/weekly-report/status?weeks=${weeks}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatusError(data?.error ?? "登録状況の取得に失敗しました");
+      } else {
+        setStatus(data as StatusResponse);
+      }
+    } catch {
+      setStatusError("登録状況の通信エラーが発生しました");
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     load();
   }, []);
 
+  useEffect(() => {
+    fetchStatus(statusWeeks);
+  }, [fetchStatus, statusWeeks]);
+
   function goToWeek(week: string) {
     load(week);
+  }
+
+  async function submitReport(replace: boolean) {
+    setPostError(null);
+    setPostResult(null);
+    if (!text.trim()) {
+      setPostError("週報本文を貼り付けてください");
+      return;
+    }
+    setPosting(true);
+    try {
+      const res = await fetch("/api/weekly-report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, replace }),
+      });
+      const data = await res.json();
+      if (res.status === 409 && data?.needsConfirmation) {
+        setConfirmOverwrite({ week: data.week_start, count: data.existingCount });
+        setPostError(data?.error ?? null);
+        return;
+      }
+      if (!res.ok) {
+        setPostError(data?.error ?? "登録に失敗しました");
+        return;
+      }
+      const result = data as PostResult;
+      setPostResult(result);
+      setConfirmOverwrite(null);
+      setText("");
+      setShowForm(false);
+      // 登録した週をそのまま開き、済/未の帯にも即反映する。
+      load(result.week_start);
+      fetchStatus(statusWeeks);
+    } catch {
+      setPostError("通信エラーが発生しました");
+    } finally {
+      setPosting(false);
+    }
   }
 
   function handleDateChange(value: string) {
@@ -285,6 +418,176 @@ export default function WeeklyReportPage() {
           自治体・事業者・議員・委託会社まわりの週次活動を、カテゴリー別に1枚で
         </p>
       </header>
+
+      {/* 登録状況（済/未の帯） */}
+      <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-gray-700">登録状況</h2>
+          <div className="flex shrink-0 gap-1">
+            {WEEKS_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setStatusWeeks(opt.value)}
+                className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                  statusWeeks === opt.value
+                    ? "bg-indigo-600 text-white"
+                    : "bg-gray-100 text-gray-500 active:bg-gray-200"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {statusError && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+            {statusError}
+          </p>
+        )}
+
+        {!statusError && (
+          <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
+            {statusLoading && !status ? (
+              <p className="py-2 text-sm text-gray-400">読み込み中...</p>
+            ) : (
+              status?.entries.map((entry) => {
+                const [, m, d] = entry.week_start.split("-");
+                return (
+                  <button
+                    key={entry.week_start}
+                    type="button"
+                    onClick={() => goToWeek(entry.week_start)}
+                    className={`flex shrink-0 flex-col items-center gap-1 rounded-lg border px-2 py-1.5 transition active:scale-95 ${
+                      entry.week_start === weekStart
+                        ? "border-indigo-400 bg-indigo-50"
+                        : "border-gray-100 bg-gray-50"
+                    }`}
+                  >
+                    <span
+                      className={`text-xs ${
+                        entry.isCurrentWeek
+                          ? "font-semibold text-indigo-700"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      {Number(m)}/{Number(d)}週
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        entry.registered
+                          ? "bg-emerald-100 text-emerald-700"
+                          : entry.isCurrentWeek
+                            ? "bg-gray-200 text-gray-500"
+                            : "bg-red-50 text-red-600"
+                      }`}
+                    >
+                      {entry.registered ? `済 ${entry.count}` : "未"}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {status && status.staleWeeks !== null && status.staleWeeks >= 2 && (
+          <p className="mt-3 text-xs leading-relaxed text-amber-700">
+            最終登録から{status.staleWeeks}週ほど間が空いています（最終: {status.latestWeek}）
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={() => {
+            setShowForm((v) => !v);
+            setPostError(null);
+            setConfirmOverwrite(null);
+          }}
+          className="mt-3 w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition active:scale-95"
+        >
+          {showForm ? "閉じる" : "週報を登録する"}
+        </button>
+
+        {showForm && (
+          <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              disabled={posting}
+              rows={12}
+              placeholder={PLACEHOLDER}
+              className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+            />
+            <p className="text-xs leading-relaxed text-gray-400">
+              見出しごとに8カテゴリーへ自動で分類し、対象週も本文の日付から判定します。
+            </p>
+
+            {postError && (
+              <p className="rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+                {postError}
+              </p>
+            )}
+
+            {confirmOverwrite ? (
+              <div className="space-y-2 rounded-lg bg-amber-50 px-3 py-2.5">
+                <p className="text-sm leading-relaxed text-amber-800">
+                  {confirmOverwrite.week} 週の既存{confirmOverwrite.count}件を削除して
+                  登録し直します。よろしいですか？
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => submitReport(true)}
+                    disabled={posting}
+                    className="rounded-full bg-amber-600 px-3 py-1.5 text-xs font-medium text-white active:scale-95 disabled:opacity-50"
+                  >
+                    {posting ? "登録中…" : "上書きして登録"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmOverwrite(null);
+                      setPostError(null);
+                    }}
+                    disabled={posting}
+                    className="rounded-full bg-gray-100 px-3 py-1.5 text-xs text-gray-600 active:scale-95 disabled:opacity-50"
+                  >
+                    やめる
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => submitReport(false)}
+                disabled={posting}
+                className="w-full rounded-xl bg-indigo-600 px-4 py-3 text-base font-semibold text-white transition active:scale-95 disabled:opacity-40"
+              >
+                {posting ? "登録中..." : "登録する"}
+              </button>
+            )}
+          </div>
+        )}
+
+        {postResult && (
+          <div className="mt-3 space-y-1.5 rounded-lg bg-emerald-50 px-3 py-2.5">
+            <p className="text-sm font-medium text-emerald-900">
+              {postResult.week_start} 週に{postResult.total}件を
+              {postResult.replaced ? "上書き" : ""}登録しました
+            </p>
+            <p className="text-xs text-emerald-700">
+              {Object.entries(postResult.categories)
+                .map(([cat, n]) => `${cat} ${n}`)
+                .join(" ／ ")}
+            </p>
+            {postResult.correctionMessage && (
+              <p className="text-xs text-amber-700">{postResult.correctionMessage}</p>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 週ナビゲーション */}
       <div className="mb-5 flex items-center gap-2">
