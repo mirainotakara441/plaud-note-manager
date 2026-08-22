@@ -282,6 +282,33 @@ export default function HealthPage() {
     [days, manual]
   );
   const sleepRecorded = sleepPoints.filter((p) => p.value != null).length;
+
+  // 今日を起点にした直近7日ぶんの睡眠。期間切替（90日など）とは独立に必ず1週間を出す。
+  // 1週間ぶんをスクリーンショットで撮ってエージェントに渡す使い方をするため、
+  // グラフの棒だけでなく「何時間」を数字で読める形にしておく。
+  const sleepWeek = useMemo(() => {
+    const today = todayLocal();
+    const [y, m, d] = today.split("-").map(Number);
+    const out: { day: string; label: string; weekday: string; hours: number | null }[] = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() - i);
+      const key = dt.toISOString().slice(0, 10);
+      out.push({
+        day: key,
+        label: `${dt.getUTCMonth() + 1}/${dt.getUTCDate()}`,
+        weekday: ["日", "月", "火", "水", "木", "金", "土"][dt.getUTCDay()],
+        hours: manual[key]?.sleep_hours ?? null,
+      });
+    }
+    return out;
+  }, [manual]);
+
+  const sleepWeekAvg = useMemo(() => {
+    const vals = sleepWeek.map((d) => d.hours).filter((v): v is number => v != null);
+    if (vals.length === 0) return null;
+    return vals.reduce((s, v) => s + v, 0) / vals.length;
+  }, [sleepWeek]);
   const walkDays = useMemo(
     () => days.filter((d) => manual[d.day]?.morning_walk != null).length,
     [days, manual]
@@ -814,6 +841,47 @@ export default function HealthPage() {
               title="睡眠時間の推移"
               hint="手入力ぶんのみ"
             />
+
+            {/* 今日起点の直近7日。上の期間切替に関係なく必ず1週間を出す。
+                ここを1枚撮ってエージェントへ渡す使い方をするので、7列に詰めず
+                1日1行にして日付・曜日・時間が確実に読み取れる大きさにしている。 */}
+            <div className="mb-4 rounded-xl border border-gray-100 bg-gray-50 p-3">
+              <div className="mb-2 flex items-baseline justify-between">
+                <span className="text-sm font-semibold text-gray-800">
+                  直近7日（{sleepWeek[0]?.label}〜{sleepWeek[6]?.label}）
+                </span>
+                <span className="text-xs text-gray-500">
+                  平均 {sleepWeekAvg != null ? `${sleepWeekAvg.toFixed(1)}時間` : "—"}
+                </span>
+              </div>
+              <div className="divide-y divide-gray-100 overflow-hidden rounded-lg bg-white">
+                {sleepWeek.map((d, i) => (
+                  <div
+                    key={d.day}
+                    className={`flex items-center justify-between px-3 py-2 ${
+                      i === 6 ? "bg-indigo-50" : ""
+                    }`}
+                  >
+                    <span className="text-sm text-gray-600">
+                      {d.label}
+                      <span className="ml-1 text-gray-400">（{d.weekday}）</span>
+                      {i === 6 && (
+                        <span className="ml-2 text-xs font-medium text-indigo-600">今日</span>
+                      )}
+                    </span>
+                    {d.hours == null ? (
+                      <span className="text-sm text-gray-300">未記録</span>
+                    ) : (
+                      <span className="text-base font-bold text-gray-900">
+                        {d.hours.toFixed(1)}
+                        <span className="ml-0.5 text-xs font-normal text-gray-500">時間</span>
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {sleepRecorded > 0 ? (
               <>
                 <BarChart
