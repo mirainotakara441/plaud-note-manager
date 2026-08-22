@@ -171,6 +171,13 @@ const LEARN_FEATURES: Feature[] = [
     desc: "ブートキャンプ受講生を業界・立場・趣味から引き、共通点を見つけて繋がる",
     accent: "bg-blue-100 text-blue-700",
   },
+  {
+    href: "/lectures",
+    icon: "📚",
+    title: "講座アーカイブ",
+    desc: "受講した生成AI講座の録画・パスコード・学びを、講師別に引く",
+    accent: "bg-emerald-100 text-emerald-700",
+  },
 ];
 
 const LIFESTYLE_HEALTH_FEATURES: Feature[] = [
