@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { llmClient, isLlmConfigured, isAuthError, AUTH_ERROR_MESSAGE } from "@/lib/llm";
+import { llmClient, isLlmConfigured, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { CHUNK_SIZE, CHUNK_OVERLAP } from "@/lib/chunks";
 
 // インフォグラフィック等の画像を、検索できるテキストへ起こす。
@@ -135,13 +135,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ chunks: windowChunks(text, "img"), text });
   } catch (error) {
-    if (isAuthError(error)) {
-      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
-    }
     console.error("画像読み取りエラー:", error);
     return NextResponse.json(
-      { error: "画像の読み取りに失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      { error: llmErrorMessage(error, "画像の読み取りに失敗しました。") },
+      { status: llmErrorStatus(error) }
     );
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
-import { structured, isLlmConfigured } from "@/lib/llm";
+import { structured, isLlmConfigured, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { toJstDateString } from "@/lib/date";
 
 // 健康アプリのスクリーンショットを読んで health_metrics に入れる。
@@ -305,8 +305,10 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error("健康スクショ読み取り失敗:", e);
     return NextResponse.json(
-      { error: e instanceof Error ? e.message : "画像を読み取れませんでした" },
-      { status: 502 }
+      {
+        error: llmErrorMessage(e, e instanceof Error ? e.message : "画像を読み取れませんでした"),
+      },
+      { status: llmErrorStatus(e) }
     );
   }
 

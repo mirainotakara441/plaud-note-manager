@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 import {
-  AUTH_ERROR_MESSAGE,
-  isAuthError,
+  llmErrorMessage,
+  llmErrorStatus,
   isLlmConfigured,
   structured,
 } from "@/lib/llm";
@@ -341,13 +341,10 @@ export async function POST(request: NextRequest) {
     });
     extracted = Array.isArray(result.edges) ? result.edges : [];
   } catch (error) {
-    if (isAuthError(error)) {
-      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
-    }
     console.error("影響力マップ抽出エラー:", error);
     return NextResponse.json(
-      { error: "AIによる関係の抽出に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      { error: llmErrorMessage(error, "AIによる関係の抽出に失敗しました。") },
+      { status: llmErrorStatus(error) }
     );
   }
 

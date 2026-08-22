@@ -5,7 +5,7 @@ import {
   correctTranscriptionMany,
   summarizeCorrections,
 } from "@/lib/transcriptionDictionary";
-import { isLlmConfigured, isAuthError, AUTH_ERROR_MESSAGE, structured } from "@/lib/llm";
+import { isLlmConfigured, llmErrorMessage, llmErrorStatus, structured } from "@/lib/llm";
 
 // 週報ダッシュボード：週次の営業活動（支店・自治体・事業者・議員・委託会社・銀行・
 // プロモーション・全体）をカテゴリー別に構造化した weekly_reports を読む。
@@ -512,13 +512,10 @@ export async function POST(req: NextRequest) {
   try {
     parsed = await parseWeeklyReport(text);
   } catch (error) {
-    if (isAuthError(error)) {
-      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
-    }
     console.error("週報解析エラー:", error);
     return NextResponse.json(
-      { error: "AIによる週報の解析に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      { error: llmErrorMessage(error, "AIによる週報の解析に失敗しました。貼り付けた本文はそのまま残っています。") },
+      { status: llmErrorStatus(error) }
     );
   }
 

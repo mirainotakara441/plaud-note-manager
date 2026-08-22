@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 // Anthropic は Anthropic.TextBlock の型注釈のために残している（クライアント生成は lib/llm.ts）。
 import Anthropic from "@anthropic-ai/sdk";
-import { DEFAULT_MODEL, isAuthError, isLlmConfigured, llmClient } from "@/lib/llm";
+import { DEFAULT_MODEL, isAuthError, isBillingError, BILLING_ERROR_MESSAGE, isLlmConfigured, llmClient } from "@/lib/llm";
 import { windowChunks } from "@/lib/chunks";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
 import { parseSegmentTarget } from "@/lib/categories";
@@ -572,6 +572,10 @@ ${instruction}
     // 文言は元のまま（共通の AUTH_ERROR_MESSAGE より短い）。画面表示を変えないため。
     if (isAuthError(error)) {
       return NextResponse.json({ error: "ANTHROPIC_APIキーが無効です" }, { status: 500 });
+    }
+    // 残高切れは400で返るため、下の「実際のエラー要旨」だけだと生の英文が出る。
+    if (isBillingError(error)) {
+      return NextResponse.json({ error: BILLING_ERROR_MESSAGE }, { status: 500 });
     }
     console.error("武器生成エラー:", error);
     // 原因特定のため、実際のエラー要旨を画面に返す（本人だけの認証内アプリ）。

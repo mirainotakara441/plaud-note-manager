@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 // text は下のローカル変数と名前がぶつかるので別名で取り込む。
-import { text as generateText, isLlmConfigured } from "@/lib/llm";
+import { text as generateText, isLlmConfigured, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { serviceCreds, anonCreds, restHeaders } from "@/lib/supabase";
 import { captureAuthorized, draftPrompt, parseDraft, type RamenRow } from "@/lib/ramen";
 
@@ -75,7 +75,10 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     console.error("ラーメン下書き生成エラー:", e);
-    return NextResponse.json({ error: "文章の生成に失敗しました" }, { status: 502 });
+    return NextResponse.json(
+      { error: llmErrorMessage(e, "文章の生成に失敗しました") },
+      { status: llmErrorStatus(e) }
+    );
   }
 
   const draft = parseDraft(text);

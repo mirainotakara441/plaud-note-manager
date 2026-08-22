@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  AUTH_ERROR_MESSAGE,
   DEFAULT_MODEL,
-  isAuthError,
+  llmErrorMessage,
+  llmErrorStatus,
   isLlmConfigured,
   structured,
 } from "@/lib/llm";
@@ -626,13 +626,10 @@ export async function POST(req: NextRequest) {
       throw new Error("empty_proposal");
     }
   } catch (error) {
-    if (isAuthError(error)) {
-      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
-    }
     console.error("提案生成エラー:", error);
     return NextResponse.json(
-      { error: "AIによる提案生成に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      { error: llmErrorMessage(error, "AIによる提案生成に失敗しました。") },
+      { status: llmErrorStatus(error) }
     );
   }
 

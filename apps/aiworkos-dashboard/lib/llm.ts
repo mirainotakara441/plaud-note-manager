@@ -71,6 +71,70 @@ export function isAuthError(error: unknown): boolean {
 export const AUTH_ERROR_MESSAGE =
   "ANTHROPIC_APIキーが無効です。.env.local の ANTHROPIC_API_KEY を確認してください。";
 
+/**
+ * クレジット残高切れ・支払いの問題かどうか。
+ *
+ * 2026-08-22、日記の登録が本番で落ちた。原因はAnthropic APIの残高ゼロだったが、
+ * 画面には「しばらくしてから再度お試しください」と出ていた。残高切れは時間では
+ * 解消しないので、この案内は待つだけ無駄な時間を生む嘘だった。実際APIも
+ * `x-should-retry: false` を返して「再試行しても無駄」と明言している。
+ *
+ * 厄介なのは、残高切れがHTTP 400（＝リクエストが悪い）で返ってくること。
+ * 401でも429でもないので、素直に書くと「入力が悪い」系の扱いに落ちて、
+ * 本文を直そうとしてしまう。ここで型として切り出しておく。
+ */
+export function isBillingError(error: unknown): boolean {
+  const e = error as {
+    status?: number;
+    message?: string;
+    error?: { error?: { message?: string } };
+  };
+  if (e?.status !== 400) return false;
+  const detail = `${e?.error?.error?.message ?? ""} ${e?.message ?? ""}`.toLowerCase();
+  return detail.includes("credit balance") || detail.includes("plans & billing");
+}
+
+/** 残高切れのときに画面へ出す文言。 */
+export const BILLING_ERROR_MESSAGE =
+  "AnthropicAPIのクレジット残高が不足しています。時間をおいても解消しないので、" +
+  "console.anthropic.com の Plans & Billing で残高を追加してください。";
+
+/** 一時的な混雑・レート制限か。こちらは本当に「しばらく待つ」で直る。 */
+export function isTransientError(error: unknown): boolean {
+  const status = (error as { status?: number })?.status;
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 529;
+}
+
+/**
+ * LLM呼び出しの例外を、画面に出す文言へ変換する。
+ *
+ * AIを呼ぶAPIは14本あり、どれも catch で自前の文言を返していた。そのため
+ * 残高切れ・キー無効・混雑のどれで落ちても同じ文が出て、吉井さんの側からは
+ * 「待てばいいのか、直せばいいのか」が区別できなかった。原因が分かる文言は
+ * ここ1箇所で作り、各routeは fallback（その処理特有の言い回し）だけ渡す。
+ *
+ * @param fallback 原因を特定できなかったときの、その処理らしい文言
+ */
+export function llmErrorMessage(error: unknown, fallback: string): string {
+  if (isAuthError(error)) return AUTH_ERROR_MESSAGE;
+  if (isBillingError(error)) return BILLING_ERROR_MESSAGE;
+  if (isTransientError(error)) {
+    return "AIが混み合っているか一時的に応答できません。少し時間をおいて再度お試しください。";
+  }
+  return fallback;
+}
+
+/**
+ * 例外に対して返すべきHTTPステータス。
+ *
+ * 残高切れ・キー無効はこちら側の設定の問題なので500。混雑は502のままにして、
+ * 監視側で「待てば直るもの」と「人が動かないと直らないもの」を分けられるようにする。
+ */
+export function llmErrorStatus(error: unknown): number {
+  if (isAuthError(error) || isBillingError(error)) return 500;
+  return 502;
+}
+
 /** structured() / text() の共通オプション。 */
 type CallOptions = {
   /** 省略時は DEFAULT_MODEL。 */

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 // Anthropic は Anthropic.MessageParam（多ターンの会話の型）でのみ使う。
 // 実際の呼び出しは lib/llm.ts のヘルパー経由。
 import Anthropic from "@anthropic-ai/sdk";
-import { isLlmConfigured, structured, text as llmText } from "@/lib/llm";
+import { isLlmConfigured, structured, text as llmText, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { findTemplate, sectionNames, type SlideTemplate } from "@/lib/slideTemplates";
 import { toJstDateString } from "@/lib/date";
@@ -1060,8 +1060,8 @@ ${visualsText || "（なし）"}
   } catch (error) {
     console.error("スライド壁打ちエラー:", error);
     return NextResponse.json(
-      { error: "処理に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      { error: llmErrorMessage(error, "処理に失敗しました。") },
+      { status: llmErrorStatus(error) }
     );
   }
 }

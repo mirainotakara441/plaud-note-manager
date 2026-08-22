@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { structured, isLlmConfigured, isAuthError, AUTH_ERROR_MESSAGE } from "@/lib/llm";
+import { structured, isLlmConfigured, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 import { correctTranscription, summarizeCorrections } from "@/lib/transcriptionDictionary";
 import { toJstDateString } from "@/lib/date";
@@ -440,9 +440,6 @@ export async function POST(req: NextRequest) {
     entries = await parseDiaryEntries(text);
     if (entries.length === 0) throw new Error("no_entries");
   } catch (error) {
-    if (isAuthError(error)) {
-      return NextResponse.json({ error: AUTH_ERROR_MESSAGE }, { status: 500 });
-    }
     if ((error as Error)?.message === "no_entries") {
       return NextResponse.json(
         { error: "日記のエントリを認識できませんでした。日付が分かる形で貼り直してください。" },
@@ -451,8 +448,10 @@ export async function POST(req: NextRequest) {
     }
     console.error("日記解析エラー:", error);
     return NextResponse.json(
-      { error: "AIによる日記の解析に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      {
+        error: llmErrorMessage(error, "AIによる日記の解析に失敗しました。日記本文はそのまま残っています。"),
+      },
+      { status: llmErrorStatus(error) }
     );
   }
 

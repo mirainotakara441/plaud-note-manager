@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 // text は下のローカル変数と名前がぶつかるので別名で取り込む。
-import { text as generateText, isLlmConfigured } from "@/lib/llm";
+import { text as generateText, isLlmConfigured, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { anonCreds, restHeaders } from "@/lib/supabase";
 import { captureAuthorized, type RamenRow } from "@/lib/ramen";
 
@@ -184,7 +184,10 @@ JSONにはしないこと（本文が複数行なので改行で壊れる）。
     console.log("月次生成 chars=", text.length);
   } catch (e) {
     console.error("月次振り返り生成エラー:", e);
-    return NextResponse.json({ error: "月次振り返りの生成に失敗しました" }, { status: 502 });
+    return NextResponse.json(
+      { error: llmErrorMessage(e, "月次振り返りの生成に失敗しました") },
+      { status: llmErrorStatus(e) }
+    );
   }
 
   // JSONにしない理由は上の指示文と同じ。4本とも複数行の日本語なので、

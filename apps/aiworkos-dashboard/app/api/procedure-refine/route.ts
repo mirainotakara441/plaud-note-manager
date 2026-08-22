@@ -3,13 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 // 名称付け（save）で使う生クライアント呼び出しのために残している。
 // 実際の呼び出しは原則 lib/llm.ts のヘルパー経由。
 import Anthropic from "@anthropic-ai/sdk";
-import {
-  DEFAULT_MODEL,
-  isLlmConfigured,
-  llmClient,
-  structured,
-  text as llmText,
-} from "@/lib/llm";
+import { DEFAULT_MODEL, isLlmConfigured, llmClient, structured, text as llmText, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import {
   findProcedureTemplate,
@@ -946,8 +940,8 @@ ${items.map((it, i) => `${i + 1}. ${it.title}`).join("\n")}
   } catch (error) {
     console.error("提出文書壁打ちエラー:", error);
     return NextResponse.json(
-      { error: "処理に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      { error: llmErrorMessage(error, "処理に失敗しました。") },
+      { status: llmErrorStatus(error) }
     );
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
-import { isLlmConfigured, structured } from "@/lib/llm";
+import { isLlmConfigured, structured, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 
 // 学習ログ1件から、自分専用の4択問題を作る。
 //
@@ -178,8 +178,13 @@ export async function POST(req: NextRequest) {
     console.error("ブートキャンプ クイズ生成エラー:", error);
     const detail = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: `テストの生成に失敗しました: ${detail.slice(0, 200)}` },
-      { status: 502 }
+      {
+        error: llmErrorMessage(
+          error,
+          `テストの生成に失敗しました: ${detail.slice(0, 200)}`
+        ),
+      },
+      { status: llmErrorStatus(error) }
     );
   }
 }

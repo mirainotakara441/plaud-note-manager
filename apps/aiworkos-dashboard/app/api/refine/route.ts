@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type Anthropic from "@anthropic-ai/sdk";
-import { isLlmConfigured, structured, text } from "@/lib/llm";
+import { isLlmConfigured, structured, text, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { windowChunks } from "@/lib/chunks";
 import {
@@ -772,8 +772,8 @@ ${transcript}
   } catch (error) {
     console.error("壁打ちエラー:", error);
     return NextResponse.json(
-      { error: "処理に失敗しました。しばらくしてから再度お試しください。" },
-      { status: 502 }
+      { error: llmErrorMessage(error, "処理に失敗しました。") },
+      { status: llmErrorStatus(error) }
     );
   }
 }
