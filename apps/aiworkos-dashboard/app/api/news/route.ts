@@ -23,6 +23,8 @@ export type NewsItem = {
   id: number;
   theme: string;
   category: string;
+  /** 中カテゴリー。大カテゴリーの下の束ね（例: 生成AI → Claude関係）。 */
+  subcategory: string;
   title: string;
   link: string;
   source: string | null;
@@ -100,14 +102,20 @@ export async function GET(req: NextRequest) {
     // テーマ→カテゴリーの対応。active なテーマだけを対象にする
     // （停止したテーマの古い記事が混ざると、いま追っている話題が埋もれる）。
     const themeRes = await fetch(
-      `${c.url}/rest/v1/news_themes?select=theme,category,active&active=eq.true`,
+      `${c.url}/rest/v1/news_themes?select=theme,category,subcategory,active&active=eq.true`,
       { headers: restHeaders(c.key), cache: "no-store" }
     );
     if (!themeRes.ok) {
       return NextResponse.json({ error: `テーマ取得失敗 ${themeRes.status}` }, { status: 502 });
     }
-    const themes: { theme: string; category: string | null }[] = await themeRes.json();
+    const themes: { theme: string; category: string | null; subcategory: string | null }[] =
+      await themeRes.json();
     const categoryOf = new Map(themes.map((t) => [t.theme, t.category ?? "その他"]));
+    // 中カテゴリー。未設定のテーマは大カテゴリー名をそのまま中にも入れて、
+    // 2段目の絞り込みで行方不明にならないようにする。
+    const subcategoryOf = new Map(
+      themes.map((t) => [t.theme, t.subcategory ?? t.category ?? "その他"])
+    );
 
     const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
     const res = await fetch(
@@ -137,6 +145,7 @@ export async function GET(req: NextRequest) {
         id: r.id,
         theme: r.theme,
         category: categoryOf.get(r.theme) ?? "その他",
+        subcategory: subcategoryOf.get(r.theme) ?? "その他",
         title,
         link: r.link,
         source: r.source,
@@ -144,16 +153,28 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // 画面のタブに出す並び。件数0のカテゴリーも出す（「今日は無い」と
-    // 「そもそも追っていない」を区別できるように）。
-    const categories = Array.from(
-      new Set(themes.map((t) => t.category ?? "その他"))
-    ).sort();
+    // 画面のタブに出す並び。件数の多い順（実際に読むものから目に入るように）。
+    // 件数0のカテゴリーも末尾に残す（「今日は無い」と「そもそも追っていない」を
+    // 区別できるように）。
+    const countByCategory = new Map<string, number>();
+    for (const it of items) {
+      countByCategory.set(it.category, (countByCategory.get(it.category) ?? 0) + 1);
+    }
+    const categories = Array.from(new Set(themes.map((t) => t.category ?? "その他"))).sort(
+      (a, b) => {
+        const d = (countByCategory.get(b) ?? 0) - (countByCategory.get(a) ?? 0);
+        return d !== 0 ? d : a.localeCompare(b, "ja");
+      }
+    );
 
     return NextResponse.json({
       items,
       categories,
-      themes: themes.map((t) => ({ theme: t.theme, category: t.category ?? "その他" })),
+      themes: themes.map((t) => ({
+        theme: t.theme,
+        category: t.category ?? "その他",
+        subcategory: t.subcategory ?? t.category ?? "その他",
+      })),
       days,
       /** 重複を落とす前の件数。取り込み側が壊れていないかの目安として画面に出す。 */
       rawCount: rows.length,
