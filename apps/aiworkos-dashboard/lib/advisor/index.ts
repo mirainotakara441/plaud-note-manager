@@ -10,12 +10,14 @@ import { ingestDetector } from "./detectors/ingest";
 import { recordsDetector } from "./detectors/records";
 import { goalsDetector } from "./detectors/goals";
 import { dictionaryDetector } from "./detectors/dictionary";
+import { typosDetector } from "./detectors/typos";
 
 export const DETECTORS: Detector[] = [
   goalsDetector,
   ingestDetector,
   recordsDetector,
   dictionaryDetector,
+  typosDetector,
 ];
 
 export type AdvisorResult = {
