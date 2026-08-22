@@ -56,15 +56,56 @@ export function kanaGroup(reading: string): string {
 export const KANA_GROUP_ORDER = [...KANA_ROWS.map((r) => r.label), "その他"];
 
 // アルファベット順の見出し。英字で始まらん用語は「和文」にまとめる。
+//
+// 1文字ずつ（A〜Z）だと見出しボタンが26個並んで、かえって探しにくい。
+// 5文字ずつの帯にまとめて、押した先で目視で追える量にする。
+const ALPHA_BANDS = ["A-E", "F-J", "K-O", "P-T", "U-Z"] as const;
+
 export function alphaGroup(term: string): string {
   const head = (term || "").trim().charAt(0).toUpperCase();
-  return /^[A-Z]$/.test(head) ? head : "和文";
+  if (!/^[A-Z]$/.test(head)) return "和文";
+  // 'A'(65) からの距離を5で割ると、そのまま帯の番号になる（Zは4番目に収まる）。
+  return ALPHA_BANDS[Math.min(Math.floor((head.charCodeAt(0) - 65) / 5), 4)];
 }
 
-export const ALPHA_GROUP_ORDER = [
-  ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
-  "和文",
-];
+export const ALPHA_GROUP_ORDER = [...ALPHA_BANDS, "和文"];
+
+// ── スプリント × フェーズでの絞り込み ────────────────────────────
+//
+// 「どのスプリントのどの回で出てきた言葉か」で引きたい場面がある。
+// source_sprint は "Sprint3"、source_chapter は "Learn 02" のように入っているので、
+// 章の頭の語（Learn / Design / Build）だけを取ってスプリントと組み合わせる。
+// 一覧は実データから作るので、Sprint1 の語が入れば自動で選択肢に出る。
+
+const PHASES = ["Learn", "Design", "Build"];
+
+/** "Sprint3" + "Learn 02" → "Sprint3 Learn"。判別できなければ null。 */
+export function sprintPhaseOf(t: Term): string | null {
+  const sprint = (t.source_sprint ?? "").trim();
+  if (!sprint) return null;
+  const chapter = (t.source_chapter ?? "").trim();
+  const phase = PHASES.find((p) => chapter.toLowerCase().startsWith(p.toLowerCase()));
+  return phase ? `${sprint} ${phase}` : sprint;
+}
+
+/** 実データにあるスプリント×フェーズを、件数つきで並べて返す。 */
+export function sprintPhaseGroups(terms: Term[]): { label: string; count: number }[] {
+  const m = new Map<string, number>();
+  for (const t of terms) {
+    const k = sprintPhaseOf(t);
+    if (k) m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  return Array.from(m.entries())
+    .map(([label, count]) => ({ label, count }))
+    // スプリント番号 → Learn/Design/Build の順
+    .sort((a, b) => {
+      const s = a.label.localeCompare(b.label, "ja", { numeric: true });
+      const pa = PHASES.findIndex((p) => a.label.endsWith(p));
+      const pb = PHASES.findIndex((p) => b.label.endsWith(p));
+      if (a.label.split(" ")[0] === b.label.split(" ")[0]) return pa - pb;
+      return s;
+    });
+}
 
 // 見出しごとにまとめて返す。空の見出しは落とす。
 export function groupTerms(

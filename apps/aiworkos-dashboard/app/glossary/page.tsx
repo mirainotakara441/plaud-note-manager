@@ -7,6 +7,8 @@ import {
   type Term,
   groupTerms,
   matches,
+  sprintPhaseOf,
+  sprintPhaseGroups,
 } from "@/lib/glossary";
 
 // 用語集。
@@ -24,6 +26,11 @@ export default function GlossaryPage() {
   const [mode, setMode] = useState<SortMode>("kana");
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  // 語数が増えて一覧を上から探すのがしんどくなったので、
+  // 頭文字（あ行／A）で1グループだけに絞れるようにする。null は全表示。
+  const [group, setGroup] = useState<string | null>(null);
+  // どのスプリントのどの回で出てきた言葉か（例: "Sprint3 Learn"）。null は全表示。
+  const [sprint, setSprint] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/glossary")
@@ -36,11 +43,25 @@ export default function GlossaryPage() {
       .catch((e) => setError(e instanceof Error ? e.message : "取得に失敗しました"));
   }, []);
 
+  // スプリントの選択肢は実データから作る。Sprint1の語を入れれば自動で増える。
+  const sprintOptions = useMemo(() => sprintPhaseGroups(terms ?? []), [terms]);
+
   const shown = useMemo(
-    () => (terms ?? []).filter((t) => matches(t, query)),
-    [terms, query]
+    () =>
+      (terms ?? []).filter(
+        (t) => matches(t, query) && (!sprint || sprintPhaseOf(t) === sprint)
+      ),
+    [terms, query, sprint]
   );
-  const groups = useMemo(() => groupTerms(shown, mode), [shown, mode]);
+  const allGroups = useMemo(() => groupTerms(shown, mode), [shown, mode]);
+  // 選んだ見出しが検索で消えたら、黙って全表示に戻す（0件の画面で固まらんように）
+  useEffect(() => {
+    if (group && !allGroups.some((g) => g.label === group)) setGroup(null);
+  }, [allGroups, group]);
+  const groups = useMemo(
+    () => (group ? allGroups.filter((g) => g.label === group) : allGroups),
+    [allGroups, group]
+  );
 
   const loading = !terms && !error;
 
@@ -87,7 +108,11 @@ export default function GlossaryPage() {
               <button
                 key={m}
                 type="button"
-                onClick={() => setMode(m)}
+                onClick={() => {
+                  setMode(m);
+                  // 見出しの体系ごと変わるので、絞り込みは持ち越さない
+                  setGroup(null);
+                }}
                 className="flex-1 rounded-xl border px-3 py-2 text-sm font-semibold transition active:opacity-70"
                 style={
                   mode === m
@@ -108,8 +133,93 @@ export default function GlossaryPage() {
             className="mt-3 w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none placeholder:text-gray-400 focus:border-violet-400"
           />
 
+          {/* どのスプリントのどの回で出てきた言葉かで絞る。
+              選択肢は実データから作るので、語が無い区分は出ない */}
+          {sprintOptions.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSprint(null)}
+                className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition active:opacity-70"
+                style={
+                  sprint === null
+                    ? { borderColor: C_ACCENT, background: C_ACCENT, color: "#fff" }
+                    : { borderColor: "#e5e7eb", background: "#fff", color: "#6b7280" }
+                }
+              >
+                全スプリント
+              </button>
+              {sprintOptions.map((s) => (
+                <button
+                  key={s.label}
+                  type="button"
+                  onClick={() => setSprint(sprint === s.label ? null : s.label)}
+                  className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition active:opacity-70"
+                  style={
+                    sprint === s.label
+                      ? { borderColor: C_ACCENT, background: C_ACCENT, color: "#fff" }
+                      : { borderColor: "#e5e7eb", background: "#fff", color: "#6b7280" }
+                  }
+                >
+                  {s.label}
+                  <span
+                    className="ml-1 font-normal"
+                    style={{ color: sprint === s.label ? "#ddd6fe" : "#9ca3af" }}
+                  >
+                    {s.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 頭文字で1グループに絞る。
+              語が無い見出しは出さんので、押して0件になることがない */}
+          {allGroups.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setGroup(null)}
+                className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition active:opacity-70"
+                style={
+                  group === null
+                    ? { borderColor: C_ACCENT, background: C_ACCENT, color: "#fff" }
+                    : { borderColor: "#e5e7eb", background: "#fff", color: "#6b7280" }
+                }
+              >
+                すべて
+              </button>
+              {allGroups.map((g) => (
+                <button
+                  key={g.label}
+                  type="button"
+                  onClick={() => setGroup(group === g.label ? null : g.label)}
+                  className="rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition active:opacity-70"
+                  style={
+                    group === g.label
+                      ? { borderColor: C_ACCENT, background: C_ACCENT, color: "#fff" }
+                      : { borderColor: "#e5e7eb", background: "#fff", color: "#6b7280" }
+                  }
+                >
+                  {g.label}
+                  <span
+                    className="ml-1 font-normal"
+                    style={{ color: group === g.label ? "#ddd6fe" : "#9ca3af" }}
+                  >
+                    {g.terms.length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <p className="mt-3 text-xs text-gray-400">
-            {query ? `${shown.length} 件` : `全 ${terms.length} 語`}
+            {group
+              ? `${group} ${groups[0]?.terms.length ?? 0} 語`
+              : query || sprint
+                ? `${shown.length} 件`
+                : `全 ${terms.length} 語`}
+            {sprint && <span className="ml-1">（{sprint}）</span>}
           </p>
 
           {groups.length === 0 && (
