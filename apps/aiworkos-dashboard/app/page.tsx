@@ -7,6 +7,7 @@ import AdvisorCard from "@/app/components/AdvisorCard";
 import CodeSessionBoard from "@/app/components/CodeSessionBoard";
 import NextTargetsCard from "@/app/components/NextTargetsCard";
 import WeeklyFocusCard from "@/app/components/WeeklyFocusCard";
+import { PROPOSAL_MATERIAL_GALLERY_URL } from "@/lib/externalLinks";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
@@ -23,6 +24,11 @@ type Feature = {
   title: string;
   desc: string;
   accent: string; // アイコンチップの配色
+  /**
+   * AIワークOSの外にある置き場。別タブで開き、元の作業画面を閉じさせない。
+   * 提案を組み立てている途中に素材を見に行く、という使い方をするため。
+   */
+  external?: boolean;
 };
 
 const RECORD_FEATURES: Feature[] = [
@@ -93,6 +99,14 @@ const PROPOSE_FEATURES: Feature[] = [
     title: "武器を出す",
     desc: "決めた打ち手を想定ストーリー・想定問答・スライド構成案にする",
     accent: "bg-amber-100 text-amber-700",
+  },
+  {
+    href: PROPOSAL_MATERIAL_GALLERY_URL,
+    icon: "🖼️",
+    title: "提案素材ギャラリー",
+    desc: "提案書に使える画像・動画・図解・自治体別訴求パターンを閲覧・ダウンロードできます。別タブで開きます",
+    accent: "bg-rose-100 text-rose-700",
+    external: true,
   },
 ];
 
@@ -362,24 +376,48 @@ function FeatureGroup({
       )}
       {open && (
         <div className="grid grid-cols-2 gap-2">
-          {features.map((f) => (
-            <Link
-              key={f.href}
-              href={f.href}
-              title={f.desc}
-              className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm transition active:bg-gray-50"
-            >
-              <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg ${f.accent}`}
-                aria-hidden
+          {features.map((f) => {
+            const cardClass =
+              "flex items-center gap-2.5 rounded-xl border border-gray-200 bg-white px-3 py-2.5 shadow-sm transition active:bg-gray-50";
+            const inner = (
+              <>
+                <span
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg ${f.accent}`}
+                  aria-hidden
+                >
+                  {f.icon}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm font-bold text-gray-900">
+                  {f.title}
+                </span>
+                {f.external && (
+                  <span className="shrink-0 text-xs text-gray-400" aria-hidden>
+                    ↗
+                  </span>
+                )}
+              </>
+            );
+
+            // 外部の置き場は next/link を通さず素の <a>。別タブで開き、
+            // 開いた先から元のタブを触られないよう noopener を付ける。
+            return f.external ? (
+              <a
+                key={f.href}
+                href={f.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={f.desc}
+                aria-label={`${f.title}を別タブで開く`}
+                className={cardClass}
               >
-                {f.icon}
-              </span>
-              <span className="min-w-0 flex-1 truncate text-sm font-bold text-gray-900">
-                {f.title}
-              </span>
-            </Link>
-          ))}
+                {inner}
+              </a>
+            ) : (
+              <Link key={f.href} href={f.href} title={f.desc} className={cardClass}>
+                {inner}
+              </Link>
+            );
+          })}
         </div>
       )}
     </section>
