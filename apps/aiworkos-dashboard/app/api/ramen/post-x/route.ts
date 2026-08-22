@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, anonCreds, restHeaders } from "@/lib/supabase";
-import { captureAuthorized } from "@/lib/ramen";
+import { captureAuthorized, withShopHashtag } from "@/lib/ramen";
 import { xCreds, uploadMedia, postTweet } from "@/lib/x";
 
 // 下書きをXへ投稿する。写真は Supabase Storage（非公開）から取り出して media/upload に流す。
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
   }
 
   const getRes = await fetch(
-    `${anon.url}/rest/v1/ramen_logs?select=id,eaten_on,draft_x,x_url,x_post_lock,photo_urls&id=eq.${id}`,
+    `${anon.url}/rest/v1/ramen_logs?select=id,eaten_on,shop,draft_x,x_url,x_post_lock,photo_urls&id=eq.${id}`,
     { headers: restHeaders(anon.key), cache: "no-store" }
   );
   if (!getRes.ok) {
@@ -126,11 +126,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const text = (overrideText ?? row.draft_x ?? "").trim();
-  if (!text) {
+  const body = (overrideText ?? row.draft_x ?? "").trim();
+  if (!body) {
     await releaseLock(svc, id, null);
     return NextResponse.json({ error: "X用の下書きがありません" }, { status: 400 });
   }
+  // 店名タグ（#田坂屋 など）は投稿の直前にここで足す。本文の生成をAIに任せると
+  // 付け忘れる日が出るため、送る一歩手前で機械的に付ける。
+  // 画面で手直しした本文（overrideText）に既にタグがあれば二重には付かない。
+  const text = withShopHashtag(body, row.shop);
   // URL入りは1本$0.20（通常の13倍）になるため、事故を金額の面でも止める。
   if (/https?:\/\//i.test(text)) {
     await releaseLock(svc, id, null);

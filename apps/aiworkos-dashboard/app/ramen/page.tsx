@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChartTitle, StatTile } from "@/app/health/charts";
+import { withShopHashtag } from "@/lib/ramen";
 
 // ラーメン（ライフOS側の第1ブロック）。1行＝1杯（1訪問）。
 // データは /api/ramen（Supabase ramen_logs・読み取り専用）。
@@ -273,7 +274,12 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
             <div>
               <div className="mb-1 flex items-center gap-2">
                 <span className="text-xs font-bold text-violet-700">X用</span>
-                <CopyButton text={log.draft_x} label="本文をコピー" />
+                {/* 実際に送る本文＝店名タグ込み。見えている文と送る文がズレると、
+                    コピーして手で投げたときにタグだけ落ちる。 */}
+                <CopyButton
+                  text={withShopHashtag(log.draft_x, log.shop)}
+                  label="本文をコピー"
+                />
                 {!log.x_url && (
                   <button
                     type="button"
@@ -286,7 +292,7 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
                 )}
               </div>
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
-                {log.draft_x}
+                {withShopHashtag(log.draft_x, log.shop)}
               </p>
             </div>
           )}
