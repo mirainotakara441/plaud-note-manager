@@ -33,6 +33,9 @@ export const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: numbe
   // 入っておらず誰も気づけなかった（2026-08-19判明）。同じ8日閾値で追加する。
   { job: "ai-git-backup", label: "AI基盤の週次gitバックアップ", staleHours: 24 * 8 },
   { job: "ramen-x-followers", label: "ラーメンXのフォロワー記録", staleHours: 48 },
+  // X監視ダイジェスト（毎朝6時）。/news の右カラムの中身。止まると右カラムが
+  // 古い日付のまま固まるが、カード側が「取得 M/D HH:MM」を出すので画面でも気づける。
+  { job: "x-digest", label: "X監視ダイジェストの収集", staleHours: 48 },
 ];
 
 /**
