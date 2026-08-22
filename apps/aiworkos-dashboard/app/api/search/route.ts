@@ -18,6 +18,7 @@ const VALID_SOURCE_TYPES = [
   "PDF",
   "その他",
   "月次報告",
+  "週報",
 ];
 
 export async function POST(req: NextRequest) {

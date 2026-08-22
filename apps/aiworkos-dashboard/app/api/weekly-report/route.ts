@@ -17,6 +17,10 @@ import { isLlmConfigured, isAuthError, AUTH_ERROR_MESSAGE, structured } from "@/
 // スキルの Step 1（カテゴリー読み替え・ユニットの分解・全体の限定）をそのまま
 // システムプロンプトへ移植した。分類基準を変えるときは両方直すこと。
 //
+// 週報は1週間の活動の集約点で、積み上がって月報・年報になり、その都度レビューの
+// 土台になる。そのため登録・編集のたびに memory_chunks(source_type=週報) へも運び、
+// 検索や提案エージェントから「あの団体、前どうやったか」を引けるようにする。
+//
 // thinking 有効時のVercelタイムアウト対策（app/api/diary/route.ts と同じ理由）。
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -45,6 +49,99 @@ type RowWithActionDone = WeeklyReportRow & { action_done: boolean | null };
 
 function headers(key: string): Record<string, string> {
   return restHeaders(key);
+}
+
+// ============ 記憶層（memory_chunks）への連携 ============
+//
+// 週報1行＝1チャンク。organization を持たせるので、団体名での絞り込みがそのまま効く。
+// source_id は週報行のUUIDに紐づけるため、同じ行を編集し直しても増殖しない
+// （purge → store の順で入れ替える。app/api/retrospective/route.ts と同じ作法）。
+
+type MemoryRow = {
+  id: string;
+  week_start: string;
+  category: string;
+  organization: string | null;
+  summary: string | null;
+  insight: string | null;
+  tactic: string | null;
+};
+
+function memoryPrefix(id: string): string {
+  return `weekly_report:${id}`;
+}
+
+/** 週報1行を、検索で意味が通る1本のテキストにする。 */
+function rowToMemoryText(r: MemoryRow): string {
+  const head = `【${r.week_start}週／${r.category}${r.organization ? `／${r.organization}` : ""}】`;
+  const parts = [head];
+  if (r.summary) parts.push(`■動き\n${r.summary}`);
+  if (r.insight) parts.push(`■反応・示唆\n${r.insight}`);
+  if (r.tactic) parts.push(`■次アクション\n${r.tactic}`);
+  return parts.join("\n\n");
+}
+
+/**
+ * 週報1行を記憶層へ入れ直す。
+ * 記憶層への保存が失敗しても週報の登録自体は成功扱いにする（本体はweekly_reports側で、
+ * 記憶層は検索用の写しのため）。ただし黙って落とさず、失敗件数を呼び出し元へ返す。
+ */
+async function storeRowMemory(
+  anon: { url: string; key: string },
+  r: MemoryRow
+): Promise<boolean> {
+  const prefix = memoryPrefix(r.id);
+  try {
+    await fetch(`${anon.url}/functions/v1/purge-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id_prefix: prefix }),
+      cache: "no-store",
+    });
+
+    const res = await fetch(`${anon.url}/functions/v1/store-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_type: "週報",
+        source_id: `${prefix}:1`,
+        organization: r.organization,
+        title: `${r.week_start}週｜${r.category}${r.organization ? `｜${r.organization}` : ""}`,
+        content: rowToMemoryText(r),
+        event_date: r.week_start,
+        metadata: {
+          種別: "週報",
+          カテゴリ: r.category,
+          週: r.week_start,
+          ...(r.organization ? { 団体: r.organization } : {}),
+        },
+      }),
+      cache: "no-store",
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data?.status === "stored";
+  } catch (err) {
+    console.error("週報の記憶層保存に失敗:", err);
+    return false;
+  }
+}
+
+/** 週報行を記憶層から消す（行を削除・入れ替えたとき用）。 */
+async function purgeRowMemory(
+  anon: { url: string; key: string },
+  ids: string[]
+): Promise<void> {
+  await Promise.all(
+    ids.map((id) =>
+      fetch(`${anon.url}/functions/v1/purge-memory`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ source_id_prefix: memoryPrefix(id) }),
+        cache: "no-store",
+      }).catch((err) => console.error("週報の記憶層削除に失敗:", err))
+    )
+  );
 }
 
 export async function GET(request: Request) {
@@ -208,6 +305,11 @@ export async function PATCH(request: Request) {
         { status: 404 }
       );
     }
+    // 手直しした内容を記憶層へも反映する（写しが古いままだと、検索で拾った文が
+    // 画面の文と食い違う）。失敗しても保存自体は成功として返す。
+    const anon = anonCreds();
+    if (anon) await storeRowMemory(anon, rows[0] as MemoryRow);
+
     return NextResponse.json({
       row: rows[0],
       corrections: corrected.replacements,
@@ -499,11 +601,22 @@ export async function POST(req: NextRequest) {
       { status: 502 }
     );
   }
-  const inserted: { category: Category }[] = await insertRes.json();
+  const inserted: MemoryRow[] = await insertRes.json();
 
   const categoryCounts: Record<string, number> = {};
   for (const row of inserted) {
     categoryCounts[row.category] = (categoryCounts[row.category] ?? 0) + 1;
+  }
+
+  // 記憶層へ運ぶ。上書き登録なら、消えた古い行の写しも先に片付ける。
+  let memoryStored = 0;
+  const anon = anonCreds();
+  if (anon) {
+    if (existingRows.length > 0 && replace) {
+      await purgeRowMemory(anon, existingRows.map((r) => r.id));
+    }
+    const results = await Promise.all(inserted.map((r) => storeRowMemory(anon, r)));
+    memoryStored = results.filter(Boolean).length;
   }
 
   return NextResponse.json({
@@ -511,6 +624,7 @@ export async function POST(req: NextRequest) {
     total: inserted.length,
     categories: categoryCounts,
     replaced: existingRows.length > 0 && replace,
+    memoryStored,
     correctionMessage: summarizeCorrections(corrected.replacements, corrected.total),
   });
 }
