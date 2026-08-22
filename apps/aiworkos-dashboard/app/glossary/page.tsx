@@ -299,6 +299,9 @@ export default function GlossaryPage() {
                                       type="button"
                                       onClick={() => {
                                         setQuery(r);
+                                        // スプリント絞り込みを残したままだと、関連語が別スプリントの
+                                        // 語のときに0件表示になる。関連語ジャンプは全体から探す。
+                                        setSprint(null);
                                         setOpenId(null);
                                       }}
                                       className="rounded-full bg-violet-50 px-2.5 py-1 text-xs text-violet-700 active:opacity-70"

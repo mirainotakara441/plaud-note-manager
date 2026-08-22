@@ -107,7 +107,9 @@ function FindingRow({
               </Link>
             )}
 
-            {/* 納期。気づきは出るだけでは動かないので、期限を持たせて締める */}
+            {/* 納期。気づきは出るだけでは動かないので、期限を持たせて締める。
+                操作ボタンは text-xs＋py-1.5 を下限にする——11px＋py-0.5だと
+                タップ領域が約24pxしかなく、iPhoneで隣を押してしまう。 */}
             {editing ? (
               <span className="inline-flex items-center gap-1">
                 <input
@@ -123,7 +125,7 @@ function FindingRow({
                     }
                   }}
                   aria-label="いつまでに手を打つか"
-                  className="rounded-lg border border-emerald-400 px-1.5 py-0.5 text-[0.8125rem] text-gray-700"
+                  className="rounded-lg border border-emerald-400 px-2 py-1.5 text-[0.8125rem] text-gray-700"
                 />
                 {draft !== (f.due_date ?? "") ? (
                   <button
@@ -132,7 +134,7 @@ function FindingRow({
                       onDue(f, draft || null);
                       setEditing(false);
                     }}
-                    className="rounded-full bg-emerald-600 px-2 py-0.5 text-[0.6875rem] font-semibold text-white active:bg-emerald-700"
+                    className="rounded-full bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white active:bg-emerald-700"
                   >
                     決定
                   </button>
@@ -140,7 +142,7 @@ function FindingRow({
                   <button
                     type="button"
                     onClick={() => setEditing(false)}
-                    className="rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-400 active:bg-gray-100"
+                    className="rounded-full px-2 py-1.5 text-xs font-medium text-gray-400 active:bg-gray-100"
                   >
                     閉じる
                   </button>
@@ -152,7 +154,7 @@ function FindingRow({
                       onDue(f, null);
                       setEditing(false);
                     }}
-                    className="rounded-full border border-gray-300 px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-500 active:bg-gray-100"
+                    className="rounded-full border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-500 active:bg-gray-100"
                   >
                     クリア
                   </button>
@@ -167,7 +169,7 @@ function FindingRow({
                   setEditing(true);
                 }}
                 title={f.due_date ? "期限を変える・外す" : "いつまでに手を打つか決める"}
-                className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] transition active:scale-95 ${
+                className={`rounded-full border px-2 py-1.5 text-xs transition active:scale-95 ${
                   f.due_date ? dueMeta(f.due_date).klass : "border-dashed border-gray-300 text-gray-400"
                 }`}
               >
@@ -180,7 +182,7 @@ function FindingRow({
                 type="button"
                 disabled={busy}
                 onClick={() => onRestore(f)}
-                className="rounded-full border border-gray-300 px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-500 active:bg-gray-100"
+                className="rounded-full border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-500 active:bg-gray-100"
               >
                 戻す
               </button>
@@ -191,7 +193,7 @@ function FindingRow({
                 onClick={() => onDismiss(f)}
                 aria-label="この気づきを消す"
                 title="消す（対応済み・見なくてよい）"
-                className="ml-auto rounded-md px-1.5 py-0.5 text-gray-300 transition active:bg-gray-100 active:text-rose-500"
+                className="ml-auto rounded-md px-2 py-1.5 text-sm text-gray-300 transition active:bg-gray-100 active:text-rose-500"
               >
                 ✕
               </button>
@@ -203,7 +205,15 @@ function FindingRow({
   );
 }
 
-export default function AdvisorCard() {
+export default function AdvisorCard({
+  onAlertCount,
+}: {
+  /**
+   * 「要対応」の件数を親（ホーム）へ上げる。このカードはホームの2画面下にあり、
+   * アラートが出ていても上からは見えないため、親が作戦盤直下の赤帯で知らせる。
+   */
+  onAlertCount?: (n: number) => void;
+}) {
   const [data, setData] = useState<AdvisorResult | null>(null);
   const [failedToLoad, setFailedToLoad] = useState(false);
   const [open, setOpen] = useState(false);
@@ -211,16 +221,23 @@ export default function AdvisorCard() {
   const [showAll, setShowAll] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = useCallback(async (all: boolean) => {
-    try {
-      const r = await fetch(`/api/advisor${all ? "?all=true" : ""}`, { cache: "no-store" });
-      if (!r.ok) throw new Error(`status ${r.status}`);
-      setData(await r.json());
-      setFailedToLoad(false);
-    } catch {
-      setFailedToLoad(true);
-    }
-  }, []);
+  const load = useCallback(
+    async (all: boolean) => {
+      try {
+        const r = await fetch(`/api/advisor${all ? "?all=true" : ""}`, { cache: "no-store" });
+        if (!r.ok) throw new Error(`status ${r.status}`);
+        const d: AdvisorResult = await r.json();
+        setData(d);
+        setFailedToLoad(false);
+        onAlertCount?.(d.counts?.alert ?? 0);
+      } catch {
+        setFailedToLoad(true);
+        // 取れなかった日は赤帯を出さない（件数不明のまま煽らない）
+        onAlertCount?.(0);
+      }
+    },
+    [onAlertCount]
+  );
 
   useEffect(() => {
     load(showAll);
@@ -245,9 +262,14 @@ export default function AdvisorCard() {
     }
   }
 
+  // id="advisor-card" はホームの赤帯（要対応N件）からのアンカー。
+  // scroll-mt はホーム上部の貼り付きナビに見出しが隠れないための余白。
   if (failedToLoad) {
     return (
-      <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <section
+        id="advisor-card"
+        className="mb-6 scroll-mt-16 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
+      >
         <p className="text-sm font-bold text-gray-900">今朝の気づき</p>
         <p className="mt-1 text-sm text-gray-500">取得できませんでした</p>
       </section>
@@ -263,7 +285,10 @@ export default function AdvisorCard() {
 
   if (findings.length === 0) {
     return (
-      <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <section
+        id="advisor-card"
+        className="mb-6 scroll-mt-16 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
+      >
         <p className="text-sm font-bold text-gray-900">
           🫡 今朝の気づき
           <span className="ml-2 font-medium text-gray-400">気になるところはありません</span>
@@ -290,7 +315,10 @@ export default function AdvisorCard() {
   const rest = findings.slice(1);
 
   return (
-    <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+    <section
+      id="advisor-card"
+      className="mb-6 scroll-mt-16 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
+    >
       <div className="mb-3 flex items-baseline justify-between gap-2">
         <p className="text-sm font-bold text-gray-900">🫡 今朝の気づき</p>
         <p className="text-xs font-bold text-gray-400">

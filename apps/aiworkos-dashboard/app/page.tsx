@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import IntegrationPanel from "@/app/components/IntegrationPanel";
 import AdvisorCard from "@/app/components/AdvisorCard";
 import CodeSessionBoard from "@/app/components/CodeSessionBoard";
@@ -15,8 +15,6 @@ import { PROPOSAL_MATERIAL_GALLERY_URL } from "@/lib/externalLinks";
 // ホーム上部の「今日の作戦盤」は /api/home-stats を1回叩き、当日ToDoの残数と
 // 今週の週報KPI（接点・宿題消化）、今週のClaude利用時間をタップ導線つきで見せる
 // （Claude利用時間のみリンク無し）。
-// 未完リストのプレビュー（旧TodoReminder）はここでは重複表示になるため外し、
-// コンポーネント自体は他画面での再利用のため残してある。
 
 type Feature = {
   href: string;
@@ -230,6 +228,8 @@ type HomeStats = {
   todo: { total: number; remaining: number };
   week: {
     week_start: string | null;
+    /** week_start が今週（JST月曜起点）か。週報は週末に書くので月〜金は false になる */
+    is_current_week: boolean;
     contacts: number;
     homework_total: number;
     homework_done: number;
@@ -272,15 +272,20 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
 
   // 「今週の接点」は中身が伝わらなかった（何が1件なのか分からない）。
   // 実体は今週の週報に書いた活動の行数なので、そのまま名前にする。
+  //
+  // 週報は週末に書く運用なので、月〜金は最新の週報が先週分になる。
+  // それを「今週の活動」と呼ぶと数字が嘘になるため、先週分のときは
+  // ラベルで正直に言う（数字は隠さない——見えなくすると週報を開く動機も消える）。
+  const isCurrentWeek = stats?.week.is_current_week ?? false;
   const contactsCard: StatCard = weekFailed
     ? { href: "/weekly-report", label: "今週の活動", value: "—", caption: "取得できませんでした" }
     : noWeek
     ? { href: "/weekly-report", label: "今週の活動", value: "—", caption: "週報データがまだありません" }
     : {
         href: "/weekly-report",
-        label: "今週の活動",
+        label: isCurrentWeek ? "今週の活動" : "先週の実績",
         value: `${stats?.week.contacts ?? 0}`,
-        caption: "週報に書いた件数",
+        caption: isCurrentWeek ? "週報に書いた件数" : "直近の週報より（今週分は未登録）",
       };
 
   const homeworkCard: StatCard = weekFailed
@@ -288,10 +293,15 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
     : noWeek
     ? { href: "/weekly-report", label: "宿題消化", value: "—", caption: "週報データがまだありません" }
     : stats && stats.week.homework_total === 0
-    ? { href: "/weekly-report", label: "宿題消化", value: "—", caption: "宿題なし" }
+    ? {
+        href: "/weekly-report",
+        label: isCurrentWeek ? "宿題消化" : "宿題消化（先週分）",
+        value: "—",
+        caption: "宿題なし",
+      }
     : {
         href: "/weekly-report",
-        label: "宿題消化",
+        label: isCurrentWeek ? "宿題消化" : "宿題消化（先週分）",
         value: `${stats?.week.homework_done ?? 0}/${stats?.week.homework_total ?? 0}`,
         caption: "完了 / 全件",
       };
@@ -305,6 +315,18 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
 
   return [todoCard, contactsCard, homeworkCard, claudeHoursCard];
 }
+
+// 「よく使う」チップ行の飛び先。下部タブバー（BottomNav）の5つに入りきらないが
+// 週に何度も開くページを、作戦盤の直下からワンタップで開けるようにする。
+const QUICK_LINKS = [
+  { href: "/diary", label: "📓 日記" },
+  { href: "/actions", label: "✅ ToDo" },
+  { href: "/weekly-report", label: "🗂️ 週報" },
+  { href: "/health", label: "🩺 健康" },
+  { href: "/news", label: "📰 ニュース" },
+  { href: "/organizations", label: "🧭 団体別攻略" },
+  { href: "/ramen", label: "🍜 ラーメン" },
+] as const;
 
 // ホーム上部の飛び先。id は FeatureGroup と1対1で対応させる。
 // iPhoneだと機能カードが縦に20枚以上並び、下の群は毎回スクロールで掘り当てることになる。
@@ -345,6 +367,9 @@ function GroupNav() {
 //
 // collapsible な群（ライフ・システム）は既定で畳む。毎日開くものではないので、
 // 畳んでもホームの役割（今日の作戦から始める）は損なわれない。
+//
+// 開閉はlocalStorageに覚えさせる。毎回リセットされると「よく使うから開いておく」
+// という調整が効かず、ライフ群を毎朝開き直す羽目になる。
 function FeatureGroup({
   id,
   title,
@@ -357,6 +382,31 @@ function FeatureGroup({
   collapsible?: boolean;
 }) {
   const [open, setOpen] = useState(!collapsible);
+  const storageKey = `aiworkos:home:group-open:${id}`;
+
+  // 初期値はSSRと合わせて既定値で描き、マウント後に保存値へ寄せる
+  // （最初からlocalStorageを読むとサーバーHTMLと食い違ってhydrationが崩れる）。
+  useEffect(() => {
+    if (!collapsible) return;
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      if (saved !== null) setOpen(saved === "1");
+    } catch {
+      // プライベートモード等で読めなくても既定の開閉のまま動けばよい
+    }
+  }, [collapsible, storageKey]);
+
+  function toggle() {
+    setOpen((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem(storageKey, next ? "1" : "0");
+      } catch {
+        // 保存できなくてもその場の開閉は成立させる
+      }
+      return next;
+    });
+  }
 
   return (
     // scroll-mt は貼り付いたナビの下に見出しが隠れないための余白。
@@ -364,7 +414,7 @@ function FeatureGroup({
       {collapsible ? (
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={toggle}
           aria-expanded={open}
           className="mb-2 flex w-full items-center justify-between text-sm font-bold text-gray-500 active:opacity-70"
         >
@@ -427,22 +477,40 @@ function FeatureGroup({
 export default function Home() {
   const [stats, setStats] = useState<HomeStats | null>(null);
   const [fetchFailed, setFetchFailed] = useState(false);
-  const [now] = useState(() => new Date());
+  const [now, setNow] = useState(() => new Date());
+  // AdvisorCardから上がってくる「要対応」の件数。カード本体は2画面下にあり、
+  // アラートが出ていても上からは見えないので、作戦盤直下の赤帯で知らせる。
+  const [alertCount, setAlertCount] = useState(0);
+  const lastFetchedAt = useRef(0);
+
+  const loadStats = useCallback(async () => {
+    lastFetchedAt.current = Date.now();
+    try {
+      const r = await fetch("/api/home-stats", { cache: "no-store" });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      setStats(await r.json());
+      setFetchFailed(false);
+    } catch {
+      setFetchFailed(true);
+    }
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    fetch("/api/home-stats", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
-      .then((d) => {
-        if (alive) setStats(d);
-      })
-      .catch(() => {
-        if (alive) setFetchFailed(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+    loadStats();
+  }, [loadStats]);
+
+  // PWAはホーム画面から開き直しても前回のプロセスが生きていて、マウント時1回の
+  // fetchだと日付もKPIも古いまま残る。可視化復帰のたびに日付を計算し直し、
+  // 前回取得から60秒を超えていればKPIも取り直す（連打での無駄撃ちは避ける）。
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState !== "visible") return;
+      setNow(new Date());
+      if (Date.now() - lastFetchedAt.current > 60_000) loadStats();
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [loadStats]);
 
   const loading = !stats && !fetchFailed;
   const cards = buildStatCards(stats, fetchFailed);
@@ -504,7 +572,47 @@ export default function Home() {
             )}
           </div>
         )}
+
+        {/* 取得に失敗したときの復帰手段。「取得できませんでした」だけでは
+            開き直す以外に手が無く、PWAでは開き直しても直らないことがある。 */}
+        {!loading && (fetchFailed || !!stats?.error) && (
+          <button
+            type="button"
+            onClick={loadStats}
+            className="mt-2 w-full rounded-xl border border-gray-300 bg-white py-2 text-sm font-bold text-gray-600 transition active:bg-gray-50"
+          >
+            再読み込み
+          </button>
+        )}
       </section>
+
+      {/* 要対応の赤帯。実体（今朝の気づき）は2画面下にあり、アラートが出ていても
+          スクロールしなければ気づけない。件数だけを一等地に短く出し、押したら本体へ飛ぶ。 */}
+      {alertCount > 0 && (
+        <a
+          href="#advisor-card"
+          className="mb-4 flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm font-bold text-rose-700 transition active:bg-rose-100"
+        >
+          <span aria-hidden>⚠</span>
+          要対応{alertCount}件 → 毎朝の参謀へ
+        </a>
+      )}
+
+      {/* 「よく使う」チップ行。下部タブバーに入りきらない頻用ページへの近道。
+          横スクロール1行——折り返すと作戦盤と機能カードの間で画面を食いすぎる。 */}
+      <nav aria-label="よく使うページ" className="mb-4 -mx-4 px-4">
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+          {QUICK_LINKS.map((q) => (
+            <Link
+              key={q.href}
+              href={q.href}
+              className="shrink-0 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition active:bg-gray-100"
+            >
+              {q.label}
+            </Link>
+          ))}
+        </div>
+      </nav>
 
       {/* 「今週おこなうこと」は作戦盤のすぐ下、機能カードより前。
           今週の的を5つに絞る場所で、ホームを開いて最初に目に入るべきもの。 */}
@@ -528,8 +636,9 @@ export default function Home() {
       <FeatureGroup id="g-system" title="🛠 システム" features={SYSTEM_FEATURES} />
 
       {/* 「今朝の気づき」。各ダッシュボードは見に行けば分かるが、見に行かなければ
-          分からない。溜まったデータ側から声をかける役。 */}
-      <AdvisorCard />
+          分からない。溜まったデータ側から声をかける役。
+          要対応の件数だけは上の赤帯にも上げる（カード自体は2画面下で見えないため）。 */}
+      <AdvisorCard onAlertCount={setAlertCount} />
 
       {/* 次に攻める相手。★の順（★3が最優先）。/status の抜粋。 */}
       <NextTargetsCard />
@@ -617,18 +726,24 @@ export default function Home() {
 // 目立たせない。毎日押すものではなく、押し間違えると合言葉の再入力が要る。
 function LogoutButton() {
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   async function logout() {
     if (!window.confirm("この端末からログアウトします。\n次に開くときは合言葉の入力が必要です。")) {
       return;
     }
     setBusy(true);
+    setErr(null);
     try {
-      await fetch("/api/login", { method: "DELETE" });
-    } finally {
-      // 成功しても失敗しても /login へ行く。失敗していればゲートが弾いて
-      // ログイン画面が出るので、どちらでも辻褄が合う。
+      const r = await fetch("/api/login", { method: "DELETE" });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      // cookieが消えたことを確認できたときだけ /login へ。失敗したのに遷移すると、
+      // 「ログアウトしたつもりでcookieが生きている」状態を作ってしまう
+      // （人に端末を貸す前に押す操作なので、失敗は失敗と言わなければならない）。
       window.location.href = "/login";
+    } catch {
+      setBusy(false);
+      setErr("通信エラーでログアウトできませんでした。もう一度お試しください");
     }
   }
 
@@ -642,6 +757,7 @@ function LogoutButton() {
       >
         {busy ? "ログアウトしています…" : "この端末からログアウト"}
       </button>
+      {err && <p className="mt-1.5 text-xs text-red-600">{err}</p>}
     </div>
   );
 }

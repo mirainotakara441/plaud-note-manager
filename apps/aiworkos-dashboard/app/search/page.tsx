@@ -15,7 +15,17 @@ type SearchResult = {
   similarity: number;
 };
 
-const SOURCE_FILTERS = ["すべて", "日記", "会議", "学び", "成果物", "振り返り", "学会"] as const;
+const SOURCE_FILTERS = [
+  "すべて",
+  "日記",
+  "会議",
+  "学び",
+  "成果物",
+  "週報",
+  "月次報告",
+  "振り返り",
+  "学会",
+] as const;
 type SourceFilter = (typeof SOURCE_FILTERS)[number];
 
 const MATCH_COUNTS = [5, 10, 20] as const;
@@ -45,6 +55,9 @@ const BADGE_STYLES: Record<string, string> = {
   会議: "bg-blue-100 text-blue-800",
   学び: "bg-orange-100 text-orange-800",
   成果物: "bg-purple-100 text-purple-800",
+  週報: "bg-cyan-100 text-cyan-800",
+  月次報告: "bg-sky-100 text-sky-800",
+  振り返り: "bg-amber-100 text-amber-800",
   学会: "bg-rose-100 text-rose-800",
 };
 
@@ -91,6 +104,8 @@ function ResultCard({ result }: { result: SearchResult }) {
   const isLong = result.content.length > 120;
   const badgeStyle =
     BADGE_STYLES[result.source_type] ?? "bg-gray-100 text-gray-700";
+  // source_id がURL（Notion日記など）の記録は、元のページをそのまま開けるようにする
+  const sourceUrl = /^https?:\/\//.test(result.source_id) ? result.source_id : null;
 
   return (
     <article className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -142,6 +157,30 @@ function ResultCard({ result }: { result: SearchResult }) {
               #{tag}
             </span>
           ))}
+        </div>
+      )}
+
+      {/* 元の記録・団体別攻略への導線（結果を読んで終わりにしない） */}
+      {(sourceUrl || result.organization) && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-3">
+          {sourceUrl && (
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm font-medium text-indigo-600 active:opacity-70"
+            >
+              元を開く ↗
+            </a>
+          )}
+          {result.organization && (
+            <Link
+              href={`/organizations?org=${encodeURIComponent(result.organization)}`}
+              className="text-sm font-medium text-indigo-600 active:opacity-70"
+            >
+              団体別攻略で見る →
+            </Link>
+          )}
         </div>
       )}
     </article>

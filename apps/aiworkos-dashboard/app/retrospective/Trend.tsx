@@ -201,7 +201,7 @@ function Bars({ values, labels }: { values: (number | null)[]; labels: string[] 
         {labels.map((l, i) => (
           <span
             key={i}
-            className={`max-w-[3.5rem] flex-1 truncate text-center text-[0.5625rem] tabular-nums ${
+            className={`max-w-[3.5rem] flex-1 truncate text-center text-[0.6875rem] tabular-nums ${
               i === labels.length - 1 ? "font-bold text-gray-700" : "text-gray-400"
             }`}
           >

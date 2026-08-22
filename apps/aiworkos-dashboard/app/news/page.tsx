@@ -126,6 +126,9 @@ export default function NewsPage() {
     }
   }, []);
 
+  // 取得失敗時に「もう一度読み込む」で再実行できるよう、reloadKeyで発火させる。
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
     let alive = true;
     fetch("/api/news?days=30", { cache: "no-store" })
@@ -139,6 +142,12 @@ export default function NewsPage() {
     return () => {
       alive = false;
     };
+  }, [reloadKey]);
+
+  const retry = useCallback(() => {
+    setFailed(false);
+    setData(null);
+    setReloadKey((k) => k + 1);
   }, []);
 
   const markRead = useCallback((id: number) => {
@@ -245,6 +254,10 @@ export default function NewsPage() {
       <header className="nw-header">
         <div className="nw-shell nw-masthead">
           <div className="nw-brand">
+            {/* 取得失敗時は最下部のリンクごと消えるため、ヘッダーに常設の戻り口を置く */}
+            <Link href="/" className="nw-home">
+              ← ホーム
+            </Link>
             <h1 className="nw-logo">
               DX NEWS<span>.</span>
             </h1>
@@ -327,7 +340,14 @@ export default function NewsPage() {
 
       <main className="nw-shell nw-main">
         <section className="nw-col" aria-label="ニュース一覧">
-          {failed && <p className="nw-empty">取得できませんでした。時間をおいて開き直してください。</p>}
+          {failed && (
+            <div className="nw-empty">
+              <p>取得できませんでした。時間をおいて開き直してください。</p>
+              <button type="button" className="nw-retry" onClick={retry}>
+                もう一度読み込む
+              </button>
+            </div>
+          )}
 
           {!data && !failed && (
             <div aria-hidden>

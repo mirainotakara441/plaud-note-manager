@@ -12,6 +12,7 @@ function LoginInner() {
   const nextPath = searchParams.get("next") ?? "/";
 
   const [passphrase, setPassphrase] = useState("");
+  const [showPassphrase, setShowPassphrase] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,16 +54,27 @@ function LoginInner() {
           submit();
         }}
       >
-        <input
-          type="password"
-          value={passphrase}
-          onChange={(e) => setPassphrase(e.target.value)}
-          autoFocus
-          autoComplete="current-password"
-          placeholder="合言葉"
-          disabled={loading}
-          className="block w-full rounded-xl border border-gray-300 px-4 py-3 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
-        />
+        <div className="relative">
+          <input
+            type={showPassphrase ? "text" : "password"}
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            autoFocus
+            autoComplete="current-password"
+            placeholder="合言葉"
+            disabled={loading}
+            className="block w-full rounded-xl border border-gray-300 px-4 py-3 pr-12 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassphrase((v) => !v)}
+            disabled={loading}
+            aria-label={showPassphrase ? "合言葉を隠す" : "合言葉を表示する"}
+            className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-lg text-gray-400 active:opacity-70 disabled:opacity-40"
+          >
+            {showPassphrase ? "🙈" : "👁"}
+          </button>
+        </div>
         <button
           type="submit"
           disabled={loading || !passphrase.trim()}
@@ -71,7 +83,7 @@ function LoginInner() {
           {loading ? "確認中..." : "入る"}
         </button>
         {error && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+          <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
         )}
       </form>
 

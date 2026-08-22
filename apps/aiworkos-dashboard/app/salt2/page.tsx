@@ -199,14 +199,14 @@ function SnsLinks({ member }: { member: Salt2Member }) {
             style={{ color: C_SNS, borderColor: "#d4d7de" }}
           >
             {l.label}
-            <span className="ml-1 text-[0.625rem] text-gray-400" aria-hidden>
+            <span className="ml-1 text-[0.6875rem] text-gray-400" aria-hidden>
               ↗
             </span>
           </a>
         ))}
       </div>
       {tabun && (
-        <p className="mt-1 text-[0.625rem] leading-relaxed text-amber-700">
+        <p className="mt-1 text-xs leading-relaxed text-amber-700">
           ⚠️ 本人確認は未確定（同姓同名・別人の可能性があります）
         </p>
       )}
@@ -290,7 +290,7 @@ function MemberCard({
                 return (
                   <span
                     key={`${group}:${value}`}
-                    className={`rounded-full px-2 py-0.5 text-[0.625rem] ${
+                    className={`rounded-full px-2 py-0.5 text-xs ${
                       active ? "font-bold text-white" : "bg-gray-100 text-gray-600"
                     }`}
                     style={active ? { backgroundColor: GROUP_COLOR[group] } : undefined}
@@ -451,15 +451,15 @@ function FacetAccordion({
         </span>
         {active ? (
           <span
-            className="rounded-full px-2 py-0.5 text-[0.625rem] font-bold text-white"
+            className="rounded-full px-2 py-0.5 text-xs font-bold text-white"
             style={{ backgroundColor: color }}
           >
             {selectedCount}件選択中
           </span>
         ) : (
-          <span className="text-[0.625rem] text-gray-400">{optionCount}</span>
+          <span className="text-[0.6875rem] text-gray-400">{optionCount}</span>
         )}
-        <span className="ml-auto text-[0.625rem] text-gray-400">{open ? "▲ 畳む" : "▼ 開く"}</span>
+        <span className="ml-auto text-xs text-gray-400">{open ? "▲ 畳む" : "▼ 開く"}</span>
       </button>
       {open && <div className="border-t border-gray-100 px-3 py-2">{children}</div>}
     </div>
@@ -595,7 +595,7 @@ export default function Salt2Page() {
               placeholder="氏名・かな・会社・職種・経歴・AI活用・趣味・自己紹介の原文を横断"
               className={inputClass}
             />
-            <p className="mt-1 text-[0.625rem] leading-relaxed text-gray-400">
+            <p className="mt-1 text-xs leading-relaxed text-gray-400">
               下のタグに無い語（社名・製品名・業界用語）も、自己紹介の原文から拾えます
             </p>
 
@@ -698,7 +698,7 @@ export default function Salt2Page() {
                   previewCount={facets.teams.length}
                   moreLabel="チーム"
                 />
-                <p className="mt-1.5 text-[0.625rem] leading-relaxed text-gray-400">
+                <p className="mt-1.5 text-xs leading-relaxed text-gray-400">
                   出典はSlackのチームチャンネル。SALT2側の配属が未完のため、
                   チームが分かっているのは{all.filter((m) => m.team?.trim()).length}名ぶんです
                 </p>
@@ -735,7 +735,7 @@ export default function Salt2Page() {
               />
             </FacetAccordion>
 
-            <p className="mt-2 text-[0.625rem] leading-relaxed text-gray-400">
+            <p className="mt-2 text-xs leading-relaxed text-gray-400">
               同じ枠で複数選ぶと「どれか」、枠をまたいで選ぶと「すべて」に当てはまる人が残ります
             </p>
 

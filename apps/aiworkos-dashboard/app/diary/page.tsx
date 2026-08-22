@@ -90,7 +90,7 @@ function statusBadge(status: EntryResult["status"]) {
     );
   }
   return (
-    <span className="shrink-0 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+    <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-700">
       エラー
     </span>
   );
@@ -195,7 +195,7 @@ export default function DiaryPage() {
         </div>
 
         {statusError && (
-          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+          <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm leading-relaxed text-rose-700">
             {statusError}
           </p>
         )}
@@ -227,7 +227,7 @@ export default function DiaryPage() {
                           ? "bg-emerald-100 text-emerald-700"
                           : entry.isToday
                             ? "bg-gray-200 text-gray-500"
-                            : "bg-red-50 text-red-600"
+                            : "bg-rose-50 text-rose-600"
                       }`}
                     >
                       {entry.registered ? "済" : "未"}
@@ -272,7 +272,7 @@ export default function DiaryPage() {
         </button>
 
         {error && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
+          <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm leading-relaxed text-rose-700">
             {error}
           </p>
         )}
@@ -328,6 +328,27 @@ export default function DiaryPage() {
                 </li>
               ))}
             </ul>
+
+            {/* 登録して終わりではなく、次に見に行く場所への導線を出す */}
+            <div className="rounded-lg bg-indigo-50 px-3 py-2">
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <Link
+                  href="/actions"
+                  className="text-sm font-medium text-indigo-600 underline active:opacity-70"
+                >
+                  → 今日のToDoを見る
+                </Link>
+                <Link
+                  href="/search"
+                  className="text-sm font-medium text-indigo-600 underline active:opacity-70"
+                >
+                  → 記憶を検索
+                </Link>
+              </div>
+              <p className="mt-1 text-xs text-indigo-500">
+                「やってみよう」のToDoへの取り込みは翌朝（6時台の自動処理）に反映されます
+              </p>
+            </div>
           </div>
         )}
       </div>

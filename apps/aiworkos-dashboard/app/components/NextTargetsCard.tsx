@@ -49,7 +49,9 @@ function Stars({
           onClick={() => onPick(value === n ? 0 : n)}
           aria-label={`優先度★${n}`}
           title={value === n ? "押すと解除" : `★${n}にする`}
-          className={`px-0.5 text-sm leading-none transition active:scale-90 disabled:opacity-40 ${
+          // p-1.5＋text-base: ★は1文字なので、余白で押せる面を確保しないと
+          // 隣の★を押してしまう（タップ領域の下限はpy-1.5）
+          className={`p-1.5 text-base leading-none transition active:scale-90 disabled:opacity-40 ${
             n <= value ? "text-amber-500" : "text-gray-300"
           }`}
         >
@@ -154,9 +156,11 @@ export default function NextTargetsCard() {
                 {fmtDate(t.last_meeting)}
                 {t.stale && "⚠"}
               </span>
+              {/* 行の主CTA。11px＋py-1ではタップ領域が約24pxしかなく押しづらいので
+                  text-sm＋py-2 に上げる（表示専用の「提案なし」バッジは触らない） */}
               <Link
                 href={`/agent?org=${encodeURIComponent(t.name)}`}
-                className="shrink-0 rounded-full bg-indigo-600 px-2.5 py-1 text-[0.6875rem] font-semibold text-white transition active:bg-indigo-700"
+                className="shrink-0 rounded-full bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition active:bg-indigo-700"
               >
                 提案する
               </Link>

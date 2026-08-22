@@ -179,6 +179,15 @@
   font: var(--fs-12) / var(--lh-snug) var(--font-body);
   color: var(--text-muted);
 }
+/* ヘッダー常設の戻り口。失敗時でも行き止まりにしない */
+.nw-home {
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.nw-home:hover {
+  color: var(--ff-green-500);
+}
 .nw-meta {
   display: flex;
   align-items: center;
@@ -417,6 +426,20 @@
   font: var(--fs-15) / var(--lh-normal) var(--font-body);
   color: var(--text-muted);
   text-align: center;
+}
+/* 取得失敗時の再読み込みボタン */
+.nw-retry {
+  margin-top: 0.75rem;
+  padding: 0.375rem 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-primary);
+  background: var(--surface-card);
+  cursor: pointer;
+}
+.nw-retry:hover {
+  border-color: var(--ff-green-500);
 }
 .nw-foot {
   margin-top: 1.5rem;

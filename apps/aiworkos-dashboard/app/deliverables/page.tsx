@@ -75,11 +75,18 @@ export default function DeliverablesPage() {
   const [error, setError] = useState<string | null>(null);
   // correctionMessage は「音声入力の誤変換を辞書で直した内訳」。
   // 実際に置換したものがある時だけAPIが文言を返す（無ければ null）。
+  // organization / category / title は登録した時点の値のスナップショット
+  // （成功後に入力をクリアしても、メッセージには登録した内容を出し続けるため）。
   const [result, setResult] = useState<{
     stored: number;
     total: number;
     correctionMessage?: string | null;
+    organization: string;
+    category: Category;
+    title: string;
   } | null>(null);
+  // 成功後に <input type="file"> を空へ戻すための強制再マウント用キー
+  const [fileInputKey, setFileInputKey] = useState(0);
 
   // カテゴリーを変えたとき、その相手先に無い種別が選ばれたままにならないようにする
   // （社内→自治体で「議事メモ」が残ると、APIは通るが選択肢に無い値が入る）。
@@ -170,9 +177,20 @@ export default function DeliverablesPage() {
           stored: data.stored,
           total: data.total,
           correctionMessage: data.correctionMessage ?? null,
+          organization: organization.trim(),
+          category,
+          title: effectiveTitle,
         });
         // 一覧に無い相手なら次回から選択肢に出す
         rememberStakeholder(category, organization.trim());
+        // 二度押しで同じ内容が重複登録されないよう、本文側の入力はここで空にする
+        // （相手先・種別・日付は「続けて登録する」で使い回せるよう残す）。
+        setFilename("");
+        setTitle("");
+        setText("");
+        setFileChunks([]);
+        setTextChunks([]);
+        setFileInputKey((k) => k + 1);
       }
     } catch {
       setError("通信エラーが発生しました");
@@ -222,6 +240,7 @@ export default function DeliverablesPage() {
             ファイル（.pptx / .docx / .pdf / 画像）
           </label>
           <input
+            key={fileInputKey}
             type="file"
             accept=".pptx,.docx,.pdf,.jpg,.jpeg,.png,.gif,.webp"
             onChange={onFile}
@@ -331,12 +350,41 @@ export default function DeliverablesPage() {
             {error}
           </p>
         )}
-        {result && (
-          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
-            ✅ {organization}（{category}）の「{title}」を {result.stored}/
-            {result.total} チャンク登録しました。提案エージェントで参照されます。
-          </p>
-        )}
+        {result &&
+          (result.stored < result.total ? (
+            // 一部しか入らなかったのに緑で「成功」と出すと取りこぼしに気づけない
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+              ⚠️ {result.organization}（{result.category}）の「{result.title}」は{" "}
+              {result.total} チャンク中 {result.stored} 件しか登録できませんでした。
+              残りは入っていません。時間をおいて同じ内容をもう一度登録してください（登録済み分は上書きされます）。
+            </div>
+          ) : (
+            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+              ✅ {result.organization}（{result.category}）の「{result.title}」を{" "}
+              {result.stored}/{result.total} チャンク登録しました。提案エージェントで参照されます。
+              <span className="mt-2 flex flex-wrap items-center gap-3">
+                <Link
+                  href={`/agent?org=${encodeURIComponent(result.organization)}`}
+                  className="font-semibold text-emerald-700 underline active:opacity-70"
+                >
+                  → 提案エージェント
+                </Link>
+                <Link
+                  href={`/refine?org=${encodeURIComponent(result.organization)}`}
+                  className="font-semibold text-emerald-700 underline active:opacity-70"
+                >
+                  → 壁打ち
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setResult(null)}
+                  className="rounded-lg border border-emerald-300 bg-white px-3 py-1 font-semibold text-emerald-700 active:opacity-70"
+                >
+                  続けて登録する
+                </button>
+              </span>
+            </div>
+          ))}
         {result?.correctionMessage && (
           <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
             {result.correctionMessage}
