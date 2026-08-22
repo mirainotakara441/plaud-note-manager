@@ -1,0 +1,589 @@
+/* DXニュース紙面のデザイントークンと見た目。
+ *
+ * 出どころは Claude Design の「ニュース取得サイトのデザイン」プロジェクト
+ * （News Portal.dc.html / ds/tokens/*.css）。富士フイルムのコーポレート面から
+ * 採ったグリーンを基調に、角丸を抑えた「紙面」寄りの見た目にしてある。
+ *
+ * 全部 .nw の中だけに閉じてある。トークンを :root に置くと、他のページ
+ * （Tailwindで組んである）のリンク色やリストのマーカーまで巻き添えで変わる。
+ * デザイン側の base.css は ul/ol/a を素で潰すので、そのまま持ってくると
+ * /home-visit や /ramen が黙って壊れる。
+ *
+ * px を rem に直してあるのは globals.css が広い画面で html{font-size:18px} に
+ * 上げているため。px のまま入れると、このページだけ他より一回り小さくなる。 */
+
+.nw {
+  /* --- ブランド：富士フイルムのグリーン --- */
+  --ff-green-50: #e8f6f5;
+  --ff-green-100: #c9eae7;
+  --ff-green-500: #009a93;
+  --ff-green-600: #00847e;
+  --ff-green-700: #006b66;
+  --ff-red-500: #e3002c;
+  /* --- 図版で使う支援色 --- */
+  --ff-blue-500: #0b72b9;
+  --ff-cyan-400: #28b4d7;
+  --ff-purple-500: #8a4f8f;
+  /* --- ニュートラル --- */
+  --ff-white: #ffffff;
+  --ff-gray-50: #f7f7f7;
+  --ff-gray-100: #efefef;
+  --ff-gray-200: #e0e0e0;
+  --ff-gray-400: #bfbfbf;
+  --ff-gray-500: #8c8c8c;
+  --ff-gray-700: #595959;
+  --ff-gray-900: #1a1a1a;
+
+  /* --- 意味づけ --- */
+  --text-primary: var(--ff-gray-900);
+  --text-secondary: var(--ff-gray-700);
+  --text-muted: var(--ff-gray-500);
+  --text-inverse: var(--ff-white);
+  --text-link: var(--ff-green-600);
+  --text-link-hover: var(--ff-green-700);
+  --surface-page: var(--ff-white);
+  --surface-subtle: var(--ff-gray-50);
+  --surface-card: var(--ff-white);
+  --border-subtle: var(--ff-gray-100);
+  --border-default: var(--ff-gray-200);
+  --border-strong: var(--ff-gray-400);
+  --focus-ring: var(--ff-green-500);
+  --status-warning: #e58a00;
+  --status-warning-bg: #fdf3e3;
+
+  /* --- 書体。Noto は読み込まない（和文ウェブフォントは重く、毎朝スマホで
+         開く画面に載せる価値が無い）。入っていれば使い、無ければ端末の
+         ゴシックに落ちる。 --- */
+  --font-latin: "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-jp: "Hiragino Kaku Gothic ProN", "Yu Gothic Medium", "Noto Sans JP",
+    Meiryo, sans-serif;
+  --font-body: var(--font-latin), var(--font-jp);
+  --font-display: var(--font-latin), var(--font-jp);
+
+  --fs-11: 0.6875rem;
+  --fs-12: 0.75rem;
+  --fs-13: 0.8125rem;
+  --fs-15: 0.9375rem;
+  --fs-16: 1rem;
+  --fs-18: 1.125rem;
+  --fs-20: 1.25rem;
+  --fs-28: 1.75rem;
+  --fs-32: 2rem;
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-normal: 1.6;
+  --ls-tight: -0.01em;
+  --ls-jp: 0.02em;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-pill: 999px;
+  --shadow-focus: 0 0 0 3px rgba(0, 154, 147, 0.28);
+  --duration-fast: 150ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* --- カテゴリー色。丸ポチ・チップは意匠どおりの鮮やかな値、文字は暗い方を使う。
+         デザインの cyan(#28b4d7) と warning(#e58a00) は白地の12px文字だと
+         コントラスト比が2倍台しか出ず、実機で読めない。見た目は保ったまま
+         文字だけ濃くする。 --- */
+  --cat-ai: var(--ff-purple-500);
+  --cat-ai-text: var(--ff-purple-500);
+  --cat-sales: var(--ff-cyan-400);
+  --cat-sales-text: #0f6f89;
+  --cat-gov: var(--ff-blue-500);
+  --cat-gov-text: var(--ff-blue-500);
+  --cat-os: var(--ff-green-600);
+  --cat-os-text: var(--ff-green-700);
+  --cat-lobby: var(--status-warning);
+  --cat-lobby-text: #8a5a00;
+  --cat-other: var(--ff-gray-500);
+  --cat-other-text: var(--ff-gray-700);
+
+  min-height: 100vh;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font: var(--fs-15) / var(--lh-normal) var(--font-body);
+  letter-spacing: var(--ls-jp);
+}
+
+.nw *,
+.nw *::before,
+.nw *::after {
+  box-sizing: border-box;
+}
+.nw h1,
+.nw h2,
+.nw h3,
+.nw p {
+  margin: 0;
+}
+.nw a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+.nw a:hover {
+  color: var(--text-link-hover);
+}
+.nw button {
+  font: inherit;
+  letter-spacing: inherit;
+}
+.nw a:focus-visible,
+.nw button:focus-visible,
+.nw input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* 天面の緑の帯。紙面の「題字下の罫」にあたる */
+.nw-accent {
+  height: 4px;
+  background: var(--ff-green-500);
+}
+
+.nw-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+
+/* ---------- ヘッダー ---------- */
+.nw-header {
+  border-bottom: 1px solid var(--border-strong);
+}
+.nw-masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding-top: 1.25rem;
+  padding-bottom: 1rem;
+}
+.nw-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 0.875rem;
+  flex-wrap: wrap;
+}
+.nw-logo {
+  font: 700 var(--fs-28) / var(--lh-tight) var(--font-display);
+  letter-spacing: var(--ls-tight);
+}
+.nw-logo span {
+  color: var(--ff-green-500);
+}
+.nw-tagline {
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  color: var(--text-muted);
+}
+.nw-meta {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.nw-date {
+  font: var(--fs-13) / var(--lh-normal) var(--font-latin);
+  color: var(--text-secondary);
+}
+.nw-search {
+  width: 13.75rem;
+  max-width: 100%;
+  height: 2.125rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-primary);
+  background: var(--surface-card);
+  outline: none;
+}
+.nw-search:focus {
+  border-color: var(--ff-green-500);
+  box-shadow: var(--shadow-focus);
+}
+.nw-search::placeholder {
+  color: var(--text-muted);
+}
+
+.nw-chiprow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.875rem;
+}
+.nw-chip {
+  height: 1.875rem;
+  padding: 0 0.875rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  font: 500 var(--fs-13) / var(--lh-snug) var(--font-body);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+.nw-chip:hover {
+  background: var(--surface-subtle);
+}
+.nw-chip[aria-pressed="true"] {
+  background: var(--ff-gray-900);
+  border-color: var(--ff-gray-900);
+  color: var(--text-inverse);
+}
+.nw-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.nw-chip-count {
+  font: var(--fs-12) / var(--lh-snug) var(--font-latin);
+  opacity: 0.7;
+}
+.nw-chip-spacer {
+  flex: 1;
+}
+.nw-chip-sm {
+  height: 1.625rem;
+  padding: 0 0.6875rem;
+  border-radius: var(--radius-xs);
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+}
+.nw-chip-sm[aria-pressed="true"] {
+  background: var(--ff-green-600);
+  border-color: var(--ff-green-600);
+}
+
+.nw-themebar {
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+}
+.nw-themebar .nw-chiprow {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+}
+.nw-themelabel {
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  color: var(--text-muted);
+}
+
+/* ---------- 本文の段組み ---------- */
+.nw-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 2.5rem;
+  padding-top: 1.75rem;
+  padding-bottom: 4rem;
+}
+.nw-col {
+  min-width: 0;
+}
+.nw-sticky {
+  position: sticky;
+  top: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+/* ---------- トップ記事 ---------- */
+.nw-hero {
+  border-bottom: 3px double var(--border-strong);
+  padding-bottom: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+.nw-hero-tags {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.625rem;
+}
+.nw-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.375rem;
+  padding: 0 0.5rem;
+  background: var(--ff-green-500);
+  color: var(--text-inverse);
+  font: 500 var(--fs-12) / 1 var(--font-body);
+  border-radius: var(--radius-xs);
+}
+.nw-hero-theme {
+  font: 500 var(--fs-12) / var(--lh-snug) var(--font-body);
+}
+.nw-hero-title {
+  font: 700 var(--fs-32) / var(--lh-snug) var(--font-display);
+  margin-bottom: 0.625rem !important;
+  text-wrap: pretty;
+}
+.nw-hero a {
+  color: var(--text-primary);
+}
+.nw-hero a:hover {
+  color: var(--text-link-hover);
+}
+.nw-hero-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 0.875rem;
+  flex-wrap: wrap;
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-muted);
+}
+.nw-dot-new {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ff-red-500);
+  flex: none;
+}
+
+/* ---------- 日付ごとの束 ---------- */
+.nw-dayhead {
+  margin: 1.75rem 0 0.25rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--ff-gray-900);
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+}
+.nw-dayhead b {
+  font: 700 var(--fs-16) / var(--lh-tight) var(--font-display);
+}
+.nw-dayhead span {
+  font: var(--fs-12) / var(--lh-snug) var(--font-latin);
+  color: var(--text-muted);
+}
+
+/* `.nw a` は詳細度(0,1,1)で `.nw-item`(0,1,0) に勝ってしまう。
+   素直に .nw-item と書くと見出しが全部リンク色（緑）で並ぶ——実機で発覚。
+   要素セレクタを足して勝たせる。 */
+.nw a.nw-item {
+  display: grid;
+  grid-template-columns: 3.25rem 7.375rem minmax(0, 1fr);
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.8125rem 0.5rem;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+.nw a.nw-item:hover {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}
+/* 既読は薄くするが、消しはしない。「読んだ」と「無い」は違う */
+.nw-item.is-read {
+  opacity: 0.55;
+}
+.nw-item time {
+  font: var(--fs-13) / var(--lh-normal) var(--font-latin);
+  color: var(--text-muted);
+}
+.nw-item-theme {
+  font: 500 var(--fs-12) / var(--lh-snug) var(--font-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nw-item-body {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.nw-item-title {
+  font: var(--fs-15) / var(--lh-normal) var(--font-body);
+}
+.nw-item-source {
+  flex: none;
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  color: var(--text-muted);
+}
+.nw-empty {
+  padding: 2.5rem 0;
+  font: var(--fs-15) / var(--lh-normal) var(--font-body);
+  color: var(--text-muted);
+  text-align: center;
+}
+.nw-foot {
+  margin-top: 1.5rem;
+  font: var(--fs-12) / var(--lh-normal) var(--font-body);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* 読み込み中の骨組み。高さを実物に寄せて、出た瞬間に紙面が跳ねないようにする */
+.nw-skel {
+  height: 3.25rem;
+  border-bottom: 1px solid var(--border-default);
+  background: linear-gradient(
+    90deg,
+    var(--surface-subtle) 0%,
+    var(--ff-gray-100) 50%,
+    var(--surface-subtle) 100%
+  );
+  background-size: 200% 100%;
+  animation: nw-shimmer 1.4s linear infinite;
+}
+@keyframes nw-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nw-skel {
+    animation: none;
+  }
+}
+
+/* ---------- 右カラム（X監視ダイジェスト） ---------- */
+.nw-aside-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 2px solid var(--ff-gray-900);
+  padding-bottom: 0.5rem;
+}
+.nw-aside-head h2 {
+  font: 700 var(--fs-18) / var(--lh-tight) var(--font-display);
+}
+.nw-aside-head span {
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  color: var(--text-muted);
+}
+.nw-card {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  overflow: hidden;
+}
+.nw-card-head {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  background: var(--surface-subtle);
+}
+.nw-card-title {
+  font: 500 var(--fs-13) / var(--lh-snug) var(--font-body);
+}
+.nw-card-note {
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  color: var(--text-muted);
+}
+.nw-card-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.4375rem;
+  background: var(--status-warning-bg);
+  color: #8a5a00;
+  font: 500 var(--fs-12) / 1 var(--font-body);
+  border-radius: var(--radius-xs);
+}
+.nw-card-row {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.nw-card-row:last-child {
+  border-bottom: none;
+}
+.nw-kw {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+.nw-kw-name {
+  font: 500 var(--fs-12) / var(--lh-snug) var(--font-latin);
+  color: var(--ff-blue-500);
+}
+.nw-kw-metric {
+  font: var(--fs-12) / var(--lh-snug) var(--font-latin);
+  color: var(--text-muted);
+}
+.nw-card-body {
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-secondary);
+}
+.nw-card-lead {
+  font: 500 var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-primary);
+  margin-bottom: 0.375rem !important;
+}
+.nw-quote {
+  padding: 0.5rem 0.625rem;
+  background: var(--surface-subtle);
+  border-left: 2px solid var(--border-strong);
+  font: var(--fs-12) / var(--lh-normal) var(--font-latin);
+  color: var(--text-secondary);
+}
+.nw-card-foot {
+  display: block;
+  padding: 0.625rem 1rem;
+  border-top: 1px solid var(--border-subtle);
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  text-align: right;
+}
+
+/* ---------- 狭い画面 ---------- */
+/* iPhoneで毎朝開く画面なので、崩れないことを優先する。
+   段組みは1本にし、右カラムは一覧の後ろへ回す（先に読むのは見出し）。 */
+@media (max-width: 63.99rem) {
+  .nw-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+  .nw-sticky {
+    position: static;
+  }
+}
+@media (max-width: 40rem) {
+  .nw-shell {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .nw-hero-title {
+    font-size: var(--fs-20);
+  }
+  .nw-masthead {
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .nw-search {
+    width: 100%;
+  }
+  .nw-meta {
+    width: 100%;
+    justify-content: space-between;
+  }
+  /* 3列だと見出しが縦に潰れる。時刻とテーマを1行目に寄せ、見出しを次の行へ */
+  .nw-item {
+    grid-template-columns: 3.25rem minmax(0, 1fr);
+    gap: 0.25rem 0.75rem;
+    padding: 0.75rem 0.25rem;
+  }
+  .nw-item-body {
+    grid-column: 1 / -1;
+  }
+  .nw-item-theme {
+    white-space: normal;
+  }
+}
