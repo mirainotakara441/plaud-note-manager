@@ -79,6 +79,7 @@ export const CATEGORIES = [
   "議員・国",
   "スキルアップ・生成AI",
   "信心",
+  "家族",
   "健康",
 ] as const;
 
@@ -90,6 +91,7 @@ const CATEGORY_ACCENT: Record<string, string> = {
   "議員・国": "bg-indigo-100 text-indigo-700",
   "スキルアップ・生成AI": "bg-teal-100 text-teal-700",
   信心: "bg-violet-100 text-violet-700",
+  家族: "bg-rose-100 text-rose-700",
   健康: "bg-lime-100 text-lime-700",
 };
 
@@ -111,6 +113,21 @@ function normalizeKey(raw: string): string {
     .toUpperCase();
 }
 
+// 「仕事｜自治体」のように大見出し＋区切りで書かれたとき、右側だけを見出しとして扱う。
+// 左は束ねのラベルであって、カテゴリー名は右にある。
+function afterDivider(raw: string): string {
+  const parts = raw.split(/[｜|>／/›»]/);
+  return parts.length > 1 ? parts[parts.length - 1].trim() : raw;
+}
+
+/** 見出し文字列からカテゴリー／特殊ブロックを引くためのキー候補を、優先順に返す。 */
+function keyCandidates(rest: string): string[] {
+  const out = [normalizeKey(rest)];
+  const tail = afterDivider(rest);
+  if (tail !== rest) out.push(normalizeKey(tail));
+  return out;
+}
+
 const CATEGORY_ALIASES: Record<string, string> = {};
 function registerCategory(canonical: string, aliases: string[]) {
   CATEGORY_ALIASES[normalizeKey(canonical)] = canonical;
@@ -122,13 +139,27 @@ registerCategory("事業者・委託会社", ["事業者", "委託会社", "委�
 registerCategory("議員・国", ["議員", "国", "議員・国会", "政治", "議連"]);
 registerCategory("スキルアップ・生成AI", ["スキルアップ", "生成AI", "AI", "学び", "自己研鑽", "スキル"]);
 registerCategory("信心", ["信仰", "学会", "信心・学会"]);
+registerCategory("家族", ["家庭", "家族・家庭"]);
 registerCategory("健康", ["体調", "健康・体調"]);
+// 「仕事｜ステークホルダー」のように、相手の区分で書かれることがある。
+// 事業者・委託会社と同じ扱いにする（社内外の関係者の動きをここに集める）。
+registerCategory("事業者・委託会社", ["ステークホルダー", "ステイクホルダ", "ステークホルダ"]);
 
 type SpecialTarget = "title" | "one_liner" | "insights" | "next_plans";
 
 const SPECIAL_ALIASES: Record<string, SpecialTarget> = {};
 function registerSpecial(target: SpecialTarget, aliases: string[]) {
-  for (const a of aliases) SPECIAL_ALIASES[normalizeKey(a)] = target;
+  for (const a of aliases) {
+    SPECIAL_ALIASES[normalizeKey(a)] = target;
+    // 「今週の示唆」「今週を一言で」「来週の最重要3点」のように、期間の接頭辞を
+    // 付けて書くことが多い。別名をひとつずつ足すとキリが無いので、
+    // 期間×助詞の組み合わせをまとめて同じ場所に登録しておく。
+    for (const span of ["今週", "今月", "来週", "来月", "次週", "次月", "今回"]) {
+      for (const particle of ["の", "を", "は", ""]) {
+        SPECIAL_ALIASES[normalizeKey(`${span}${particle}${a}`)] = target;
+      }
+    }
+  }
 }
 registerSpecial("title", ["タイトル", "表題", "件名"]);
 registerSpecial("one_liner", ["一言で", "一言", "ひとことで", "ひとこと", "一言でいうと", "要約", "サマリー", "総論"]);
@@ -143,6 +174,11 @@ registerSpecial("next_plans", [
   "次の予定",
   "予定",
   "これからの予定",
+  // やることを「最重要3点」「行動指針」の形で書くことが多い。どちらも次期の動きなので同じ場所へ。
+  "最重要3点",
+  "最重要",
+  "行動指針",
+  "重点",
 ]);
 
 export function canonicalCategory(raw: string): string | null {
@@ -262,12 +298,26 @@ export function todayIso(): string {
 // ---------------------------------------------------------------------------
 
 // 見出しから★評価を取り出し、★部分を除いた見出し文字列を返す。
-// "自治体 ★★★★☆" / "自治体 ★×4" / "自治体 評価：4" / "自治体 4/5" に対応。
+// "自治体 ★★★★☆" / "自治体 ★×4" / "自治体 評価：4" / "自治体 4/5"
+// / "自治体 ⭐4.0"（記号1つ＋数字）に対応。
 export function extractRating(text: string): { rating: number | null; rest: string } {
   let rating: number | null = null;
   let rest = text;
 
-  const mul = rest.match(/★\s*[×xX*＊]\s*([1-5])/);
+  // ★★★★☆ と数える形より先に「記号＋数字」を見る。
+  // ⭐4.0 のように書かれたとき、後ろの数字を残したまま星を1個と数えてしまうと
+  // 評価が全部1になり、見出しにも "4.0" が残ってカテゴリーを引けなくなる
+  // （2026-08-22に実際にこれで節が1つも読めなかった）。
+  // 小数は四捨五入する（★は1〜5の整数で持つため。3.5→4）。
+  const numbered = rest.match(/[★⭐✭]\s*([1-5])(?:[.．](\d))?/);
+  if (numbered) {
+    const whole = Number(numbered[1]);
+    const frac = numbered[2] ? Number(numbered[2]) : 0;
+    rating = Math.min(5, frac >= 5 ? whole + 1 : whole);
+    rest = rest.replace(numbered[0], " ");
+  }
+
+  const mul = rating === null ? rest.match(/★\s*[×xX*＊]\s*([1-5])/) : null;
   if (mul) {
     rating = Number(mul[1]);
     rest = rest.replace(mul[0], " ");
@@ -435,8 +485,10 @@ function detectHeading(line: string): Heading | null {
   // 記号なしでも「自治体 ★★★★☆」のような短い行は見出しとみなす。
   if (t.length <= 30 && !isTableRow(t)) {
     const { rest } = extractRating(t);
-    const key = normalizeKey(rest);
-    if (rest !== "" && (CATEGORY_ALIASES[key] || SPECIAL_ALIASES[key])) {
+    if (
+      rest !== "" &&
+      keyCandidates(rest).some((k) => CATEGORY_ALIASES[k] || SPECIAL_ALIASES[k])
+    ) {
       return { text: t, level: 2 };
     }
   }
@@ -498,9 +550,11 @@ export function parseRetrospectiveMarkdown(text: string): ParseResult {
     }
 
     const { rating, rest } = extractRating(heading.text);
-    const key = normalizeKey(rest);
-    const special = SPECIAL_ALIASES[key];
-    const category = CATEGORY_ALIASES[key];
+    // 「示唆(3点)」のような後ろの括弧書きは、件数の補足であって見出し名ではない。
+    const bare = rest.replace(/[（(][^）)]*[)）]\s*$/, "").trim() || rest;
+    const keys = keyCandidates(bare);
+    const special = keys.map((k) => SPECIAL_ALIASES[k]).find(Boolean);
+    const category = keys.map((k) => CATEGORY_ALIASES[k]).find(Boolean);
 
     if (special === "title") {
       // 「タイトル」見出しの中身は次の行以降。目印つきのバケットに入れて後で拾う。
