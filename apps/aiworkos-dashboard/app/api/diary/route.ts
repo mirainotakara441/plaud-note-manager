@@ -367,6 +367,27 @@ async function storeDiaryMemory(
   }
 }
 
+// 記憶(Supabase memory_chunks)に同じ日付の日記が既にあるか。
+// memory_chunks は RLS で anon の SELECT が通らないため、
+// /api/diary/status と同じく serviceCreds() で確認する。
+async function diaryMemoryExists(
+  svc: { url: string; key: string },
+  date: string
+): Promise<boolean> {
+  const res = await fetch(
+    `${svc.url}/rest/v1/memory_chunks?select=id&source_type=eq.${encodeURIComponent(
+      "日記"
+    )}&event_date=eq.${date}&limit=1`,
+    { headers: restHeaders(svc.key), cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`memory_chunks確認失敗 ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const rows = await res.json();
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 // ============ ハンドラ ============
 
 export async function POST(req: NextRequest) {
@@ -454,7 +475,41 @@ export async function POST(req: NextRequest) {
     }
 
     if (existingUrl) {
-      results.push({ date: e.date, title: e.title, status: "skipped", notionUrl: existingUrl });
+      // Notionに既存でも、無条件にskipすると「Notionは完了・記憶(Supabase)は失敗」の日を
+      // 貼り直したときに記憶へ永久に入らない。記憶側の存在まで確認し、無ければ補完登録する。
+      const svc = serviceCreds();
+      if (!svc) {
+        results.push({ date: e.date, title: e.title, status: "skipped", notionUrl: existingUrl });
+        continue;
+      }
+      let inMemory: boolean;
+      try {
+        inMemory = await diaryMemoryExists(svc, e.date);
+      } catch (error) {
+        console.error("記憶側の存在確認エラー:", error);
+        results.push({
+          date: e.date,
+          title: e.title,
+          status: "skipped",
+          notionUrl: existingUrl,
+          reason: "記憶(Supabase)側の登録有無を確認できませんでした",
+        });
+        continue;
+      }
+      if (inMemory) {
+        results.push({ date: e.date, title: e.title, status: "skipped", notionUrl: existingUrl });
+        continue;
+      }
+      const backfilled = await storeDiaryMemory(anon, e, existingUrl);
+      results.push({
+        date: e.date,
+        title: e.title,
+        status: backfilled ? "skipped" : "error",
+        notionUrl: existingUrl,
+        reason: backfilled
+          ? "Notionは既登録。記憶(Supabase)に無かったため追加登録しました"
+          : "Notionは既登録ですが、記憶(Supabase)への登録に失敗しました",
+      });
       continue;
     }
 

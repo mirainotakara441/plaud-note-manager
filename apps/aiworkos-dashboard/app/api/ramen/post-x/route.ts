@@ -185,6 +185,9 @@ export async function POST(req: NextRequest) {
     method: "PATCH",
     headers: restHeaders(svc.key),
     body: JSON.stringify({
+      // status を "posted" にしないと、画面側（status !== "posted" を投稿まち扱い）で
+      // この一杯が永久に「投稿まち」に残り、月別一覧にも出ない。
+      status: "posted",
       x_url: posted.url,
       x_posted_on: row.eaten_on,
       x_posted_at: new Date().toISOString(),

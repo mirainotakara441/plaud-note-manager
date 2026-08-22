@@ -13,6 +13,13 @@ type TodoStats = { total: number; remaining: number };
 
 type WeekStats = {
   week_start: string | null;
+  /**
+   * week_start が「今週（JST月曜起点）」かどうか。
+   * 週報は週末に書く運用なので、月〜金は最新行が先週分になる。
+   * それを無条件に「今週の活動」として見せると数字が嘘になるため、
+   * 表示側がラベルを「先週の実績」に切り替えられるよう事実だけ添える。
+   */
+  is_current_week: boolean;
   contacts: number;
   homework_total: number;
   homework_done: number;
@@ -57,7 +64,7 @@ async function fetchTodoStats(c: Creds, today: string): Promise<TodoStats> {
   return { total, remaining };
 }
 
-async function fetchWeekStats(c: Creds): Promise<WeekStats> {
+async function fetchWeekStats(c: Creds, weekMonday: string): Promise<WeekStats> {
   const latestRes = await fetch(
     `${c.url}/rest/v1/weekly_reports?select=week_start&order=week_start.desc&limit=1`,
     { headers: headers(c.key), cache: "no-store" }
@@ -70,7 +77,13 @@ async function fetchWeekStats(c: Creds): Promise<WeekStats> {
   const week_start: string | null = latest?.[0]?.week_start ?? null;
 
   if (!week_start) {
-    return { week_start: null, contacts: 0, homework_total: 0, homework_done: 0 };
+    return {
+      week_start: null,
+      is_current_week: false,
+      contacts: 0,
+      homework_total: 0,
+      homework_done: 0,
+    };
   }
 
   const rowsRes = await fetch(
@@ -104,7 +117,13 @@ async function fetchWeekStats(c: Creds): Promise<WeekStats> {
     homework_done = withTactic.filter((r) => doneMap.get(r.id) === true).length;
   }
 
-  return { week_start, contacts, homework_total, homework_done };
+  return {
+    week_start,
+    is_current_week: week_start === weekMonday,
+    contacts,
+    homework_total,
+    homework_done,
+  };
 }
 
 async function fetchClaudeHours(c: Creds, weekMonday: string): Promise<number> {
@@ -130,12 +149,18 @@ export async function GET() {
 
   const [todoSettled, weekSettled, claudeHoursSettled] = await Promise.allSettled([
     fetchTodoStats(c, today),
-    fetchWeekStats(c),
+    fetchWeekStats(c, weekMonday),
     fetchClaudeHours(c, weekMonday),
   ]);
 
   let todo: TodoStats = { total: 0, remaining: 0 };
-  let week: WeekStats = { week_start: null, contacts: 0, homework_total: 0, homework_done: 0 };
+  let week: WeekStats = {
+    week_start: null,
+    is_current_week: false,
+    contacts: 0,
+    homework_total: 0,
+    homework_done: 0,
+  };
   let claude_hours = 0;
   const errors: string[] = [];
 

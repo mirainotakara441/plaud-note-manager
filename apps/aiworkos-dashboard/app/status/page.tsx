@@ -147,7 +147,7 @@ const JOB_STATUS: Record<string, { label: string; style: string }> = {
   queued: { label: "待機中", style: "bg-gray-100 text-gray-600" },
   running: { label: "実行中", style: "bg-blue-100 text-blue-700" },
   done: { label: "完了", style: "bg-emerald-100 text-emerald-800" },
-  error: { label: "エラー", style: "bg-red-100 text-red-700" },
+  error: { label: "エラー", style: "bg-rose-100 text-rose-700" },
 };
 const KIND_LABEL: Record<string, string> = {
   eight: "Eight",
@@ -262,6 +262,9 @@ export default function StatusPage() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
+  // 裏の自動更新が失敗している間だけ立てる。dataは前回取得のまま保持する
+  // （エラーオブジェクトで差し替えると、1回の失敗で画面全体が消えるため）。
+  const [staleWarn, setStaleWarn] = useState(false);
 
   // silent=true は自動更新用（ボタンの「更新中」表示を出さず裏で差し替える）
   const load = useCallback(async (silent = false) => {
@@ -271,8 +274,14 @@ export default function StatusPage() {
       const json = (await res.json()) as ApiResponse;
       setData(json);
       setFetchedAt(new Date());
+      setStaleWarn(false);
     } catch {
-      setData({ ok: false, error: "通信エラーが発生しました" });
+      if (silent) {
+        // 表示は前回取得のものを保持し、注意書きだけ添える
+        setStaleWarn(true);
+      } else {
+        setData({ ok: false, error: "通信エラーが発生しました" });
+      }
     } finally {
       if (!silent) setLoading(false);
     }
@@ -327,13 +336,13 @@ export default function StatusPage() {
         const alerts = computeAlerts(data, stats);
         if (alerts.length === 0) return null;
         return (
-          <div className="mb-4 rounded-2xl border border-red-300 bg-red-50 p-4 shadow-sm">
-            <p className="text-sm font-bold text-red-800">
+          <div className="mb-4 rounded-2xl border border-rose-300 bg-rose-50 p-4 shadow-sm">
+            <p className="text-sm font-bold text-rose-800">
               ⚠️ {alerts.length}件 要対応
             </p>
             <ul className="mt-1 space-y-0.5">
               {alerts.map((a, i) => (
-                <li key={i} className="text-xs text-red-700">
+                <li key={i} className="text-xs text-rose-700">
                   ・{a}
                 </li>
               ))}
@@ -349,12 +358,12 @@ export default function StatusPage() {
             ? "border-emerald-200 bg-emerald-50"
             : loading
               ? "border-gray-200 bg-white"
-              : "border-red-200 bg-red-50"
+              : "border-rose-200 bg-rose-50"
         }`}
       >
         <span
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg ${
-            healthy ? "bg-emerald-100" : loading ? "bg-gray-100" : "bg-red-100"
+            healthy ? "bg-emerald-100" : loading ? "bg-gray-100" : "bg-rose-100"
           }`}
         >
           {healthy ? "✅" : loading ? "⏳" : "⚠️"}
@@ -376,6 +385,14 @@ export default function StatusPage() {
           </p>
         </div>
       </div>
+
+      {/* 自動更新の失敗中。表示は消さず、鮮度だけ正直に伝える */}
+      {staleWarn && (
+        <p className="mt-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
+          更新できませんでした（表示は前回取得のもの
+          {fetchedAt ? `・${fmtDateTime(fetchedAt.toISOString())}時点` : ""}）
+        </p>
+      )}
 
       {loading && !stats && (
         <div className="flex flex-col items-center gap-3 py-16">
@@ -638,7 +655,7 @@ function DailyChart({ daily }: { daily: Daily[] }) {
     <div className="flex items-end gap-1" style={{ height: 120 }}>
       {series.map((d, i) => (
         <div key={d.d} className="flex flex-1 flex-col items-center justify-end gap-1">
-          <span className="text-[0.5625rem] font-medium text-gray-500 tabular-nums">
+          <span className="text-[0.6875rem] font-medium text-gray-500 tabular-nums">
             {d.count > 0 ? d.count : ""}
           </span>
           <div
@@ -646,9 +663,9 @@ function DailyChart({ daily }: { daily: Daily[] }) {
             style={{ height: `${d.count > 0 ? Math.max(4, (d.count / max) * 88) : 2}px` }}
             title={`${d.d}: ${d.count}件`}
           />
-          {/* ラベルは1日おき（14本で潰れないように） */}
-          <span className="h-3 text-[0.5625rem] text-gray-400">
-            {i % 2 === 0 ? d.d.slice(5) : ""}
+          {/* ラベルは3日おきに間引く（文字を大きくしたぶん、全部出すと潰れるため） */}
+          <span className="h-4 whitespace-nowrap text-[0.6875rem] text-gray-400">
+            {i % 3 === 0 ? d.d.slice(5) : ""}
           </span>
         </div>
       ))}
@@ -996,6 +1013,12 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
   const [exErr, setExErr] = useState<string | null>(null);
   const [stars, setStars] = useState<StarMap>({});
   const [starBusy, setStarBusy] = useState<string | null>(null);
+  // ★の読み込み結果。ロード成功前は押させない（既存の順位を空の状態から
+  // 上書きしてしまう事故を防ぐ）。失敗は黙らず「読み込めませんでした」を出す。
+  const [starsReady, setStarsReady] = useState(false);
+  const [starsError, setStarsError] = useState(false);
+  // 対象外リストの取得失敗フラグ。取れないのに「対象外なし」に見せない。
+  const [excludedError, setExcludedError] = useState(false);
 
   const loadStars = useCallback(async () => {
     try {
@@ -1007,15 +1030,21 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
           if (t.stars > 0) m[t.name] = t.stars;
         }
         setStars(m);
+        setStarsReady(true);
+        setStarsError(false);
+      } else {
+        throw new Error("failed");
       }
     } catch {
-      // ★が取れなくても一覧は出す（付随情報で本体を止めない）
+      // ★が取れなくても一覧は出す（付随情報で本体を止めない）が、
+      // 失敗中である事実は表示し、★の操作は止める。
+      setStarsError(true);
     }
   }, []);
 
   // ★の設定。押した瞬間に反映し、失敗したら元に戻す（実態と食い違わせない）。
   async function setStarFor(name: string, n: number) {
-    if (starBusy) return;
+    if (starBusy || !starsReady) return;
     setStarBusy(name);
     const before = stars[name] ?? 0;
     setStars((prev) => {
@@ -1048,9 +1077,15 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
     try {
       const res = await fetch("/api/status/exclude", { cache: "no-store" });
       const json = await res.json();
-      if (res.ok && Array.isArray(json?.orgs)) setExcluded(json.orgs as ExcludedOrg[]);
+      if (res.ok && Array.isArray(json?.orgs)) {
+        setExcluded(json.orgs as ExcludedOrg[]);
+        setExcludedError(false);
+      } else {
+        throw new Error("failed");
+      }
     } catch {
-      // 一覧が取れなくても本体の表示は続ける（件数が出ないだけ）
+      // 一覧が取れなくても本体の表示は続けるが、失敗は黙らず表示する
+      setExcludedError(true);
     }
   }, []);
 
@@ -1170,7 +1205,7 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
               {busy ? "追加中" : "追加"}
             </button>
           </div>
-          {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
+          {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
           <button
             type="button"
             onClick={() => {
@@ -1193,8 +1228,14 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
       )}
 
       {exErr && (
-        <p className="mb-2 rounded-lg bg-red-50 px-2.5 py-1.5 text-xs leading-relaxed text-red-700">
+        <p className="mb-2 rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs leading-relaxed text-rose-700">
           {exErr}
+        </p>
+      )}
+
+      {starsError && (
+        <p className="mb-2 rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs leading-relaxed text-rose-700">
+          優先順位（★）を読み込めませんでした。既存の順位を空の状態で上書きしないよう、★は一時的に押せません。
         </p>
       )}
 
@@ -1227,7 +1268,7 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
                         o={o}
                         busy={pending === o.notion_page_id}
                         stars={stars[o.name] ?? 0}
-                        starBusy={starBusy === o.name}
+                        starBusy={starBusy === o.name || !starsReady}
                         onStar={(n) => setStarFor(o.name, n)}
                         onExclude={(org) =>
                           org.notion_page_id && setExcludedState(org.notion_page_id, true)
@@ -1248,6 +1289,13 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
             </p>
           )}
         </div>
+      )}
+
+      {/* 対象外リストの取得失敗。0件と読み違えさせない */}
+      {excludedError && (
+        <p className="mt-3 rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs leading-relaxed text-rose-700">
+          対象外にした団体の一覧を読み込めませんでした（対象外が無いわけではありません）。
+        </p>
       )}
 
       {/* 対象外にした団体。ここから元に戻せる（＝一方通行にしない） */}
@@ -1424,7 +1472,7 @@ function NotionPanel({ notion }: { notion: NotionState | undefined }) {
                 最終更新 {agoLabel(db.last_edited)}
               </span>
             ) : (
-              <span className="ml-auto rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
+              <span className="ml-auto rounded-full bg-rose-100 px-2 py-0.5 text-xs text-rose-700">
                 {db.error ?? "取得失敗"}
               </span>
             )}

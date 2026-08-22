@@ -138,6 +138,9 @@ export default function HealthPage() {
   const [goalDraft, setGoalDraft] = useState<string>("");
   const [editingGoal, setEditingGoal] = useState(false);
   const [savingGoal, setSavingGoal] = useState(false);
+  // 目標保存の失敗は goalError に分ける。ページ全体の error に混ぜると
+  // 描画条件（!error）が落ちて画面が真っ白になるため、目標カード内だけに出す。
+  const [goalError, setGoalError] = useState<string | null>(null);
   // 手入力（睡眠・朝の散歩・出張）
   const [manual, setManual] = useState<ManualEntries>({});
   const [manualError, setManualError] = useState<string | null>(null);
@@ -147,6 +150,14 @@ export default function HealthPage() {
   const [ramenLogs, setRamenLogs] = useState<RamenLog[]>([]);
   // 体調の記録（発熱・診断名など）
   const [conditions, setConditions] = useState<Condition[]>([]);
+  // 付随データ（手入力・ラーメン・体調）の取得失敗フラグ。
+  // 失敗を空データで上書きすると「まだ記録がありません」に化けて、
+  // 既存の記録が消えたように見えるため、失敗は失敗として表示する。
+  const [subError, setSubError] = useState<{ manual: boolean; ramen: boolean; conditions: boolean }>({
+    manual: false,
+    ramen: false,
+    conditions: false,
+  });
 
   const statusRef = useRef<HTMLDivElement>(null);
 
@@ -163,6 +174,7 @@ export default function HealthPage() {
 
   async function saveWeightGoal(target: number | null) {
     setSavingGoal(true);
+    setGoalError(null);
     try {
       const res = await fetch("/api/health/goals", {
         method: "PUT",
@@ -173,7 +185,7 @@ export default function HealthPage() {
       await loadGoals();
       setEditingGoal(false);
     } catch {
-      setError("目標の保存に失敗しました");
+      setGoalError("目標の保存に失敗しました。通信を確認してもう一度お試しください");
     } finally {
       setSavingGoal(false);
     }
@@ -198,18 +210,37 @@ export default function HealthPage() {
       }
 
       // 手入力・ラーメンは同じ期間で取る。落ちても本体は出す。
+      // 失敗時は空で上書きしない（前回の表示を保持し、失敗フラグだけ立てる）。
       fetch(`/api/health/manual?from=${from}&to=${to}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((j) => setManual(j?.entries ?? {}))
-        .catch(() => setManual({}));
+        .then((r) => {
+          if (!r.ok) throw new Error();
+          return r.json();
+        })
+        .then((j) => {
+          setManual(j?.entries ?? {});
+          setSubError((p) => ({ ...p, manual: false }));
+        })
+        .catch(() => setSubError((p) => ({ ...p, manual: true })));
       fetch(`/api/health/ramen?from=${from}&to=${to}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((j) => setRamenLogs(Array.isArray(j?.logs) ? j.logs : []))
-        .catch(() => setRamenLogs([]));
+        .then((r) => {
+          if (!r.ok) throw new Error();
+          return r.json();
+        })
+        .then((j) => {
+          setRamenLogs(Array.isArray(j?.logs) ? j.logs : []);
+          setSubError((p) => ({ ...p, ramen: false }));
+        })
+        .catch(() => setSubError((p) => ({ ...p, ramen: true })));
       fetch(`/api/health/conditions?from=${from}&to=${to}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((j) => setConditions(Array.isArray(j?.items) ? j.items : []))
-        .catch(() => setConditions([]));
+        .then((r) => {
+          if (!r.ok) throw new Error();
+          return r.json();
+        })
+        .then((j) => {
+          setConditions(Array.isArray(j?.items) ? j.items : []);
+          setSubError((p) => ({ ...p, conditions: false }));
+        })
+        .catch(() => setSubError((p) => ({ ...p, conditions: true })));
     } catch {
       setError("通信エラーが発生しました");
       setData(null);
@@ -560,6 +591,20 @@ export default function HealthPage() {
             </p>
           )}
 
+          {/* 付随データの取得失敗。「まだ記録がありません」と読み違えさせない */}
+          {(subError.manual || subError.ramen || subError.conditions) && (
+            <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-700">
+              {[
+                subError.manual && "手入力（睡眠・散歩・出張）",
+                subError.ramen && "ラーメン",
+                subError.conditions && "体調",
+              ]
+                .filter(Boolean)
+                .join("・")}
+              の記録を取得できませんでした（記録が消えたわけではありません）。↻で再読み込みできます。
+            </p>
+          )}
+
           {/* 手入力（睡眠・朝の散歩・出張）。毎日いちばん触るのでいちばん上。 */}
           <ManualEntryCard entries={manual} onSave={saveManual} error={manualError} />
 
@@ -808,6 +853,11 @@ export default function HealthPage() {
                   )}
                 </>
               )}
+              {goalError && (
+                <p className="basis-full rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700">
+                  {goalError}
+                </p>
+              )}
             </div>
 
             <div className="mt-5 border-t border-gray-100 pt-4">
@@ -1016,6 +1066,12 @@ export default function HealthPage() {
                 </p>
               </>
             )}
+            {/* ラーメン記録の本体ページへの導線 */}
+            <p className="mt-3 text-sm">
+              <Link href="/ramen" className="font-semibold text-indigo-600 active:opacity-70">
+                🍜 ラーメンページへ →
+              </Link>
+            </p>
           </Section>
 
           {/* 歩行の質 */}

@@ -132,6 +132,8 @@ function TimelineItem({ meeting }: { meeting: Meeting }) {
 export default function AgentPage() {
   const [orgs, setOrgs] = useState<Organization[] | null>(null);
   const [orgsError, setOrgsError] = useState<string | null>(null);
+  // 取得失敗時に「再読み込み」で fetch し直すためのキー
+  const [orgsReloadKey, setOrgsReloadKey] = useState(0);
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +173,7 @@ export default function AgentPage() {
     let active = true;
     (async () => {
       try {
+        setOrgsError(null);
         const res = await fetch("/api/organizations");
         const data = await res.json().catch(() => null);
         if (!active) return;
@@ -189,7 +192,7 @@ export default function AgentPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [orgsReloadKey]);
 
   // ダッシュボードの「提案 →」等から ?org= で来たとき、団体を先に選んでおく。
   // useSearchParams は Suspense 必須なので、マウント時に location から読む軽量方式。
@@ -203,7 +206,8 @@ export default function AgentPage() {
     if (!selected || loading) return;
     setLoading(true);
     setError(null);
-    setResult(null);
+    // 現在の result はここでは消さない。60秒の生成が失敗したとき、
+    // 読んでいた提案ごと消えるのを防ぐため、成功したときだけ差し替える。
     setDraft(null);
     setSavedMsg(null);
     try {
@@ -264,7 +268,11 @@ export default function AgentPage() {
             className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
           >
             <option value="">
-              {orgs ? "対象を選んでください" : "読み込み中..."}
+              {orgs
+                ? "対象を選んでください"
+                : orgsError
+                  ? "一覧を取得できませんでした"
+                  : "読み込み中..."}
             </option>
             {/* 汎用ターゲット。特定の団体でなく区分全体への訴求（会議履歴なしで、
                 過去成果物を横断で土台にする）。定義は lib/categories.ts が唯一の正 */}
@@ -295,7 +303,16 @@ export default function AgentPage() {
           </button>
         </div>
         {orgsError && (
-          <p className="mt-2 text-sm text-red-600">{orgsError}</p>
+          <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            {orgsError}
+            <button
+              type="button"
+              onClick={() => setOrgsReloadKey((k) => k + 1)}
+              className="mt-2 block rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-sm font-semibold text-rose-700 active:opacity-70"
+            >
+              もう一度読み込む
+            </button>
+          </div>
         )}
       </div>
 
@@ -316,8 +333,13 @@ export default function AgentPage() {
         )}
 
         {!loading && error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
             {error}
+            {result && (
+              <span className="mt-1 block text-xs text-rose-600">
+                （下に出ているのは前回の提案です。そのまま読めます）
+              </span>
+            )}
           </div>
         )}
 
@@ -331,7 +353,8 @@ export default function AgentPage() {
           </div>
         )}
 
-        {!loading && !error && result && (
+        {/* 生成が失敗しても前回の結果は残して表示し続ける（error と共存させる） */}
+        {!loading && result && (
           <div className="space-y-8">
             {/* 施策履歴タイムライン */}
             <div>
@@ -394,7 +417,17 @@ export default function AgentPage() {
                 </Link>
                 <button
                   type="button"
-                  onClick={() => runAgent(true)}
+                  onClick={() => {
+                    // 手直し済みも含め、今の提案が新しい生成で置き換わるため確認を挟む
+                    if (
+                      !window.confirm(
+                        "今の提案は作り直されます。よろしいですか？（生成に1分ほどかかります）"
+                      )
+                    ) {
+                      return;
+                    }
+                    runAgent(true);
+                  }}
                   disabled={loading || !!draft}
                   className="rounded-lg border border-indigo-200 px-3 py-1.5 text-sm font-medium text-indigo-600 transition active:bg-indigo-50 disabled:opacity-40"
                 >
@@ -416,7 +449,20 @@ export default function AgentPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDraft(null)}
+                      onClick={() => {
+                        // 内容を変えていないなら黙って閉じる。変えているときだけ確認。
+                        const dirty =
+                          JSON.stringify(draft) !== JSON.stringify(result.proposal);
+                        if (
+                          dirty &&
+                          !window.confirm(
+                            "手直しした内容を破棄します。よろしいですか？"
+                          )
+                        ) {
+                          return;
+                        }
+                        setDraft(null);
+                      }}
                       disabled={saving}
                       className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-600 transition active:bg-gray-50"
                     >

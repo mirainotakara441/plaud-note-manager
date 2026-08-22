@@ -227,6 +227,10 @@ export default function ActionsPage() {
   const [itemDueEditId, setItemDueEditId] = useState<string | null>(null);
   const [itemDueDraft, setItemDueDraft] = useState("");
   const [itemDateEditId, setItemDateEditId] = useState<string | null>(null);
+  // 日付（entry_date）も納期と同じく下書き＋「決定」で保存する。
+  // onChangeで即保存すると、iPhoneの日付ピッカーは開いた直後にchangeを飛ばすので
+  // カレンダーごと閉じてしまう（saveDueのコメント参照）。
+  const [itemDateDraft, setItemDateDraft] = useState("");
   // 納期は「入力中の下書き」を別に持つ。入力のたびに保存して入力欄を閉じると、
   // iPhoneではカレンダーごと消えて日付を選べない（下の saveDue のコメント参照）。
   const [dueDraft, setDueDraft] = useState("");
@@ -238,7 +242,9 @@ export default function ActionsPage() {
 
   // 日記からの取込
   const [syncing, setSyncing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  // notice は成功(ok)/失敗(ng)の種別を持つ。失敗の文言を成功用の緑バナーに
+  // 出すと「うまくいった」ように読めてしまうため、ngはrose系で出し分ける。
+  const [notice, setNotice] = useState<{ text: string; kind: "ok" | "ng" } | null>(null);
 
   // Notionからの取込
   const [notionSyncing, setNotionSyncing] = useState(false);
@@ -291,6 +297,7 @@ export default function ActionsPage() {
   }, []);
 
   // 戦略ToDoの完了トグル（完了 ⇄ 未着手）。楽観的更新→失敗時はload()で戻す。
+  // 巻き戻しは黙ってやらない（押した操作が消えた理由を必ず知らせる）。
   async function toggleStrategic(t: Strategic) {
     const next: StrategicStatus = t.status === "完了" ? "未着手" : "完了";
     setStrategic((prev) => prev.map((x) => (x.id === t.id ? { ...x, status: next } : x)));
@@ -300,7 +307,8 @@ export default function ActionsPage() {
       body: JSON.stringify({ id: t.id, status: next }),
     });
     if (!res.ok) {
-      load();
+      await load();
+      setError("保存できませんでした。通信を確認してもう一度お試しください");
       return;
     }
     const data = await res.json().catch(() => null);
@@ -318,7 +326,8 @@ export default function ActionsPage() {
       body: JSON.stringify({ id: t.id, status: next }),
     });
     if (!res.ok) {
-      load();
+      await load();
+      setError("保存できませんでした。通信を確認してもう一度お試しください");
       return;
     }
     const data = await res.json().catch(() => null);
@@ -352,7 +361,7 @@ export default function ActionsPage() {
       if (!res.ok) throw new Error(data?.error ?? "納期の更新に失敗しました");
       markNotion(t.id, data?.notionSync);
       if (data?.notionSync === "failed") {
-        setNotice("納期を保存しましたが、Notion側の「納期」には反映できませんでした");
+        setNotice({ text: "納期を保存しましたが、Notion側の「納期」には反映できませんでした", kind: "ng" });
       }
     } catch (e) {
       setStrategic(prev);
@@ -409,7 +418,7 @@ export default function ActionsPage() {
     }
     const data = await res.json().catch(() => null);
     if (data?.notionSync === "failed") {
-      setNotice("Supabaseから削除しました。Notion側のページはアーカイブできていません");
+      setNotice({ text: "Supabaseから削除しました。Notion側のページはアーカイブできていません", kind: "ng" });
     }
     markNotion(id, null); // 行自体が消えるのでバッジも掃除する
   }
@@ -429,7 +438,7 @@ export default function ActionsPage() {
       setStrategic((p) => [...p, data.item]);
       if (data?.item?.id) markNotion(data.item.id, data?.notionSync);
       if (data?.notionSync === "failed") {
-        setNotice("追加しましたが、Notion側にはページを作成できませんでした");
+        setNotice({ text: "追加しましたが、Notion側にはページを作成できませんでした", kind: "ng" });
       }
       setStAddText("");
       setStAddGenre(null);
@@ -447,7 +456,10 @@ export default function ActionsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: it.id, done: !it.done }),
     });
-    if (!res.ok) load();
+    if (!res.ok) {
+      await load();
+      setError("保存できませんでした。通信を確認してもう一度お試しください");
+    }
   }
 
   async function saveEdit() {
@@ -462,7 +474,10 @@ export default function ActionsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, content: text }),
     });
-    if (!res.ok) load();
+    if (!res.ok) {
+      await load();
+      setError("保存できませんでした。通信を確認してもう一度お試しください");
+    }
   }
 
   // 複数件をまとめて完了にする（楽観的更新→PATCH一括、失敗時はload()でロールバック）
@@ -486,10 +501,12 @@ export default function ActionsPage() {
     }
   }
 
+  // 対象は日々のToDo（日記由来）だけ。営業ToDoは含まれないので、
+  // ボタン・確認文とも「日々の気づき」と明示する（全部に見せない）。
   function completeAll() {
     const ids = items.filter((x) => !x.done).map((x) => x.id);
     if (ids.length === 0) return;
-    if (!window.confirm(`未完${ids.length}件をすべて完了にします。よろしいですか？`)) return;
+    if (!window.confirm(`日々の気づき${ids.length}件をすべて完了にします（営業ToDoは含まれません）。よろしいですか？`)) return;
     completeMany(ids);
   }
 
@@ -532,7 +549,7 @@ export default function ActionsPage() {
     setError(null);
     try {
       await navigator.clipboard.writeText(text);
-      setNotice(`納期ありToDoをコピーしました（${dueExportCount}件）`);
+      setNotice({ text: `納期ありToDoをコピーしました（${dueExportCount}件）`, kind: "ok" });
     } catch {
       // iPhoneのSafariなど、クリップボードが使えない場面がある。
       // 黙って失敗すると「押したのに何も起きない」になるので、選択できる形で出す。
@@ -574,7 +591,7 @@ export default function ActionsPage() {
         if (!res.ok) throw new Error(data?.error ?? "一括削除に失敗しました");
         removed += data?.count ?? chunk.length;
       }
-      setNotice(`チェック済み${removed}件を削除しました`);
+      setNotice({ text: `チェック済み${removed}件を削除しました`, kind: "ok" });
     } catch (e) {
       setItems(before);
       setError(e instanceof Error ? e.message : "一括削除に失敗しました");
@@ -590,7 +607,10 @@ export default function ActionsPage() {
     if (!window.confirm(`「${it.content}」を削除します。元に戻せません。よろしいですか？`)) return;
     setItems((prev) => prev.filter((x) => x.id !== it.id));
     const res = await fetch(`/api/actions?id=${encodeURIComponent(it.id)}`, { method: "DELETE" });
-    if (!res.ok) load();
+    if (!res.ok) {
+      await load();
+      setError("削除できませんでした。通信を確認してもう一度お試しください");
+    }
   }
 
   // 日付（いつの日記か）と納期（いつまでにやるか）の更新。
@@ -647,14 +667,16 @@ export default function ActionsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "取込に失敗しました");
-      setNotice(
-        data.added > 0
-          ? `日記から ${data.added} 件を取り込みました`
-          : "新しく取り込む日記はありませんでした"
-      );
+      setNotice({
+        text:
+          data.added > 0
+            ? `日記から ${data.added} 件を取り込みました`
+            : "新しく取り込む日記はありませんでした",
+        kind: "ok",
+      });
       if (data.added > 0) await load();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "取込に失敗しました");
+      setNotice({ text: e instanceof Error ? e.message : "取込に失敗しました", kind: "ng" });
     } finally {
       setSyncing(false);
     }
@@ -678,15 +700,17 @@ export default function ActionsPage() {
       ];
       if (data.skipped > 0) parts.push(`取込不可 ${data.skipped}件`);
       let msg = `Notionから取り込みました（${parts.join(" ・ ")}）`;
+      let kind: "ok" | "ng" = "ok";
       if (Array.isArray(data.errors) && data.errors.length > 0) {
         msg += ` ※一部失敗: ${data.errors[0]}`;
+        kind = "ng";
       }
-      setNotice(msg);
+      setNotice({ text: msg, kind });
       // 取り込み後はNotionと一致しているはずなので、未反映バッジを掃除する
       setNotionFailed(new Set());
       await load();
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "取込に失敗しました");
+      setNotice({ text: e instanceof Error ? e.message : "取込に失敗しました", kind: "ng" });
     } finally {
       setNotionSyncing(false);
     }
@@ -863,26 +887,55 @@ export default function ActionsPage() {
               {meta.icon} {meta.label}
             </span>
 
-            {/* 日付＝いつの日記か。押すと差し替えられる（取込先の日を間違えた時用） */}
+            {/* 日付＝いつの日記か。押すと差し替えられる（取込先の日を間違えた時用）。
+                納期と同じ下書き＋「決定」方式（onChange即保存はiPhoneでカレンダーが閉じる） */}
             {itemDateEditId === it.id ? (
-              <input
-                type="date"
-                autoFocus
-                defaultValue={it.entry_date}
-                onChange={(e) => {
-                  if (e.target.value) saveItemDates(it, { entry_date: e.target.value });
-                  setItemDateEditId(null);
-                }}
-                onBlur={() => setItemDateEditId(null)}
-                aria-label="日付"
-                className="rounded border border-gray-300 px-1 py-0.5 text-[0.6875rem] text-gray-700"
-              />
+              <span className="inline-flex items-center gap-1">
+                <input
+                  type="date"
+                  autoFocus
+                  value={itemDateDraft}
+                  onChange={(e) => setItemDateDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setItemDateEditId(null);
+                    if (e.key === "Enter" && itemDateDraft) {
+                      saveItemDates(it, { entry_date: itemDateDraft });
+                      setItemDateEditId(null);
+                    }
+                  }}
+                  aria-label="日付"
+                  className="rounded-lg border border-emerald-400 px-1.5 py-0.5 text-[0.8125rem] text-gray-700"
+                />
+                {itemDateDraft && itemDateDraft !== it.entry_date ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      saveItemDates(it, { entry_date: itemDateDraft });
+                      setItemDateEditId(null);
+                    }}
+                    className="rounded-full bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white"
+                  >
+                    決定
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setItemDateEditId(null)}
+                    className="rounded-full px-2 py-1.5 text-xs font-medium text-gray-400"
+                  >
+                    閉じる
+                  </button>
+                )}
+              </span>
             ) : (
               <button
                 type="button"
-                onClick={() => setItemDateEditId(it.id)}
+                onClick={() => {
+                  setItemDateDraft(it.entry_date);
+                  setItemDateEditId(it.id);
+                }}
                 title="日付を変える"
-                className="rounded text-[0.6875rem] text-gray-400 underline decoration-dotted underline-offset-2 active:bg-gray-100"
+                className="rounded px-1 py-1.5 text-xs text-gray-400 underline decoration-dotted underline-offset-2 active:bg-gray-100"
               >
                 {fmtDate(it.entry_date)}
               </button>
@@ -907,7 +960,7 @@ export default function ActionsPage() {
                   <button
                     type="button"
                     onClick={() => saveItemDates(it, { due_date: itemDueDraft || null })}
-                    className="rounded-full bg-emerald-600 px-2 py-0.5 text-[0.6875rem] font-semibold text-white"
+                    className="rounded-full bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white"
                   >
                     決定
                   </button>
@@ -915,7 +968,7 @@ export default function ActionsPage() {
                   <button
                     type="button"
                     onClick={() => setItemDueEditId(null)}
-                    className="rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-400"
+                    className="rounded-full px-2 py-1.5 text-xs font-medium text-gray-400"
                   >
                     閉じる
                   </button>
@@ -924,7 +977,7 @@ export default function ActionsPage() {
                   <button
                     type="button"
                     onClick={() => saveItemDates(it, { due_date: null })}
-                    className="rounded-full border border-gray-300 px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-500"
+                    className="rounded-full border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-500"
                   >
                     クリア
                   </button>
@@ -941,7 +994,7 @@ export default function ActionsPage() {
                       setItemDueEditId(it.id);
                     }}
                     title={it.due_date ? "納期を変更・解除する" : "納期を設定する"}
-                    className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] transition active:scale-95 ${
+                    className={`rounded-full border px-2 py-1.5 text-xs transition active:scale-95 ${
                       dm ? dm.klass : "border-dashed border-gray-300 text-gray-400"
                     }`}
                   >
@@ -1128,7 +1181,7 @@ export default function ActionsPage() {
                       <button
                         type="button"
                         onClick={() => saveDue(t, dueDraft || null)}
-                        className="rounded-full bg-emerald-600 px-2 py-0.5 text-[0.6875rem] font-semibold text-white transition active:bg-emerald-700"
+                        className="rounded-full bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white transition active:bg-emerald-700"
                       >
                         決定
                       </button>
@@ -1136,7 +1189,7 @@ export default function ActionsPage() {
                       <button
                         type="button"
                         onClick={() => setDueEditId(null)}
-                        className="rounded-full px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-400 transition active:bg-gray-100"
+                        className="rounded-full px-2 py-1.5 text-xs font-medium text-gray-400 transition active:bg-gray-100"
                       >
                         閉じる
                       </button>
@@ -1145,7 +1198,7 @@ export default function ActionsPage() {
                       <button
                         type="button"
                         onClick={() => saveDue(t, null)}
-                        className="rounded-full border border-gray-300 px-1.5 py-0.5 text-[0.6875rem] font-medium text-gray-500 transition active:bg-gray-100"
+                        className="rounded-full border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-500 transition active:bg-gray-100"
                       >
                         クリア
                       </button>
@@ -1162,7 +1215,7 @@ export default function ActionsPage() {
                           setDueEditId(t.id);
                         }}
                         title={t.due_date ? "納期を変更・解除する" : "納期を設定する"}
-                        className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] transition active:scale-95 ${
+                        className={`rounded-full border px-2 py-1.5 text-xs transition active:scale-95 ${
                           dm ? dm.klass : "border-dashed border-gray-300 text-gray-400"
                         }`}
                       >
@@ -1178,7 +1231,7 @@ export default function ActionsPage() {
                   <button
                     type="button"
                     onClick={() => toggleStrategicProgress(t)}
-                    className={`rounded-full border px-1.5 py-0.5 text-[0.6875rem] font-medium transition active:scale-95 ${
+                    className={`rounded-full border px-2.5 py-2 text-sm font-medium transition active:scale-95 ${
                       t.status === "進行中"
                         ? "border-amber-300 bg-amber-50 text-amber-700"
                         : "border-gray-200 text-gray-400"
@@ -1255,7 +1308,7 @@ export default function ActionsPage() {
                 disabled={bulkBusy}
                 className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-600 transition active:bg-gray-100 disabled:opacity-50"
               >
-                {bulkBusy ? "処理中…" : `✓ 未完${remaining}件をすべて完了に`}
+                {bulkBusy ? "処理中…" : `✓ 日々の気づき${remaining}件を完了に`}
               </button>
             )}
             {/* 納期ありの書き出し。どちらの表示でも押せるようここに置く。 */}
@@ -1284,8 +1337,20 @@ export default function ActionsPage() {
         <p className="mt-1 text-sm text-gray-500">
           ジャンル別の営業ToDoと、一行日記の「やってみよう」「本日のポイント」を1画面に。
         </p>
+        {/* ToDoは日記から生成される設計なので、書く場所への導線を上に置く */}
+        <p className="mt-1 text-sm">
+          <Link href="/diary" className="font-semibold text-emerald-700 active:opacity-70">
+            📔 日記を書く →
+          </Link>
+        </p>
         {notice && (
-          <p className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>
+          <p
+            className={`mt-2 rounded-lg px-3 py-2 text-sm ${
+              notice.kind === "ng" ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"
+            }`}
+          >
+            {notice.text}
+          </p>
         )}
       </header>
 
@@ -1506,7 +1571,7 @@ export default function ActionsPage() {
                         type="button"
                         onClick={() => completeWeek(its)}
                         disabled={bulkBusy}
-                        className="ml-auto shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-[0.6875rem] font-medium text-gray-400 transition active:bg-gray-100 active:text-emerald-700 disabled:opacity-50"
+                        className="ml-auto shrink-0 rounded-full border border-gray-200 px-2.5 py-1.5 text-xs font-medium text-gray-400 transition active:bg-gray-100 active:text-emerald-700 disabled:opacity-50"
                       >
                         この週をすべて完了
                       </button>

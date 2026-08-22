@@ -167,8 +167,10 @@ export function PhotoImportCard({
       });
       const json = await res.json();
       if (!res.ok || json?.error) throw new Error(json?.error ?? "登録に失敗しました");
-      setSavedMsg(`${json?.days ?? targets.length}日ぶんを登録しました`);
+      // reset() は savedMsg も消すので、先に片付けてからメッセージを出す
+      // （逆順だと成功メッセージが一瞬で消えて絶対に見えない）。
       reset();
+      setSavedMsg(`${json?.days ?? targets.length}日ぶんを登録しました`);
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : "登録に失敗しました");
