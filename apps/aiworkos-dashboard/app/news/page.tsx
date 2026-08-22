@@ -26,7 +26,7 @@ type NewsItem = {
   id: number;
   theme: string;
   category: string;
-  /** 中カテゴリー。大カテゴリーの下の束ね（例: 生成AI → Claude関係）。 */
+  /** 中カテゴリー。大カテゴリーの下の束ね（例: 生成AI → Anthropic）。 */
   subcategory: string;
   title: string;
   link: string;
