@@ -14,7 +14,7 @@ import { PROPOSAL_MATERIAL_GALLERY_URL } from "@/lib/externalLinks";
 //
 // ホーム上部の「今日の作戦盤」は /api/home-stats を1回叩き、当日ToDoの残数と
 // 今週の週報KPI（接点・宿題消化）、今週のClaude利用時間をタップ導線つきで見せる
-// （Claude利用時間のみリンク無し）。
+// （4枚とも飛び先あり。Claude利用時間は週ごとの推移 /claude-usage へ）。
 
 type Feature = {
   href: string;
@@ -309,9 +309,21 @@ function buildStatCards(stats: HomeStats | null, fetchFailed: boolean): StatCard
   const claudeHoursFailed =
     fetchFailed || (!!err && (err.includes("claude_usage_daily") || err.includes("Claude利用時間")));
 
+  // 4枚のうちここだけ飛び先が無く、押しても何も起きなかった。合計だけでは
+  // 増えたのか減ったのかが分からないので、週ごとに並べた画面へ渡す。
   const claudeHoursCard: StatCard = claudeHoursFailed
-    ? { label: "今週のClaude利用時間", value: "—", caption: "取得できませんでした" }
-    : { label: "今週のClaude利用時間", value: `${stats?.claude_hours ?? 0}h`, caption: "合計" };
+    ? {
+        href: "/claude-usage",
+        label: "今週のClaude利用時間",
+        value: "—",
+        caption: "取得できませんでした",
+      }
+    : {
+        href: "/claude-usage",
+        label: "今週のClaude利用時間",
+        value: `${stats?.claude_hours ?? 0}h`,
+        caption: "合計 · 週ごとの推移へ",
+      };
 
   return [todoCard, contactsCard, homeworkCard, claudeHoursCard];
 }
