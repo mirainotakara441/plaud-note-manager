@@ -7,7 +7,10 @@ import AdvisorCard from "@/app/components/AdvisorCard";
 import CodeSessionBoard from "@/app/components/CodeSessionBoard";
 import NextTargetsCard from "@/app/components/NextTargetsCard";
 import WeeklyFocusCard from "@/app/components/WeeklyFocusCard";
-import { PROPOSAL_MATERIAL_GALLERY_URL } from "@/lib/externalLinks";
+import {
+  HOJIN_SEIKYU_QA_URL,
+  PROPOSAL_MATERIAL_GALLERY_URL,
+} from "@/lib/externalLinks";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
@@ -64,13 +67,6 @@ const PROPOSE_FEATURES: Feature[] = [
     accent: "bg-indigo-100 text-indigo-700",
   },
   {
-    href: "/news",
-    icon: "📰",
-    title: "DXニュース",
-    desc: "自治体DX・生成AI・法人請求まわりの直近1か月を、前回以降の新着つきで一望",
-    accent: "bg-sky-100 text-sky-700",
-  },
-  {
     href: "/organizations",
     icon: "🧭",
     title: "団体別攻略",
@@ -97,6 +93,14 @@ const PROPOSE_FEATURES: Feature[] = [
     title: "武器を出す",
     desc: "決めた打ち手を想定ストーリー・想定問答・スライド構成案にする",
     accent: "bg-amber-100 text-amber-700",
+  },
+  {
+    href: HOJIN_SEIKYU_QA_URL,
+    icon: "QA",
+    title: "法人請求QA検索",
+    desc: "相手の発言から引く営業実戦QA59件。職員の「やらない理由」への返しと、議員が使える問いの型。別タブで開きます",
+    accent: "bg-emerald-100 text-emerald-700",
+    external: true,
   },
   {
     href: PROPOSAL_MATERIAL_GALLERY_URL,
@@ -161,7 +165,17 @@ const SYSTEM_FEATURES: Feature[] = [
   },
 ];
 
+// 並びは他のグループと同じく「手前ほど頻繁に開く」。DXニュースは毎日読む入力なので先頭。
+// もとは PROPOSE_FEATURES に置いていたが、ニュースは提案を組み立てる道具ではなく
+// 世の中の動きを取り込む学習の入口なので、こちらへ移した（2026-08-23）。
 const LEARN_FEATURES: Feature[] = [
+  {
+    href: "/news",
+    icon: "📰",
+    title: "DXニュース",
+    desc: "自治体DX・生成AI・法人請求まわりの直近1か月を、前回以降の新着つきで一望",
+    accent: "bg-sky-100 text-sky-700",
+  },
   {
     href: "/bootcamp",
     icon: "📘",
@@ -444,7 +458,13 @@ function FeatureGroup({
             const inner = (
               <>
                 <span
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg ${f.accent}`}
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                    // 絵文字は大きめ、"QA" のような文字はバッジとして小さく太く。
+                    // 同じ字送りで並べると、文字のほうだけ痩せて見えるため。
+                    /^[\x20-\x7e]+$/.test(f.icon)
+                      ? "text-xs font-bold tracking-tight"
+                      : "text-lg"
+                  } ${f.accent}`}
                   aria-hidden
                 >
                   {f.icon}

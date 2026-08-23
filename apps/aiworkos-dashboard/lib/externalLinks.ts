@@ -16,3 +16,14 @@
 export const PROPOSAL_MATERIAL_GALLERY_URL =
   process.env.NEXT_PUBLIC_PROPOSAL_MATERIAL_GALLERY_URL ??
   "https://tenki-asset-gallery.vercel.app";
+
+/**
+ * 法人請求の営業実戦QA検索。相手の発言から59件のQAを引く、商談中に開く道具。
+ *
+ * 元データは Desktop/JOB/議員説明会/QA票/QA表_確定版_20260823.md。
+ * 中身を直したら、そのMarkdownを直してから静的HTMLを作り直して公開し直す。
+ * 公開先を移したら、Vercelの環境変数 NEXT_PUBLIC_HOJIN_SEIKYU_QA_URL を変える。
+ */
+export const HOJIN_SEIKYU_QA_URL =
+  process.env.NEXT_PUBLIC_HOJIN_SEIKYU_QA_URL ??
+  "https://hojin-seikyu-qa-20260823.artful-poppy-7897.chatgpt.site";
