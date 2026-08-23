@@ -13,6 +13,7 @@ import {
   type ProcedureTemplate,
 } from "@/lib/procedureTemplates";
 import { toJstDateString } from "@/lib/date";
+import { windowChunks } from "@/lib/chunks";
 
 // 提出文書 壁打ち。/slide-refine の文書版。
 // 実施理由書・実施要領書・スキーム整理など、相手方に出して判断・合意を得る文書を扱う。
@@ -217,22 +218,6 @@ const SYNTHESIS_SCHEMA = {
   required: ["title"],
   additionalProperties: false,
 };
-
-// 埋め込みモデル gte-small は 512token 上限で超過分が黙って切り捨てられる。
-// 他の登録経路と同じく400字で刻む（AGENTS.md の再発防止ルール）。
-const CHUNK_SIZE = 400;
-const CHUNK_OVERLAP = 60;
-
-function windowChunks(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP): string[] {
-  const body = text.trim();
-  if (!body) return [];
-  if (body.length <= size) return [body];
-  const chunks: string[] = [];
-  for (let i = 0; i < body.length; i += size - overlap) {
-    chunks.push(body.slice(i, i + size));
-  }
-  return chunks;
-}
 
 function restUrl(supabaseUrl: string, table: string) {
   return `${supabaseUrl}/rest/v1/${table}`;
