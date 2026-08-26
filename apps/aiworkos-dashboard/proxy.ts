@@ -33,6 +33,11 @@ const PUBLIC_PATHS = [
   // 同じ理由でNotion→Supabaseの人脈・団体同期も通す。こちらはルート側で
   // CRON_SECRET または合言葉cookieのどちらかを照合している（手動実行も許すため）。
   /^\/api\/cron\/notion-sync$/,
+  // 法人請求QA検索の入り口（lib/hojinQaAuth.ts）。法人請求チームの同僚に共有する
+  // 前提のページなので、AIワークOS本体の合言葉は要求しない。ここ独自の合言葉
+  // （houjin）で守る。
+  /^\/qa-gate$/,
+  /^\/api\/qa-gate$/,
 ];
 
 export async function proxy(request: NextRequest) {

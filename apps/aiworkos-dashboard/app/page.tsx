@@ -7,10 +7,7 @@ import AdvisorCard from "@/app/components/AdvisorCard";
 import CodeSessionBoard from "@/app/components/CodeSessionBoard";
 import NextTargetsCard from "@/app/components/NextTargetsCard";
 import WeeklyFocusCard from "@/app/components/WeeklyFocusCard";
-import {
-  HOJIN_SEIKYU_QA_URL,
-  PROPOSAL_MATERIAL_GALLERY_URL,
-} from "@/lib/externalLinks";
+import { PROPOSAL_MATERIAL_GALLERY_URL } from "@/lib/externalLinks";
 
 // 全体設計図（v2.0）と進捗スコアカードは、アプリ内の /blueprint ページで常に開ける。
 // 中身は public/ の自己完結HTML（合言葉認証の内側・claude.ai ログイン不要）。
@@ -44,8 +41,18 @@ const RECORD_FEATURES: Feature[] = [
     href: "/deliverables",
     icon: "📎",
     title: "成果物を登録",
-    desc: "提案書・実習書・スライド・メモを取り込み、提案の土台にする",
+    desc: "提案書・実施理由書・スライド・メモを取り込み、提案の土台にする",
     accent: "bg-purple-100 text-purple-700",
+  },
+  {
+    // 議事録は「成果物」とは別バケツ（source_type=会議）。以前は成果物の
+    // 種別「メモ」で代用されており、振り返りの会議集計・関係抽出に反映
+    // されない穴があった（2026-08-23、app/api/meetings/route.ts 参照）。
+    href: "/meetings",
+    icon: "🗒️",
+    title: "議事録を登録",
+    desc: "PLAUD録音の無い議事メモを団体別攻略・振り返り・提案エージェントへ反映する",
+    accent: "bg-cyan-100 text-cyan-700",
   },
   {
     href: "/refine",
@@ -95,10 +102,13 @@ const PROPOSE_FEATURES: Feature[] = [
     accent: "bg-amber-100 text-amber-700",
   },
   {
-    href: HOJIN_SEIKYU_QA_URL,
+    // 実サイトは chatgpt.site（外部・こちらから手を入れられない）にあり、無防備に
+    // 誰でも開けた。/qa-gate は合言葉「houjin」で守ってから送り出す入り口
+    // （lib/hojinQaAuth.ts、2026-08-23）。AIワークOS本体の合言葉とは別物。
+    href: "/qa-gate",
     icon: "QA",
     title: "法人請求QA検索",
-    desc: "相手の発言から引く営業実戦QA59件。職員の「やらない理由」への返しと、議員が使える問いの型。別タブで開きます",
+    desc: "相手の発言から引く営業実戦QA59件。職員の「やらない理由」への返しと、議員が使える問いの型。合言葉を入れてから別タブで開きます",
     accent: "bg-emerald-100 text-emerald-700",
     external: true,
   },
