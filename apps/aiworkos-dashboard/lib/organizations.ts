@@ -354,6 +354,69 @@ export async function fetchMeetingOrgCategories(
   }
 }
 
+// ---------------------------------------------------------------------------
+// 団体一覧の取得（会議・週報から）
+// ---------------------------------------------------------------------------
+//
+// 元は app/api/organizations/route.ts に直書きされていたが、
+// app/api/stakeholders/route.ts（相手先ピッカーの候補一覧）でも同じ「接点の多さ」で
+// 並べたくなったため、ここへ移して両方から使えるようにした（2026-08-26）。
+
+/** 会議データを持つ団体の一覧（件数付き）。org-history Edge Function の一覧モード。 */
+export async function fetchMeetingOrganizations(
+  url: string,
+  key: string
+): Promise<{ name: string; count: number }[]> {
+  const res = await fetch(`${url}/functions/v1/org-history`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`org-history 一覧エラー ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data?.organizations) ? data.organizations : [];
+}
+
+/**
+ * 週報の (organization, category) 行をそのまま返す。呼び出し側で週数の集計と
+ * ジャンル判定の両方に使い回す（同じ団体が週をまたいで別カテゴリーで書かれることが
+ * あるので、行を潰さずに渡して weeklyCategoryMap 側で最頻値を採らせる）。
+ *
+ * 落ちても他の一覧は出したいので、失敗時は空配列を返して握りつぶす。
+ */
+export async function fetchWeeklyRows(
+  url: string,
+  key: string
+): Promise<{ organization: string; category: unknown }[]> {
+  try {
+    const res = await fetch(
+      `${url}/rest/v1/weekly_reports?select=organization,category&organization=not.is.null`,
+      { headers: restHeaders(key), cache: "no-store" }
+    );
+    if (!res.ok) return [];
+    const rows: unknown = await res.json();
+    if (!Array.isArray(rows)) return [];
+    const out: { organization: string; category: unknown }[] = [];
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const name = (row as { organization?: unknown }).organization;
+      if (typeof name !== "string" || name.trim() === "") continue;
+      out.push({
+        organization: name.trim(),
+        category: (row as { category?: unknown }).category,
+      });
+    }
+    return out;
+  } catch (error) {
+    console.error("週報カテゴリー取得エラー（無視して続行）:", error);
+    return [];
+  }
+}
+
 /** stakeholders マスタから (団体名 → 正準カテゴリー) を作る。 */
 export function stakeholderCategoryMap(
   rows: StakeholderRow[],

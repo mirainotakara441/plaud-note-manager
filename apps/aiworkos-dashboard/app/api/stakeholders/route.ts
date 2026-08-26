@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 import { STAKEHOLDER_CATEGORIES, isOrgCategory } from "@/lib/categories";
 import { notionToken, notionCreateOrgPage } from "@/lib/notionContacts";
+import {
+  compareOrgByContact,
+  fetchMeetingOrganizations,
+  fetchWeeklyRows,
+} from "@/lib/organizations";
 
 // 団体マスタ。カテゴリー→具体名の2段階選択に使う。
 //
@@ -30,8 +35,9 @@ export async function GET() {
   }
   try {
     // category が null の団体（Notionで種別未設定）は選択肢に出しようがないので除く。
+    // 並び順は取らず、下で接点の多さ順に振り直す（2026-08-26）。
     const res = await fetch(
-      `${c.url}/rest/v1/${TABLE}?select=category,name&category=not.is.null&order=name.asc&limit=2000`,
+      `${c.url}/rest/v1/${TABLE}?select=category,name&category=not.is.null&limit=2000`,
       { headers: restHeaders(c.key), cache: "no-store" }
     );
     if (!res.ok) return NextResponse.json({ byCategory: {} });
@@ -44,6 +50,40 @@ export async function GET() {
       if (!byCategory[r.category]) byCategory[r.category] = [];
       byCategory[r.category].push(r.name);
     }
+
+    // 議事録・成果物を登録する画面のプルダウンは、自治体だけで20件超あり、
+    // 五十音順（データ上は文字コード順で、実際の読みとは一致しない——地名の
+    // ふりがなを持っていないため）で並べても目当ての相手を探しにくいという
+    // 指摘を受けた（2026-08-26）。/organizations の団体セレクタと同じ
+    // 「接点の多さ順」（会議件数＋週報週数、同数はja比較）に揃える。
+    // 落ちても名前一覧自体は出したいので、失敗時は元の並びのまま返す。
+    try {
+      const [meetingOrgs, weeklyRows] = await Promise.all([
+        fetchMeetingOrganizations(c.url, c.key),
+        fetchWeeklyRows(c.url, c.key),
+      ]);
+      const score = new Map<string, { count: number; weeklyCount: number }>();
+      for (const o of meetingOrgs) {
+        if (!o?.name) continue;
+        score.set(o.name, { count: o.count ?? 0, weeklyCount: 0 });
+      }
+      for (const r of weeklyRows) {
+        const cur = score.get(r.organization) ?? { count: 0, weeklyCount: 0 };
+        cur.weeklyCount += 1;
+        score.set(r.organization, cur);
+      }
+      for (const cat of Object.keys(byCategory)) {
+        byCategory[cat].sort((a, b) =>
+          compareOrgByContact(
+            { name: a, ...(score.get(a) ?? { count: 0, weeklyCount: 0 }) },
+            { name: b, ...(score.get(b) ?? { count: 0, weeklyCount: 0 }) }
+          )
+        );
+      }
+    } catch (err) {
+      console.error("GET /api/stakeholders: 接点順の並び替えに失敗（元の並びのまま返す）", err);
+    }
+
     return NextResponse.json({ byCategory });
   } catch (err) {
     console.error("GET /api/stakeholders: 取得失敗", err);

@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
-import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { anonCreds, serviceCreds } from "@/lib/supabase";
 import { ORG_CATEGORIES, type OrgCategory } from "@/lib/categories";
 import {
   compareOrgByContact,
+  fetchMeetingOrganizations,
   fetchMeetingOrgCategories,
   fetchStakeholders,
+  fetchWeeklyRows,
   resolveOrgCategory,
   stakeholderCategoryMap,
   weeklyCategoryMap,
@@ -35,57 +37,8 @@ type OrganizationEntry = {
   categorySource: OrgCategorySource;
 };
 
-async function fetchMeetingOrganizations(
-  url: string,
-  key: string
-): Promise<{ name: string; count: number }[]> {
-  const res = await fetch(`${url}/functions/v1/org-history`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`org-history 一覧エラー ${res.status}: ${text.slice(0, 200)}`);
-  }
-  const data = await res.json();
-  return Array.isArray(data?.organizations) ? data.organizations : [];
-}
-
-// 週報にしか出てこない団体も拾う。ここが落ちても会議由来の一覧は出したいので、
-// 失敗時は空配列を返して握りつぶす。
-// (organization, category) を行のまま返し、週数の集計とジャンル判定の両方に使い回す
-// （同じ団体が週をまたいで別カテゴリーで書かれることがあるので、行を潰さずに渡して
-// weeklyCategoryMap 側で最頻値を採らせる）。
-async function fetchWeeklyRows(
-  url: string,
-  key: string
-): Promise<{ organization: string; category: unknown }[]> {
-  try {
-    const res = await fetch(
-      `${url}/rest/v1/weekly_reports?select=organization,category&organization=not.is.null`,
-      { headers: restHeaders(key), cache: "no-store" }
-    );
-    if (!res.ok) return [];
-    const rows: unknown = await res.json();
-    if (!Array.isArray(rows)) return [];
-    const out: { organization: string; category: unknown }[] = [];
-    for (const row of rows) {
-      if (!row || typeof row !== "object") continue;
-      const name = (row as { organization?: unknown }).organization;
-      if (typeof name !== "string" || name.trim() === "") continue;
-      out.push({
-        organization: name.trim(),
-        category: (row as { category?: unknown }).category,
-      });
-    }
-    return out;
-  } catch (error) {
-    console.error("週報カテゴリー取得エラー（無視して続行）:", error);
-    return [];
-  }
-}
+// fetchMeetingOrganizations / fetchWeeklyRows は lib/organizations.ts へ移した
+// （app/api/stakeholders/route.ts と共用するため、2026-08-26）。
 
 export async function GET(request: Request) {
   const anon = anonCreds();
