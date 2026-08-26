@@ -8,27 +8,11 @@ import StakeholderPicker, {
   type Category,
 } from "@/app/components/StakeholderPicker";
 
-// 種別は相手先によって書くものが違う。社内は議事メモ・実施理由書・QA表が主で、
-// 提案書・実習書は出てこない（API側 app/api/deliverables/route.ts と対で持つ）。
-const DOC_TYPES_EXTERNAL = [
-  "提案書",
-  "実習書",
-  "スライド",
-  "報告書",
-  "メモ",
-  "その他",
-] as const;
-const DOC_TYPES_INTERNAL = [
-  "スライド",
-  "議事メモ",
-  "実施理由書",
-  "QA表",
-  "その他",
-] as const;
-
-function docTypesFor(category: Category): readonly string[] {
-  return category === "社内" ? DOC_TYPES_INTERNAL : DOC_TYPES_EXTERNAL;
-}
+// 種別。以前は相手先（社内/社外）で選択肢を分けていたが、実習書・報告書・
+// 議事メモ・QA表はほぼ使われず選ぶ手間だけが増えていた（議事録は本来ここではなく
+// /meetings で「会議」として登録すべきもの——lib/organizations.ts 参照）。
+// 相手先によらず1本の5種類に統一する（API側 app/api/deliverables/route.ts と対で持つ）。
+const DOC_TYPES = ["メモ", "実施理由書", "スライド", "提案書", "その他"] as const;
 
 // 画像はブラウザでは文字を取り出せないので、サーバー（/api/deliverables/image）で
 // AIに読ませる。ChatGPTで作った戦略インフォグラフィックをiPhoneのスクショで
@@ -88,12 +72,8 @@ export default function DeliverablesPage() {
   // 成功後に <input type="file"> を空へ戻すための強制再マウント用キー
   const [fileInputKey, setFileInputKey] = useState(0);
 
-  // カテゴリーを変えたとき、その相手先に無い種別が選ばれたままにならないようにする
-  // （社内→自治体で「議事メモ」が残ると、APIは通るが選択肢に無い値が入る）。
   function onCategoryChange(next: Category) {
     setCategory(next);
-    const allowed = docTypesFor(next);
-    if (!allowed.includes(docType)) setDocType(allowed[0]);
   }
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -297,7 +277,7 @@ export default function DeliverablesPage() {
               disabled={busy}
               className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-base text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50"
             >
-              {docTypesFor(category).map((t) => (
+              {DOC_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
