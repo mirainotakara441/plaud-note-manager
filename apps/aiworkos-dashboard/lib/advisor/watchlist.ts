@@ -33,6 +33,22 @@ export const WATCHED_JOBS: Array<{ job: string; label: string; staleHours: numbe
   // 入っておらず誰も気づけなかった（2026-08-19判明）。同じ8日閾値で追加する。
   { job: "ai-git-backup", label: "AI基盤の週次gitバックアップ", staleHours: 24 * 8 },
   { job: "ramen-x-followers", label: "ラーメンXのフォロワー記録", staleHours: 48 },
+  // 以下3本は打刻していたのに監視対象から漏れていた（2026-08-28、/status の
+  // 「ジョブの成否」で“基準なし”として可視化されて判明）。閾値は勝手に決めず、
+  // plist の実定義と、上にある同じ性質のジョブの前例に合わせている。
+  //
+  // claude-usage / worker-notify は shinchoku-board と同じ「StartInterval + RunAtLoad」型。
+  // Macを開いている間しか走らないので、週末に閉じっぱなしでも誤報しないよう
+  // shinchoku-board と同じ36時間にする（周期そのものからは決めない。周期の倍数に
+  // すると1時間・30分ジョブが数時間の休止で鳴り、通知を無視する癖がついてしまう）。
+  //   com.aiworkos.claude-usage.plist  … StartInterval 3600（1時間）／RunAtLoad
+  { job: "claude-usage", label: "Claude利用時間の集計", staleHours: 36 },
+  //   com.aiworkos.worker-notify.plist … StartInterval 1800（30分）／RunAtLoad
+  { job: "worker-notify", label: "取込ジョブの通知", staleHours: 36 },
+  // meishi は週次（日曜22:45）。aiworkos-backup / ai-git-backup と同じ
+  // 「1回飛ばしたら気づきたい」で 8日。
+  //   com.spearhead.meishi.plist … StartCalendarInterval Weekday=0 22:45
+  { job: "meishi", label: "名刺（人脈DBの差分取込）", staleHours: 24 * 8 },
   // X監視ダイジェスト（毎朝6時）。/news の右カラムの中身。止まると右カラムが
   // 古い日付のまま固まるが、カード側が「取得 M/D HH:MM」を出すので画面でも気づける。
   { job: "x-digest", label: "X監視ダイジェストの収集", staleHours: 48 },
