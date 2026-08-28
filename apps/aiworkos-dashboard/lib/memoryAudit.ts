@@ -17,9 +17,55 @@
 // （「横浜市」と「横浜市・相模原市」は別物かもしれない）。
 
 import { documentKey, hasChunkSuffix, stripChunkSuffix } from "./organizations";
+import {
+  summarizeShadow,
+  findMultiVariantCanonicals,
+  auditShadowColumns,
+  compareWithOld,
+} from "./memoryShadow.mjs";
 
-/** 監査に使う列。content と embedding は重いので取らない。 */
-export const AUDIT_SELECT = "source_type,source_id,organization,title,event_date,metadata";
+/**
+ * 監査が metadata から読むキー。**ここに無いキーは取得していない。**
+ *
+ * 型が union なので、これ以外のキーを meta() に渡すと tsc が落ちる
+ * （`npm run test:all` の1段目）。キーを増やすときは、この配列と
+ * AUDIT_SELECT の両方を直さないとコンパイルが通らない作りにしてある。
+ */
+const AUDIT_META_KEYS = ["位置", "資料名", "PLAUD_ID", "plaud_id"] as const;
+type AuditMetaKey = (typeof AUDIT_META_KEYS)[number];
+
+/** metadata のキー → PostgREST で付ける別名（ASCIIでないと別名に使えない）。 */
+const META_FIELD = {
+  位置: "meta_pos",
+  資料名: "meta_shiryo",
+  // ★録音IDは大文字と小文字の2表記が実在する（両方を持つ行は無い）。
+  //   2026-08-28時点で PLAUD_ID が50行、plaud_id が70行。片方しか見ないと
+  //   70行が検査対象から丸ごと外れる。
+  PLAUD_ID: "meta_plaud_id",
+  plaud_id: "meta_plaud_id_lower",
+} as const satisfies Record<AuditMetaKey, string>;
+
+/**
+ * 監査に使う列。content と embedding は重いので取らない。
+ *
+ * ■ metadata を丸ごと取らない理由（2026-08-28）
+ * 1458行の取得のうち **metadata だけで1.7MB＝全体の75%** を占めていた
+ * （content の457KBより3.8倍重い）。しかし監査が実際に読むのは
+ * 位置 / 資料名 / PLAUD_ID の3キーだけ。DB側で必要な値だけ取り出すと
+ * 2,218KB→604KB、11.1秒→1.3秒になる（実測）。機能は1つも削っていない。
+ * この経路はスモークの8秒判定に常時ぶつかっており、行が増えるほど悪化する。
+ *
+ * ■ 2026-08-28の migration で入った同一性の4列も取る
+ * Shadow Mode（新方式の数え方を旧方式の横に並べるだけの機能）がこれを読む。
+ * **本番の検索・RAG・AI回答はこの4列をまだ一切使っていない。**
+ */
+export const AUDIT_SELECT =
+  "source_type,source_id,organization,title,event_date," +
+  "canonical_document_id,source_document_id,chunk_index,ingest_scheme," +
+  `${META_FIELD.位置}:metadata->>位置,` +
+  `${META_FIELD.資料名}:metadata->>資料名,` +
+  `${META_FIELD.PLAUD_ID}:metadata->>PLAUD_ID,` +
+  `${META_FIELD.plaud_id}:metadata->>plaud_id`;
 
 export type AuditRow = {
   source_type: string;
@@ -27,7 +73,16 @@ export type AuditRow = {
   organization: string | null;
   title: string;
   event_date: string | null;
-  metadata: Record<string, unknown> | null;
+  /** ↓ 2026-08-28 の migration で入った4列。旧データを読む経路もあるので任意扱い。 */
+  canonical_document_id?: string | null;
+  source_document_id?: string | null;
+  chunk_index?: number | null;
+  ingest_scheme?: string | null;
+  /** ↓ metadata から必要な3キーだけを取り出したもの。丸ごとは運ばない。 */
+  meta_pos?: string | null;
+  meta_shiryo?: string | null;
+  meta_plaud_id?: string | null;
+  meta_plaud_id_lower?: string | null;
 };
 
 /** 事実として確定している不整合。 */
@@ -49,6 +104,56 @@ export type Candidate = {
   samples: string[];
 };
 
+/**
+ * Memory 2.0 Shadow。新方式（canonical / source_document / chunk_index）で
+ * 数え直した結果を、旧方式の横に並べるだけのもの。**置き換えではない。**
+ *
+ * 差分は「エラー」ではない。旧方式が過剰に統合していた分も、新方式が
+ * 実体として束ねた分も、どちらも差として出る。意味づけは人がする。
+ */
+export type ShadowSummary = {
+  chunks: number;
+  canonicalDocuments: number;
+  sourceDocuments: number;
+  bySourceType: Array<{
+    sourceType: string;
+    chunks: number;
+    canonicalDocuments: number;
+    sourceDocuments: number;
+    /** 旧方式（documentKey＝親タイトル＋日付＋団体）の文書数 */
+    oldDocuments: number | null;
+    diff: number | null;
+  }>;
+  /** 1つの実体に複数の取り込み文書がある組。「重複」ではなく別version。 */
+  multiVariant: Array<{
+    canonicalDocumentId: string;
+    variantCount: number;
+    chunks: number;
+    variants: Array<{
+      sourceDocumentId: string;
+      sourceType: string;
+      title: string | null;
+      organization: string | null;
+      eventDate: string | null;
+      chunks: number;
+    }>;
+  }>;
+  health: {
+    canonicalNull: number;
+    sourceDocumentNull: number;
+    chunkIndexNull: number;
+    ingestSchemeNull: number;
+    collisions: Array<{ sourceDocumentId: string; chunkIndex: number; rows: number }>;
+    variantsSpanningCanonicals: Array<{
+      sourceDocumentId: string;
+      canonicalDocumentIds: string[];
+    }>;
+    /** 実体で見たときの同番。設計どおりなので異常ではない（参考値）。 */
+    canonicalIndexCollisions: number;
+    healthy: boolean;
+  };
+};
+
 export type AuditResult = {
   total: number;
   /** 取得上限に当たったか。当たっていたら数字は「以上」の意味になる。 */
@@ -63,10 +168,30 @@ export type AuditResult = {
   confirmed: Confirmed[];
   candidates: Candidate[];
   heavyDocs: Array<{ doc: string; source_type: string; date: string | null; chunks: number }>;
+  shadow: ShadowSummary;
 };
 
-function meta(r: AuditRow, key: string): string | null {
-  const v = r.metadata?.[key];
+/**
+ * metadata の値を読む。**AUDIT_SELECT が取っているキーしか読めない。**
+ *
+ * ■ 静かに null で通ることを防ぐ二重の仕掛け
+ * ① 型：`AuditMetaKey` 以外を渡すと tsc が落ちる（キーの打ち間違い・新キーの追加漏れ）
+ * ② 実行時：AUDIT_SELECT に足し忘れて列そのものが返っていない場合、
+ *    その項目は `undefined` になる（キーが無いだけなら PostgREST は null を返すので、
+ *    「取得していない」と「値が無い」を区別できる）。開発とテストでは例外にして
+ *    気づかせ、本番では画面を落とさずログに出して null を返す。
+ *
+ * 監査が「0件」と出したとき、それが本当に0件なのか取り忘れなのかを
+ * 分からなくしないための作り。
+ */
+function meta(r: AuditRow, key: AuditMetaKey): string | null {
+  const v = r[META_FIELD[key]];
+  if (v === undefined) {
+    const msg = `AUDIT_SELECT が metadata.${key} を取得していません（${META_FIELD[key]} が応答に無い）`;
+    if (process.env.NODE_ENV !== "production") throw new Error(msg);
+    console.error(msg);
+    return null;
+  }
   return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
 }
 
@@ -212,18 +337,25 @@ export function auditMemory(rows: AuditRow[], limit: number): AuditResult {
     });
   }
 
-  // ── 確定⑤：PLAUD_ID が別の行の source_id を指している ────
+  // ── 確定⑤：録音IDが別の行の source_id を指している ────
   //
   // タイトルの一致に頼らない、いちばん強い証拠。Notion経由で入った会議は
   // metadata に元の録音IDを持っているので、その録音が別の行としても
   // 存在するなら、同じ録音を2回登録したことがデータ自身から言い切れる。
+  //
+  // ★大文字 PLAUD_ID と小文字 plaud_id の両方を見る。2026-08-28時点で
+  //   大文字50行・小文字70行・両方持つ行は0。大文字だけ見ていた頃は
+  //   小文字の70行が検査対象から丸ごと外れていた（当時の実データでは
+  //   たまたま検出結果は同じだったが、見ていないこと自体が穴だった）。
+  const recordingId = (r: AuditRow): string | null =>
+    meta(r, "PLAUD_ID") ?? meta(r, "plaud_id");
   const byId = new Set(rows.map((r) => r.source_id).filter((x): x is string => !!x));
   const plaudDup = rows.filter((r) => {
-    const pid = meta(r, "PLAUD_ID");
+    const pid = recordingId(r);
     return pid !== null && pid !== r.source_id && byId.has(pid);
   });
   if (plaudDup.length > 0) {
-    const recordings = new Set(plaudDup.map((r) => meta(r, "PLAUD_ID"))).size;
+    const recordings = new Set(plaudDup.map(recordingId)).size;
     confirmed.push({
       key: "plaud_id_duplicated",
       label: "同じ録音が複数の行として入っている（PLAUD_IDが一致）",
@@ -342,6 +474,47 @@ export function auditMemory(rows: AuditRow[], limit: number): AuditResult {
     .sort((a, b) => b.chunks - a.chunks)
     .slice(0, 8);
 
+  // ── Memory 2.0 Shadow ────────────────────────────────
+  //
+  // 新方式で数え直して、上で出した旧方式の docs の横に並べる。
+  // ここで本番の束ね方（docKey）は一切書き換えない。読むだけ。
+  const summary = summarizeShadow(rows);
+  const oldCounts: Record<string, number> = {};
+  for (const b of bySourceType) oldCounts[b.source_type] = b.docs;
+  const shadow: ShadowSummary = {
+    chunks: summary.chunks,
+    canonicalDocuments: summary.canonicalDocuments,
+    sourceDocuments: summary.sourceDocuments,
+    bySourceType: compareWithOld(summary.bySourceType, oldCounts),
+    multiVariant: findMultiVariantCanonicals(rows),
+    health: auditShadowColumns(rows),
+  };
+
+  // 新4列が欠けている／版の中で番号がぶつかっている／親子関係が壊れているのは
+  // 事実として確定した不整合。0をハードコードせず、実データから数えた結果で判定する。
+  if (!shadow.health.healthy) {
+    const h = shadow.health;
+    const parts = [
+      h.canonicalNull > 0 ? `canonical未設定 ${h.canonicalNull}行` : null,
+      h.sourceDocumentNull > 0 ? `取り込み文書未設定 ${h.sourceDocumentNull}行` : null,
+      h.chunkIndexNull > 0 ? `chunk_index未設定 ${h.chunkIndexNull}行` : null,
+      h.ingestSchemeNull > 0 ? `ingest_scheme未設定 ${h.ingestSchemeNull}行` : null,
+      h.collisions.length > 0 ? `版の中でchunk_indexが衝突 ${h.collisions.length}組` : null,
+      h.variantsSpanningCanonicals.length > 0
+        ? `実体をまたぐ取り込み文書 ${h.variantsSpanningCanonicals.length}件`
+        : null,
+    ].filter((s): s is string => s !== null);
+    confirmed.push({
+      key: "shadow_columns_unhealthy",
+      label: "Memory 2.0 の同一性の列が壊れている",
+      count: parts.length,
+      detail:
+        "2026-08-28のmigrationで入れた4列に欠損か衝突がある。" +
+        "取り込み処理が新しい列を埋めずに書いた可能性がある（現時点では埋める実装は未着手）",
+      samples: parts.slice(0, 4),
+    });
+  }
+
   return {
     total: rows.length,
     truncated,
@@ -349,5 +522,6 @@ export function auditMemory(rows: AuditRow[], limit: number): AuditResult {
     confirmed,
     candidates,
     heavyDocs,
+    shadow,
   };
 }

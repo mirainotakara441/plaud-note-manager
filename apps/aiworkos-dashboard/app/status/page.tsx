@@ -481,6 +481,24 @@ export default function StatusPage() {
         </div>
       </section>
 
+      {/* Memory 2.0 Shadow。新しい数え方を旧方式の横に並べるだけ。
+          本番の検索・RAG・AI回答はまだ旧方式のまま動いている。 */}
+      <section className="mt-4">
+        <div className="mb-1.5 flex items-baseline justify-between gap-2 px-1">
+          <h2 className="text-sm font-semibold text-gray-500">Memory 2.0 Shadow</h2>
+          <span className="text-xs text-gray-400">
+            {audit ? `実体${audit.shadow.canonicalDocuments}件` : "新しい数え方との比較"}
+          </span>
+        </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+          <MemoryShadowPanel
+            audit={audit}
+            error={auditError}
+            onRetry={() => void loadAudit()}
+          />
+        </div>
+      </section>
+
       {loading && !stats && (
         <div className="flex flex-col items-center gap-3 py-16">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-200 border-t-indigo-600" />
@@ -1561,6 +1579,179 @@ function GuardianPanel({
         「別監視」はこの一覧では判定していませんが、専用の検知器が見ているジョブです
         （横に「どこが・何日で」を出しています）。
       </p>
+    </div>
+  );
+}
+
+// ── Memory 2.0 Shadow パネル ──────────────────────────────
+//
+// 2026-08-28のmigrationで入った canonical_document_id / source_document_id /
+// chunk_index を使って数え直した結果を、旧方式の横に並べるだけ。
+// **本番の検索・RAG・AI回答は何も変えていない。** 置き換えの前に、
+// 「置き換えたら数字がどう動くか」を先に見えるようにするためのもの。
+//
+// 差分は「エラー」ではない。旧方式が過剰に統合していた分も、新方式が
+// 同じ実体として束ねた分も、どちらも差として出る。
+
+function MemoryShadowPanel({
+  audit,
+  error,
+  onRetry,
+}: {
+  audit: AuditResult | null;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  // ★取得失敗を「0件」に見せない。記憶の監査と同じ扱いにする。
+  if (error) {
+    return (
+      <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+        <p className="font-bold">Shadowの比較データを取得できませんでした</p>
+        <p className="mt-0.5 text-xs">{error}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 w-full rounded-lg border border-rose-300 bg-white py-1.5 text-xs font-bold text-rose-700 active:bg-rose-100"
+        >
+          再読み込み
+        </button>
+      </div>
+    );
+  }
+  if (!audit) return <p className="text-sm text-gray-400">読み込み中…</p>;
+
+  const s = audit.shadow;
+  const h = s.health;
+
+  return (
+    <div className="space-y-3">
+      {/* ★列が欠けている・版の中で番号がぶつかっているなら、正常な見た目にしない。 */}
+      {!h.healthy && (
+        <div className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-2 text-xs text-rose-800">
+          <p className="font-bold">同一性の列が壊れています</p>
+          <ul className="mt-1 space-y-0.5">
+            {h.canonicalNull > 0 && <li>実体ID（canonical）が未設定：{h.canonicalNull}行</li>}
+            {h.sourceDocumentNull > 0 && <li>取り込み文書IDが未設定：{h.sourceDocumentNull}行</li>}
+            {h.chunkIndexNull > 0 && <li>chunk_index が未設定：{h.chunkIndexNull}行</li>}
+            {h.ingestSchemeNull > 0 && <li>ingest_scheme が未設定：{h.ingestSchemeNull}行</li>}
+            {h.collisions.length > 0 && (
+              <li>
+                同じ取り込み文書の中で chunk_index が衝突：{h.collisions.length}組
+                <span className="block truncate text-rose-900/60">
+                  例: {h.collisions.slice(0, 2).map((c) => `${c.sourceDocumentId.slice(0, 40)}#${c.chunkIndex}`).join(" / ")}
+                </span>
+              </li>
+            )}
+            {h.variantsSpanningCanonicals.length > 0 && (
+              <li>1つの取り込み文書が複数の実体にまたがっている：{h.variantsSpanningCanonicals.length}件</li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      {/* 全体の数 */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: "chunk", value: s.chunks },
+          { label: "実体", value: s.canonicalDocuments },
+          { label: "取り込み文書", value: s.sourceDocuments },
+        ].map((x) => (
+          <div key={x.label} className="rounded-lg bg-gray-50 px-2 py-1.5 text-center">
+            <p className="text-[0.6875rem] text-gray-500">{x.label}</p>
+            <p className="text-base font-bold tabular-nums text-gray-900">{x.value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* 旧方式との比較 */}
+      <div className="-mx-1 overflow-x-auto px-1">
+        <table className="w-full min-w-[24rem] text-xs">
+          <thead>
+            <tr className="border-b border-gray-200 text-left text-gray-500">
+              <th className="pb-1 pr-2 font-bold">種別</th>
+              <th className="pb-1 pr-2 text-right font-bold">chunk</th>
+              <th className="pb-1 pr-2 text-right font-bold">旧方式</th>
+              <th className="pb-1 pr-2 text-right font-bold">実体</th>
+              <th className="pb-1 pr-2 text-right font-bold">取込文書</th>
+              <th className="pb-1 text-right font-bold">差</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s.bySourceType.map((t) => (
+              <tr key={t.sourceType} className="border-b border-gray-100 last:border-0">
+                <td className="py-1 pr-2 text-gray-700">{t.sourceType}</td>
+                <td className="py-1 pr-2 text-right tabular-nums text-gray-600">{t.chunks}</td>
+                <td className="py-1 pr-2 text-right tabular-nums text-gray-600">
+                  {t.oldDocuments ?? "—"}
+                </td>
+                <td className="py-1 pr-2 text-right font-bold tabular-nums text-gray-900">
+                  {t.canonicalDocuments}
+                </td>
+                <td className="py-1 pr-2 text-right tabular-nums text-gray-600">
+                  {t.sourceDocuments}
+                </td>
+                <td
+                  className={`py-1 text-right tabular-nums ${
+                    t.diff === null || t.diff === 0 ? "text-gray-300" : "font-bold text-indigo-600"
+                  }`}
+                >
+                  {t.diff === null ? "—" : t.diff === 0 ? "0" : t.diff > 0 ? `+${t.diff}` : t.diff}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs leading-relaxed text-gray-400">
+        差は不具合ではありません。旧方式が別の文書を1つに潰していた分は＋に、
+        新方式が同じ実体として束ねた分は−に出ます。
+      </p>
+
+      {/* 同じ実体に複数の取り込み文書があるもの */}
+      <div>
+        <p className="mb-1 text-xs font-bold text-gray-600">
+          同じ実体に複数の取り込み文書があります
+          <span className="ml-1 font-normal text-gray-400">（{s.multiVariant.length}件）</span>
+        </p>
+        {s.multiVariant.length === 0 ? (
+          <p className="text-xs text-gray-400">ありません。</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {s.multiVariant.slice(0, 8).map((m) => (
+              <li
+                key={m.canonicalDocumentId}
+                className="rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-2"
+              >
+                <p className="truncate text-[0.6875rem] font-bold text-gray-700">
+                  {m.canonicalDocumentId}
+                </p>
+                <p className="text-[0.6875rem] text-gray-500">
+                  {m.variantCount}版 / 全{m.chunks}chunk
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {m.variants.map((v) => (
+                    <li key={v.sourceDocumentId} className="border-l-2 border-gray-300 pl-2">
+                      <p className="truncate text-[0.6875rem] text-gray-700">
+                        {v.title ?? "(題なし)"}
+                      </p>
+                      <p className="truncate text-[0.625rem] text-gray-400">
+                        {v.sourceType} / {v.organization ?? "団体なし"} / {v.eventDate ?? "日付なし"}
+                        {" / "}
+                        {v.chunks}chunk
+                      </p>
+                      <p className="truncate text-[0.625rem] text-gray-400">{v.sourceDocumentId}</p>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-1 text-xs leading-relaxed text-gray-400">
+          これらは重複でも削除対象でもありません。同じ実体について取り込み文書が
+          複数ある、という事実だけを出しています。どれを正とするかはまだ決めていません。
+        </p>
+      </div>
     </div>
   );
 }

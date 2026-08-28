@@ -70,8 +70,10 @@ process.on("SIGINT", () => {
 });
 
 const main = async () => {
-  run("1/4 TypeScriptチェック", "npx", ["tsc", "--noEmit"]);
-  run("2/4 本番ビルド", "npx", ["next", "build"]);
+  run("1/5 TypeScriptチェック", "npx", ["tsc", "--noEmit"]);
+  // サーバー不要の純粋ロジック。ここで落ちるならビルドを待つ意味がないので先に回す。
+  run("2/5 純粋ロジック（Memory 2.0 Shadow）", "node", ["tests/shadow.mjs"]);
+  run("3/5 本番ビルド", "npx", ["next", "build"]);
 
   step(`検証用サーバーを起動（${BASE}）`);
   server = spawn("npx", ["next", "start", "-p", String(PORT)], {
@@ -88,9 +90,9 @@ const main = async () => {
   }
   console.log("  起動しました");
 
-  run("3/4 スモークテスト（API）", "node", ["tests/smoke.mjs"], { BASE });
+  run("4/5 スモークテスト（API）", "node", ["tests/smoke.mjs"], { BASE });
   // E2E_BASE_URL を渡すと playwright.config.ts は自前でサーバーを立てず、ここのものを使う。
-  run("4/4 E2Eテスト（ブラウザ）", "npx", ["playwright", "test"], { E2E_BASE_URL: BASE });
+  run("5/5 E2Eテスト（ブラウザ）", "npx", ["playwright", "test"], { E2E_BASE_URL: BASE });
 
   stopServer();
   console.log("\n\x1b[32m✔ すべて通りました\x1b[0m");
