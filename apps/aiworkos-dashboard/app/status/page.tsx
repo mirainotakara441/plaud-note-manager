@@ -7,6 +7,7 @@ import {
   MUNICIPALITY_SUBCATEGORIES,
   municipalitySubcategory,
 } from "@/lib/municipalities";
+import type { GuardianRow, GuardianState } from "@/lib/guardian";
 
 // レイアウト方針（2026-07-30 吉井さん指摘「縦に長すぎる」への対応）:
 //   - スマホ(既定)は1カラムのまま。lg以上で2カラムに段組みし、横幅の余りを使う。
@@ -265,6 +266,13 @@ export default function StatusPage() {
   // 裏の自動更新が失敗している間だけ立てる。dataは前回取得のまま保持する
   // （エラーオブジェクトで差し替えると、1回の失敗で画面全体が消えるため）。
   const [staleWarn, setStaleWarn] = useState(false);
+  // OS Guardian（ジョブの成否）。/api/status とは別に取る。
+  // dashboard_stats が落ちても、ジョブの状態だけは見えていてほしいため。
+  const [guardian, setGuardian] = useState<{
+    rows: GuardianRow[];
+    checked_at: string;
+  } | null>(null);
+  const [guardianError, setGuardianError] = useState<string | null>(null);
 
   // silent=true は自動更新用（ボタンの「更新中」表示を出さず裏で差し替える）
   const load = useCallback(async (silent = false) => {
@@ -287,20 +295,41 @@ export default function StatusPage() {
     }
   }, []);
 
+  const loadGuardian = useCallback(async () => {
+    try {
+      const res = await fetch("/api/guardian", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? `取得失敗 ${res.status}`);
+      setGuardian(json);
+      setGuardianError(null);
+    } catch (e) {
+      // ★空配列を入れて「ジョブが0本」に見せない。監視が読めないことを表に出す。
+      setGuardianError(e instanceof Error ? e.message : "ジョブの状態を取得できませんでした");
+      setGuardian(null);
+    }
+  }, []);
+
   useEffect(() => {
     load();
+    void loadGuardian();
     // 60秒ごとに裏で自動更新。開きっぱなしでも鮮度を保つ。
-    const timer = setInterval(() => load(true), 60000);
+    const timer = setInterval(() => {
+      load(true);
+      void loadGuardian();
+    }, 60000);
     // タブに戻った瞬間にも更新（スリープ復帰・アプリ切替後の古い表示を防ぐ）
     const onVisible = () => {
-      if (document.visibilityState === "visible") load(true);
+      if (document.visibilityState === "visible") {
+        load(true);
+        void loadGuardian();
+      }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load]);
+  }, [load, loadGuardian]);
 
   const stats = data?.stats;
   const healthy = data?.ok === true && !!stats;
@@ -393,6 +422,25 @@ export default function StatusPage() {
           {fetchedAt ? `・${fmtDateTime(fetchedAt.toISOString())}時点` : ""}）
         </p>
       )}
+
+      {/* OS Guardian：ジョブが「最後に正常成功したか」。
+          /api/status とは独立して出す。dashboard_stats が落ちている時ほど
+          ジョブの状態を見たいので、道連れにしない。 */}
+      <section className="mt-4">
+        <div className="mb-1.5 flex items-baseline justify-between gap-2 px-1">
+          <h2 className="text-sm font-semibold text-gray-500">ジョブの成否</h2>
+          <span className="text-xs text-gray-400">
+            {guardian ? `${guardian.rows.length}本・${fmtDateTime(guardian.checked_at)}時点` : "最後に正常成功したか"}
+          </span>
+        </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+          <GuardianPanel
+            rows={guardian?.rows ?? null}
+            error={guardianError}
+            onRetry={() => void loadGuardian()}
+          />
+        </div>
+      </section>
 
       {loading && !stats && (
         <div className="flex flex-col items-center gap-3 py-16">
@@ -1338,6 +1386,133 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
           </ul>
         </details>
       )}
+    </div>
+  );
+}
+
+// ── OS Guardian（ジョブの成否）パネル ──────────────────────
+//
+// 「最後に動いた」ではなく「最後に正常成功したか」を出す。
+// 判定は lib/guardian.ts（閾値の正は lib/advisor/watchlist.ts）。ここは見せ方だけ。
+
+const GUARDIAN_STYLE: Record<GuardianState, { dot: string; chip: string }> = {
+  異常: { dot: "bg-rose-500", chip: "bg-rose-100 text-rose-700" },
+  警告: { dot: "bg-amber-400", chip: "bg-amber-100 text-amber-800" },
+  未実行: { dot: "bg-gray-300", chip: "bg-gray-100 text-gray-600" },
+  基準なし: { dot: "bg-sky-300", chip: "bg-sky-100 text-sky-700" },
+  正常: { dot: "bg-emerald-500", chip: "bg-emerald-100 text-emerald-700" },
+};
+
+function GuardianPanel({
+  rows,
+  error,
+  onRetry,
+}: {
+  rows: GuardianRow[] | null;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  // ★取得失敗を「ジョブなし」に見せない。読めなかったことをそのまま出す。
+  if (error) {
+    return (
+      <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+        <p className="font-bold">ジョブの状態を取得できませんでした</p>
+        <p className="mt-0.5 text-xs">{error}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 w-full rounded-lg border border-rose-300 bg-white py-1.5 text-xs font-bold text-rose-700 active:bg-rose-100"
+        >
+          再読み込み
+        </button>
+      </div>
+    );
+  }
+  if (rows === null) {
+    return <p className="text-sm text-gray-400">読み込み中…</p>;
+  }
+  if (rows.length === 0) {
+    return <p className="text-sm text-gray-400">対象のジョブがありません。</p>;
+  }
+
+  const counts = rows.reduce<Record<string, number>>((acc, r) => {
+    acc[r.state] = (acc[r.state] ?? 0) + 1;
+    return acc;
+  }, {});
+  const order: GuardianState[] = ["異常", "警告", "未実行", "基準なし", "正常"];
+
+  return (
+    <div>
+      {/* 状態ごとの件数。まず全体を1行で掴めるように。 */}
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        {order
+          .filter((st) => (counts[st] ?? 0) > 0)
+          .map((st) => (
+            <span
+              key={st}
+              className={`rounded-full px-2 py-0.5 text-xs font-bold ${GUARDIAN_STYLE[st].chip}`}
+            >
+              {st} {counts[st]}
+            </span>
+          ))}
+      </div>
+
+      <ul className="space-y-1.5">
+        {rows.map((r) => (
+          <li
+            key={r.job}
+            className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
+          >
+            <div className="flex items-center gap-2">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${GUARDIAN_STYLE[r.state].dot}`} />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">
+                {r.label}
+              </span>
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-bold ${GUARDIAN_STYLE[r.state].chip}`}
+              >
+                {r.state}
+              </span>
+            </div>
+            {/* 最終実行・最終成功・最終結果。3つを並べて出すのがこの画面の要。 */}
+            <dl className="mt-1 grid grid-cols-3 gap-1 text-xs">
+              <div>
+                <dt className="text-gray-400">最終実行</dt>
+                <dd className="tabular-nums text-gray-700">{fmtDateTime(r.last_run_at)}</dd>
+              </div>
+              <div>
+                <dt className="text-gray-400">最終成功</dt>
+                <dd className="tabular-nums text-gray-700">{fmtDateTime(r.last_ok_at)}</dd>
+              </div>
+              <div>
+                <dt className="text-gray-400">最終結果</dt>
+                <dd
+                  className={
+                    r.last_result === "失敗"
+                      ? "font-bold text-rose-700"
+                      : r.last_result === "成功"
+                      ? "text-emerald-700"
+                      : "text-gray-400"
+                  }
+                >
+                  {r.last_result ?? "—"}
+                  {/* exit コードは失敗しているときだけ。成功に併記すると直っているものを
+                      落ちているように見せてしまう（この列は最後の失敗に紐づくため）。 */}
+                  {r.last_result === "失敗" && r.last_exit_code !== null
+                    ? ` (exit ${r.last_exit_code})`
+                    : ""}
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-1 text-xs leading-relaxed text-gray-500">{r.reason}</p>
+          </li>
+        ))}
+      </ul>
+
+      <p className="mt-2 border-t border-gray-100 pt-2 text-xs leading-relaxed text-gray-400">
+        「基準なし」は打刻はあるが監視対象（朝の通知）に登録されていないジョブです。
+        止まってよい時間が決まっていないため、正常とも警告とも判定できません。
+      </p>
     </div>
   );
 }
