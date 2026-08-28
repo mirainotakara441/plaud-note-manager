@@ -3,13 +3,25 @@
 //
 // サーバもDBも要らない。node が直接動かす。
 //
+// Identity の入力は source_type / source_id / metadata / chunkIndex だけ。
+// title は第7.2弾の実測（有無による差 0/1458）を経て引数から外した。
+//
 // ここで固定しているのは「本番1458行に実際に入っている形」だけではなく、
 // **まだ実データに存在しない形**も含む。特に最後の
 // 「1実体 × 複数の取り込み文書 × 複数チャンク」は、同じ録音から
 // PLAUD版とNotion版がそれぞれ複数チャンクで入った瞬間に効いてくる。
 // 実体で番号を振る実装だと、そこで版の境界が消える。
 
-import { deriveIdentity } from "../lib/memoryIdentity.mjs";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import {
+  CALLER_FORBIDDEN_KEYS,
+  deriveIdentity,
+  identityColumns,
+} from "../lib/memoryIdentity.mjs";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 let passed = 0;
 let failed = 0;
@@ -201,7 +213,7 @@ check("source_id 空文字", id4({ source_type: "会議", source_id: "   " }), [
 // ── 10. 未知の書式 ★黙って埋めない ──────────────────────────
 //   埋めてしまうと「知らない writer が増えた」ことに気づけなくなる。
 check(
-  "未知の書式は null（裸UUID＝現状の月次報告）",
+  "未知の書式は null（接頭辞の無い裸UUID）",
   id4({ source_type: "月次報告", source_id: "3f2a9c10-1b2c-4d5e-8f90-abcdef123456" }),
   [null, null, null, null]
 );
@@ -211,18 +223,26 @@ check(
   [null, null, null, null]
 );
 
-// ── 11. monthly の設計案 ★まだ未実装であることを固定する ──────────
-//   第7.3弾で `monthly` scheme を足したら、このテストは**必ず落ちる**。
-//   落ちることで「設計案どおり入れたか」を確認する仕掛けにしている。
-check(
-  "monthly候補は現時点では未対応（7.3で対応したらここが落ちる）",
-  id4({
-    source_type: "月次報告",
-    source_id: "monthly_briefing:3f2a9c10-1b2c-4d5e-8f90-abcdef123456",
-    metadata: { month: "2026-08", audience: "石田本部長" },
-  }),
-  [null, null, null, null]
-);
+// ── 11. monthly（月次報告） ────────────────────────────────
+//   裸のUUIDだと分類できないので、writer 側で `monthly_briefing:` を付ける。
+//   実データ0件のうちに書式を決めた（第7.0弾）。
+{
+  const uuid = "3f2a9c10-1b2c-4d5e-8f90-abcdef123456";
+  check(
+    "monthly",
+    id4({
+      source_type: "月次報告",
+      source_id: `monthly_briefing:${uuid}`,
+      metadata: { month: "2026-08", audience: "石田本部長" },
+    }),
+    [`monthly_briefing:${uuid}`, `monthly_briefing:${uuid}`, 0, "monthly"]
+  );
+  check(
+    "monthly: 接頭辞が無い裸UUIDは未知として弾く",
+    id4({ source_type: "月次報告", source_id: uuid }),
+    [null, null, null, null]
+  );
+}
 
 // ── 12. 1実体 × 複数の取り込み文書 × 複数チャンク ★将来壊れる条件 ──
 {
@@ -270,6 +290,107 @@ check(
     chunkIndex: 99,
   }).chunk_index,
   2
+);
+
+// ── Gateway の契約：DBへ書く4列 ────────────────────────────
+{
+  const ident = deriveIdentity({
+    source_type: "会議",
+    source_id: "meeting:横浜市:text:面談:2026-08-01:2",
+    metadata: { 位置: "2/4" },
+  });
+  check(
+    "書き込む列は4つだけ",
+    Object.keys(identityColumns(ident)).sort(),
+    ["canonical_document_id", "chunk_index", "ingest_scheme", "source_document_id"]
+  );
+  check("書き込む値", identityColumns(ident), {
+    canonical_document_id: "meeting:横浜市:text:面談:2026-08-01",
+    source_document_id: "meeting:横浜市:text:面談:2026-08-01",
+    chunk_index: 1,
+    ingest_scheme: "meeting",
+  });
+  check(
+    "caller が指定してはいけないキー",
+    [...CALLER_FORBIDDEN_KEYS].sort(),
+    ["canonical_document_id", "embedding", "ingest_scheme", "source_document_id"]
+  );
+}
+
+// ── store-memory が INSERT と UPDATE の両方で4列を書くこと ──────────
+//   UPDATE 側に入れ忘れると、入れ直しのたびに古い同一性が残り続ける。
+//   これは実際に起こしやすい抜けなので、コードの形として固定しておく。
+{
+  const src = readFileSync(join(ROOT, "supabase/functions/store-memory/index.ts"), "utf8");
+  const insertBlock = src.slice(src.indexOf(".insert({"), src.indexOf(".insert({") + 400);
+  const updateBlock = src.slice(src.indexOf(".update({"), src.indexOf(".update({") + 400);
+  check("store-memory: INSERT に4列が入る", insertBlock.includes("...ident"), true);
+  check("store-memory: UPDATE にも4列が入る", updateBlock.includes("...ident"), true);
+  check("store-memory: 導出不能を422で落とす", /status:\s*422/.test(src), true);
+  check(
+    "store-memory: caller の chunk_index 不足も422で落とす（0を入れて成功させない）",
+    src.includes("identity.needsCallerChunkIndex"),
+    true
+  );
+  check("store-memory: caller 指定を400で弾く", src.includes("CALLER_FORBIDDEN_KEYS"), true);
+  check(
+    "store-memory: 実装を共有モジュールから読む（二重実装しない）",
+    src.includes('from "../_shared/identity.mjs"'),
+    true
+  );
+}
+
+// ── スキル deliverable-to-supabase が送る形（chunk_index つき） ──────
+//   位置ラベルは slideN / pN / chunkN の3種。どれも並び順ではないので
+//   caller の index が要る。index を渡せば422にならないことを固定する。
+{
+  for (const [pos, i] of [["slide1", 0], ["slide2", 1], ["p12", 11], ["chunk3", 2]]) {
+    const r = deriveIdentity({
+      source_type: "成果物",
+      source_id: `deliverable:北九州市:提案書.pptx:${pos}`,
+      metadata: { 種別: "提案書", カテゴリ: "自治体", ファイル名: "提案書.pptx", 位置: pos, 資料名: "提案書" },
+      chunkIndex: i,
+    });
+    check(`スキル形状(${pos}): caller index で解消`, r.needsCallerChunkIndex, false);
+    check(`スキル形状(${pos}): chunk_index`, r.chunk_index, i);
+    check(`スキル形状(${pos}): 版のID`, r.source_document_id, "deliverable:北九州市:提案書.pptx");
+  }
+  // index を送らなければ 422 相当（Gateway が弾く）ままであること
+  check(
+    "スキル形状: index を送らなければ弾かれる",
+    deriveIdentity({
+      source_type: "成果物",
+      source_id: "deliverable:北九州市:提案書.pptx:slide1",
+      metadata: { 位置: "slide1" },
+    }).needsCallerChunkIndex,
+    true
+  );
+}
+
+// ── deliverables が0起点indexを渡すこと ────────────────────────
+{
+  const src = readFileSync(join(ROOT, "app/api/deliverables/route.ts"), "utf8");
+  check("deliverables: chunk_index を渡す", src.includes("chunk_index: i"), true);
+}
+
+// ── monthly-report が store-memory / purge-memory を通ること ──────
+{
+  const src = readFileSync(join(ROOT, "app/api/monthly-report/briefings/route.ts"), "utf8");
+  check("monthly: store-memory 経由", src.includes("functions/v1/store-memory"), true);
+  check("monthly: purge-memory 経由", src.includes("functions/v1/purge-memory"), true);
+  check("monthly: source_id に接頭辞", src.includes("`monthly_briefing:${id}`"), true);
+  check(
+    "monthly: memory_chunks を直に叩かない",
+    src.includes("rest/v1/memory_chunks") || src.includes("MEMORY_TABLE"),
+    false
+  );
+}
+
+// ── title は同一性に影響しない ────────────────────────────────
+check(
+  "title を渡しても結果が変わらない",
+  id4({ source_type: "会議", source_id: "plaud:abc123", metadata: { plaud_id: "ABC123" }, title: "｜9" }),
+  id4({ source_type: "会議", source_id: "plaud:abc123", metadata: { plaud_id: "ABC123" } })
 );
 
 console.log(`\n合格 ${passed} / ${passed + failed}`);

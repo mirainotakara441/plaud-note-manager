@@ -144,7 +144,12 @@ export async function POST(req: NextRequest) {
   }));
 
   let stored = 0;
-  for (const c of chunks) {
+  // ★index を渡す。位置（text1 / p2-1 など）は「何ページ目か」の札であって
+  //   順番ではなく、store-memory 側からは並び順を決められない唯一の経路。
+  //   chunks は文書の順に並んでいるので、この i がそのまま 0起点の並び順になる
+  //   （既存562行との一致は第7.2弾で確認済み）。
+  for (let i = 0; i < chunks.length; i += 1) {
+    const c = chunks[i];
     const ok = await storeChunk(supabaseUrl, anonKey, {
       source_type: "成果物",
       source_id: `deliverable:${organization}:${filename}:${c.pos}`,
@@ -152,6 +157,7 @@ export async function POST(req: NextRequest) {
       title: `${title}｜${docType}｜${c.pos}`,
       content: c.content,
       event_date: date,
+      chunk_index: i,
       metadata: {
         種別: docType,
         カテゴリ: category,

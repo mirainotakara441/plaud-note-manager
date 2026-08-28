@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { serviceCreds, restHeaders } from "@/lib/supabase";
+import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 
 // 上長への月次報告の議事メモ（monthly_briefings）。
 //
@@ -8,16 +8,29 @@ import { serviceCreds, restHeaders } from "@/lib/supabase";
 // 作り直す頻度も寿命も違うため（詳しくはテーブルのコメント）。
 //
 // 記憶層への流し込み:
-//   保存のたびに memory_chunks(source_type='月次報告') へ upsert する。
+//   保存のたびに store-memory Edge Function 経由で
+//   memory_chunks(source_type='月次報告') へ upsert する。
 //   提案や壁打ちのときに「前に統括部長にこう言われた」を引けるようにするため。
-//   埋め込み(embedding)はここでは作らない。既存の成果物・会議と同じく、
-//   後段のバッチが未ベクトル化の行を拾う運用に合わせている。
+//
+//   2026-08-28まではここだけ PostgREST を直に叩いており、書き込み口が2つに
+//   割れていた。そのため (1)埋め込みが作られず (2)Memory 2.0 の同一性4列も
+//   埋まらなかった。store-memory に寄せて両方とも解消する。
+//   source_id に `monthly_briefing:` を付けるのは、裸のUUIDだと同一性の
+//   分類規則のどれにも当たらないため。実データ0件の今しか変えられない。
 
 export const dynamic = "force-dynamic";
 
 const TABLE = "monthly_briefings";
-const MEMORY_TABLE = "memory_chunks";
 const MEMORY_SOURCE = "月次報告";
+
+/**
+ * 記憶層での source_id。裸のUUIDにしない。
+ * 同一性の分類（supabase/functions/_shared/identity.mjs）はこの接頭辞で
+ * ingest_scheme='monthly' を決める。接頭辞が無いと未知の書式として弾かれる。
+ */
+function memorySourceId(id: string): string {
+  return `monthly_briefing:${id}`;
+}
 
 const MONTH_RE = /^\d{4}-\d{2}$/;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -97,34 +110,29 @@ function memoryContent(f: Record<string, unknown>): string {
 
 /**
  * memory_chunks へ入れ直す。
- * 同じ議事メモを何度直しても行が増えないよう、source_id で先に消してから入れる。
+ * 同じ議事メモを何度直しても行が増えないよう、source_id を鍵にした upsert に任せる。
  * 失敗しても本体の保存は成功として返す（記憶層は後追いで直せるが、
  * 議事メモそのものを取りこぼすと打ち直しになるため）。
  */
-async function syncMemory(
-  c: { url: string; key: string },
-  id: string,
-  f: Record<string, unknown>
-): Promise<boolean> {
+async function syncMemory(id: string, f: Record<string, unknown>): Promise<boolean> {
   const content = memoryContent(f);
   if (!content) return true; // 本文が無いなら記憶に入れる意味がない
+  const anon = anonCreds();
+  if (!anon) return false;
   try {
-    await fetch(`${c.url}/rest/v1/${MEMORY_TABLE}?source_type=eq.${encodeURIComponent(MEMORY_SOURCE)}&source_id=eq.${id}`, {
-      method: "DELETE",
-      headers: restHeaders(c.key),
-    });
-    const res = await fetch(`${c.url}/rest/v1/${MEMORY_TABLE}`, {
+    const res = await fetch(`${anon.url}/functions/v1/store-memory`, {
       method: "POST",
-      headers: restHeaders(c.key, { Prefer: "return=minimal" }),
+      headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         source_type: MEMORY_SOURCE,
-        source_id: id,
+        source_id: memorySourceId(id),
         organization: f.audience,
         title: `${f.month} ${f.audience}への月次報告：${f.title}`,
         content,
         event_date: f.reported_on ?? null,
         metadata: { month: f.month, audience: f.audience, via: "monthly-report-page" },
       }),
+      cache: "no-store",
     });
     return res.ok;
   } catch {
@@ -172,7 +180,7 @@ export async function POST(req: NextRequest) {
   }
   const rows = await res.json();
   const item = Array.isArray(rows) ? rows[0] : rows;
-  const memorySaved = await syncMemory(c, item.id, v.fields);
+  const memorySaved = await syncMemory(item.id, v.fields);
   return NextResponse.json({ ok: true, item, memorySaved });
 }
 
@@ -201,7 +209,7 @@ export async function PATCH(req: NextRequest) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: "対象が見つかりません" }, { status: 404 });
   }
-  const memorySaved = await syncMemory(c, id, v.fields);
+  const memorySaved = await syncMemory(id, v.fields);
   return NextResponse.json({ ok: true, item: rows[0], memorySaved });
 }
 
@@ -226,10 +234,16 @@ export async function DELETE(req: NextRequest) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: "対象が見つかりません" }, { status: 404 });
   }
-  // 記憶層にも残さない（消したはずの報告が壁打ちで出てくるのを防ぐ）
-  await fetch(
-    `${c.url}/rest/v1/${MEMORY_TABLE}?source_type=eq.${encodeURIComponent(MEMORY_SOURCE)}&source_id=eq.${id}`,
-    { method: "DELETE", headers: restHeaders(c.key) }
-  ).catch(() => null);
+  // 記憶層にも残さない（消したはずの報告が壁打ちで出てくるのを防ぐ）。
+  // 削除も書き込みと同じ経路（purge-memory）に寄せる。
+  const anon = anonCreds();
+  if (anon) {
+    await fetch(`${anon.url}/functions/v1/purge-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anon.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id_prefix: memorySourceId(id) }),
+      cache: "no-store",
+    }).catch(() => null);
+  }
   return NextResponse.json({ ok: true });
 }
