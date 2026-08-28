@@ -82,16 +82,35 @@ function docKey(r: AuditRow): string {
 }
 
 /**
- * source_id から末尾のチャンク番号を外し、「同じ文書を指す素性」に寄せる。
+ * source_id を「取り込み経路の系統」に落とす。
  *
- * ★`#2` 形式（plaud:xxx#2、weapon:…:story#3）を外し忘れると、同じ文書の
- *   チャンクどうしが「別系統」に見えて二重登録として誤検知する
- *   （2026-08-28、実装中に109件の誤検知を出した）。
+ * ■ なぜ末尾のチャンク番号を剥がす方式をやめたか（2026-08-28）
+ * 以前は source_id からチャンク番号を削って「同じ文書を指す素性」を作り、
+ * それが複数あれば二重登録として挙げていた。しかしチャンク番号の書式は
+ * 経路ごとに違い（下表）、1つでも剥がし漏れると正常なデータが二重登録に化ける。
+ * 実際 `#N` の漏れで109件、`p2-1` の漏れで1件の誤検知を出した。
+ * 剥がし忘れを増やし続ける作りなので、発想を変えて「系統」だけを見る。
+ *
+ * ■ 実データとコードの両方で確認した、チャンク番号の書式
+ *   text{n}      lib/parseDeliverable.ts windowChunks の既定接頭辞
+ *   slide{n}     同 parsePptx
+ *   p{i}         同 parsePdf（短いページ）
+ *   p{i}-{n}     同 parsePdf（800字超のページをさらに窓分割）★これの漏れが今回の誤検知
+ *   img{n}       app/api/deliverables/image/route.ts
+ *   {n}          weekly_report / meeting / weapon / refine / qa などの連番
+ *   #{n}         2026-08-17の復元スクリプト（doc_key に #2 を足す形）
+ *
+ * ■ 系統で見ると何が良いか
+ * 「同じ経路の中で鍵が違う」のは別レコード（週報が同じ週に複数行あるのは正常）。
+ * 「経路をまたいで同じ文書がある」のだけが二重登録の疑い。チャンク番号を
+ * 剥がす必要が無くなるので、書式が増えても壊れない。
  */
-function sourceBase(sid: string): string {
-  return sid
-    .replace(/#\d+$/, "")
-    .replace(/[:|](?:\d+|(?:text|slide|p)\d+)$/, "");
+function ingestScheme(sid: string): string {
+  if (/^https?:\/\//.test(sid)) return "Notion URL";
+  // 復元スクリプトが持ち込んだPLAUDの生ハッシュ（接頭辞なし32桁）。
+  if (/^[0-9a-f]{32}$/.test(sid)) return "PLAUDハッシュ";
+  const i = sid.indexOf(":");
+  return i > 0 ? sid.slice(0, i) : "その他";
 }
 
 function count<T>(rows: T[], f: (r: T) => boolean): number {
@@ -169,22 +188,54 @@ export function auditMemory(rows: AuditRow[], limit: number): AuditResult {
     });
   }
 
-  // ── 確定④：同じ文書なのに source_id の素性が割れている ────
-  const bases = new Map<string, Set<string>>();
+  // ── 確定④：同じ文書が複数の取り込み経路から入っている ────
+  //
+  // 同じ経路の中で鍵が違うのは別レコードなので挙げない。実データで確かめた例：
+  //   ・週報は同じ週の「全体」に内容の違う行が複数ある（weekly_report:UUID が別々）
+  //   ・学びは同じ催しを別のNotionページに2回記録することがある（URLが別々）
+  // どちらも正常なデータで、以前はこれを二重登録として誤って挙げていた。
+  const schemes = new Map<string, Set<string>>();
   for (const r of rows) {
     if (!r.source_id) continue;
     const k = docKey(r);
-    if (!bases.has(k)) bases.set(k, new Set());
-    bases.get(k)!.add(sourceBase(r.source_id));
+    if (!schemes.has(k)) schemes.set(k, new Set());
+    schemes.get(k)!.add(ingestScheme(r.source_id));
   }
-  const split = [...bases.entries()].filter(([, s]) => s.size > 1);
+  const split = [...schemes.entries()].filter(([, s]) => s.size > 1);
   if (split.length > 0) {
     confirmed.push({
       key: "doc_split_across_sources",
-      label: "同じ資料名＋日付が複数の source_id 系統に分かれている",
+      label: "同じ文書が複数の取り込み経路から入っている",
       count: split.length,
-      detail: "同じ文書を別々の経路で入れた可能性。どちらが正か機械では決められない",
-      samples: split.slice(0, 3).map(([k, s]) => `${k.slice(0, 40)}（${s.size}系統）`),
+      detail: "同じものを別経路で入れた疑い。どちらが正かは中身を見ないと決められない",
+      samples: split.slice(0, 3).map(([k, s]) => `${k.split("␟")[0].slice(0, 30)}（${[...s].join(" + ")}）`),
+    });
+  }
+
+  // ── 確定⑤：PLAUD_ID が別の行の source_id を指している ────
+  //
+  // タイトルの一致に頼らない、いちばん強い証拠。Notion経由で入った会議は
+  // metadata に元の録音IDを持っているので、その録音が別の行としても
+  // 存在するなら、同じ録音を2回登録したことがデータ自身から言い切れる。
+  const byId = new Set(rows.map((r) => r.source_id).filter((x): x is string => !!x));
+  const plaudDup = rows.filter((r) => {
+    const pid = meta(r, "PLAUD_ID");
+    return pid !== null && pid !== r.source_id && byId.has(pid);
+  });
+  if (plaudDup.length > 0) {
+    const recordings = new Set(plaudDup.map((r) => meta(r, "PLAUD_ID"))).size;
+    confirmed.push({
+      key: "plaud_id_duplicated",
+      label: "同じ録音が複数の行として入っている（PLAUD_IDが一致）",
+      count: plaudDup.length,
+      detail:
+        `${recordings}本の録音について、metadata.PLAUD_ID が別の行の source_id と一致している。` +
+        "タイトルの類似ではなくデータ自身が同じ録音だと示すので、上の経路またぎでは" +
+        "見つからない組（題も団体も違うのに同じ録音）もここで出る",
+      // 団体も出す。同じ録音が別団体で登録されている組があるため。
+      samples: plaudDup
+        .slice(0, 4)
+        .map((r) => `${stripChunkSuffix(r.title).slice(0, 26)}（${r.organization ?? "団体なし"}）`),
     });
   }
 
