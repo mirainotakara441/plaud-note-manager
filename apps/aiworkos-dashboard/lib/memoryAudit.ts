@@ -16,6 +16,8 @@
 // 表記揺れも「候補」として出すだけで、機械的に統合しない
 // （「横浜市」と「横浜市・相模原市」は別物かもしれない）。
 
+import { documentKey, hasChunkSuffix, stripChunkSuffix } from "./organizations";
+
 /** 監査に使う列。content と embedding は重いので取らない。 */
 export const AUDIT_SELECT = "source_type,source_id,organization,title,event_date,metadata";
 
@@ -69,26 +71,27 @@ function meta(r: AuditRow, key: string): string | null {
 }
 
 /**
- * タイトル末尾のチャンク番号を落とす。
+ * 文書としての識別子。
  *
- * lib/organizations.ts の stripChunkSuffix は `｜1/16` しか落とさない。
- * 実データには `｜text1` `｜slide3` `｜p2` 形式もあり、そちらは残る。
- * ここは「監査として本来どう束ねるべきか」を測るために両方を落とす
- * （※本番の集計側を直すのは今回の範囲外。ズレの大きさを出すだけ）。
+ * 2026-08-28に本番の集計側（lib/organizations.ts の documentKey）を直したので、
+ * 監査もそこを読む。監査だけ別の束ね方を持つと、画面に出す「文書数」と
+ * 実際の集計がずれ、どちらが本当か分からなくなる。
  */
-function stripAnyChunkSuffix(title: string): string {
-  return title.replace(/｜(\d+\/\d+|(?:text|slide|p)\d+)$/, "").trim();
-}
-
-/** 文書としての識別子。資料名があればそれを優先する（groupDeliverables と同じ考え方）。 */
 function docKey(r: AuditRow): string {
-  const name = meta(r, "資料名") ?? stripAnyChunkSuffix(r.title);
-  return `${name}__${r.event_date ?? "(日付なし)"}`;
+  return documentKey(r);
 }
 
-/** source_id から末尾のチャンク番号を外し、「同じ文書を指す素性」に寄せる。 */
+/**
+ * source_id から末尾のチャンク番号を外し、「同じ文書を指す素性」に寄せる。
+ *
+ * ★`#2` 形式（plaud:xxx#2、weapon:…:story#3）を外し忘れると、同じ文書の
+ *   チャンクどうしが「別系統」に見えて二重登録として誤検知する
+ *   （2026-08-28、実装中に109件の誤検知を出した）。
+ */
 function sourceBase(sid: string): string {
-  return sid.replace(/[:|](?:\d+|(?:text|slide|p)\d+)$/, "");
+  return sid
+    .replace(/#\d+$/, "")
+    .replace(/[:|](?:\d+|(?:text|slide|p)\d+)$/, "");
 }
 
 function count<T>(rows: T[], f: (r: T) => boolean): number {
@@ -145,20 +148,24 @@ export function auditMemory(rows: AuditRow[], limit: number): AuditResult {
     });
   }
 
-  // ── 確定③：タイトルのチャンク番号が既存の剥がし方では落ちない ──
-  // lib/organizations.ts の stripChunkSuffix は `｜1/16` しか見ない。
-  const unstrippable = rows.filter((r) => /｜(?:text|slide|p)\d+$/.test(r.title));
-  if (unstrippable.length > 0) {
-    const rescued = count(unstrippable, (r) => meta(r, "資料名") !== null);
+  // ── 確定③：チャンク接尾辞を落とし切れなかったタイトル ──
+  //
+  // stripChunkSuffix は既知の形式を繰り返し落とすが、積み過ぎ（5段以上）や
+  // 全部消えて空になる場合は途中で止めて元を返す。その取りこぼしだけを拾う。
+  //
+  // ★「数字で終わるタイトル」を疑ってはいけない。日付で終わる正当なタイトル
+  //   （…｜武器｜想定ストーリー｜2026-07-17）まで拾ってしまい、実際121件の
+  //   誤検知を出した（2026-08-28、実装中に発覚）。落とし切れたかどうかだけを見る。
+  const stillChunked = rows.filter((r) => hasChunkSuffix(stripChunkSuffix(r.title)));
+  if (stillChunked.length > 0) {
     confirmed.push({
       key: "title_suffix_unstrippable",
-      label: "タイトル末尾のチャンク番号を既存処理が落とせない",
-      count: unstrippable.length,
+      label: "チャンク接尾辞を落とし切れていない",
+      count: stillChunked.length,
       detail:
-        `lib/organizations.ts の stripChunkSuffix は「｜1/16」形式しか落とさないが、` +
-        `実データには「｜text1」形式がある。うち${rescued}件は metadata.資料名 で救えているが、` +
-        `資料名を見ない集計（/api/retrospective/month）では1チャンク＝1文書に化ける`,
-      samples: unstrippable.slice(0, 3).map((r) => r.title.slice(0, 50)),
+        "接尾辞が想定より深く積まれている可能性がある。実データを見て確認すること" +
+        "（推測で広く消す正規表現にはしない）",
+      samples: stillChunked.slice(0, 3).map((r) => r.title.slice(0, 50)),
     });
   }
 
@@ -253,7 +260,7 @@ export function auditMemory(rows: AuditRow[], limit: number): AuditResult {
     const e = byShiryo.get(name)!;
     e.chunks += 1;
     if (r.event_date) e.dates.add(r.event_date);
-    e.titles.add(stripAnyChunkSuffix(r.title));
+    e.titles.add(stripChunkSuffix(r.title));
   }
   const coarse = [...byShiryo.entries()].filter(([, v]) => v.dates.size > 1);
   if (coarse.length > 0) {

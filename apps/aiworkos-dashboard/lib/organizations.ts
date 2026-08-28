@@ -94,8 +94,65 @@ export function asString(v: unknown): string | null {
 }
 
 // 「{タイトル}｜{n}/{全n}」形式の末尾チャンク番号を取り除く
+/**
+ * タイトル末尾に積まれたチャンク番号を落として、親（文書）のタイトルに戻す。
+ *
+ * ■ なぜ書き換えたか（2026-08-28）
+ * 以前は `｜1/16` 形式しか落としておらず、実データにある他の形式が残っていた。
+ * その結果、1つの文書のチャンクが別々の文書として数えられていた。
+ *
+ * ■ 実データにある形式（監査で数えたもの。ここに無い形は消さない）
+ *   ｜1/16    18件   ｜text1  119件   ｜p1     19件
+ *   ｜p10-1   39件   ｜1（裸の数字） 621件（会議・日記・学び・学会・成果物・振り返りの6種別）
+ * `｜slide1` `｜img1` も同じ書き手が使う形式なので含める。
+ *
+ * ■ 接尾辞は積み重なる
+ * 「…｜報告書｜slide1｜1」「…｜1/7｜8」のように2段・3段になっている行がある。
+ * 1回だけ剥がすと親に戻らないので、既知の形が無くなるまで繰り返す。
+ *
+ * ■ 広く消さない
+ * 「2026-07-06週｜全体」の `｜全体` や `｜報告書` のような、チャンク番号でない
+ * 末尾は残す。不明な末尾まで消すと、別の文書どうしを取り違えて潰してしまう。
+ */
+const CHUNK_SUFFIX = /｜(?:\d+\/\d+|text\d+|slide\d+|img\d+|p\d+(?:-\d+)?|\d+)$/;
+
+/** まだ既知のチャンク接尾辞が残っているか。剥がし切れたかの確認に使う。 */
+export function hasChunkSuffix(title: string): boolean {
+  return CHUNK_SUFFIX.test(title.trim());
+}
+
 export function stripChunkSuffix(title: string): string {
-  return title.replace(/｜\d+\/\d+$/, "").trim();
+  let t = title.trim();
+  // 積み重なった接尾辞を落とし切る。取り違えを防ぐため、全部消えて空になる場合は
+  // 元のタイトルを返す（消しすぎるくらいなら、束ねないほうが安全）。
+  for (let i = 0; i < 5 && CHUNK_SUFFIX.test(t); i += 1) {
+    const next = t.replace(CHUNK_SUFFIX, "").trim();
+    if (next === "") return t;
+    t = next;
+  }
+  return t;
+}
+
+/**
+ * 「これは同じ1つの文書か」を決める鍵。チャンク数と文書数の取り違えを防ぐ唯一の場所。
+ *
+ * タイトルだけでは足りない。実データで確かめた3つの落とし穴：
+ *   ・同じ「無題｜メモ」が同じ日に、戦略合宿と練馬区の2件ある → organization が要る
+ *   ・同じ会議名が別の日にもある                             → event_date が要る
+ *   ・資料名「法人請求 営業実戦QA」の下に59件のQAがある      → 資料名だけで束ねると潰れる
+ * そのため「親タイトル＋日付＋団体」を鍵にする。資料名は粒度が書き手ごとに
+ * バラバラ（「無題」が156チャンク・7日付を飲み込む）なので、鍵には使わない。
+ */
+export function documentKey(row: {
+  title: string;
+  event_date?: string | null;
+  organization?: string | null;
+}): string {
+  return [
+    stripChunkSuffix(row.title),
+    row.event_date ?? "(日付なし)",
+    row.organization ?? "(団体なし)",
+  ].join("␟");
 }
 
 // ---------------------------------------------------------------------------

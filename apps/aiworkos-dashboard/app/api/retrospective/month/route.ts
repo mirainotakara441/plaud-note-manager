@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
+import { documentKey } from "@/lib/organizations";
 
 // 「その月に何をしたか」を、書いた振り返りではなく**残っている記録**から組む。
 //
@@ -85,9 +86,15 @@ export async function GET(req: NextRequest) {
     const weekly: WeeklyRow[] = weeklyRes.ok ? await weeklyRes.json() : [];
     const chunks: ChunkRow[] = chunkRes.ok ? await chunkRes.json() : [];
 
-    // 会議・成果物はチャンク単位で入っている（1会議＝複数行）。題名で束ねて実数にする。
+    // 会議・成果物はチャンク単位で入っている（1会議＝複数行）。文書に束ねて実数にする。
+    //
+    // 以前は title.split("｜")[0] だけで束ねており、日付も団体も見ていなかった。
+    // そのため別の日の同名会議が1件に潰れ（会議で40件の取りこぼし）、逆に
+    // チャンク接尾辞が残る成果物は1チャンク＝1文書に化けて過大計上していた。
+    // 束ね方は lib/organizations.ts の documentKey() に集約してある
+    // （groupMeetings / groupDeliverables と同じ stripChunkSuffix を使う）。
     const uniqTitles = (type: string) =>
-      new Set(chunks.filter((r) => r.source_type === type).map((r) => r.title.split("｜")[0]));
+      new Set(chunks.filter((r) => r.source_type === type).map(documentKey));
 
     const byCategory = Object.entries(
       weekly.reduce<Record<string, number>>((acc, r) => {
@@ -111,7 +118,7 @@ export async function GET(req: NextRequest) {
     }
     for (const r of chunks) {
       if (!r.organization) continue;
-      const base = r.title.split("｜")[0];
+      const base = documentKey(r);
       if (r.source_type === "会議") touch(r.organization).meetings.add(base);
       if (r.source_type === "成果物") touch(r.organization).deliverables.add(base);
     }
