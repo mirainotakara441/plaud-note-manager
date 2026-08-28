@@ -18,6 +18,18 @@ This version has breaking changes — APIs, conventions, and file structure may 
   素のURLだけでは発症しないバグがある。
 - API と UI の間の型（レスポンス形状）を変えたら、そのAPIを使う全ページを grep して合わせる。
 
+### この確認は一部を自動化した（2026-08-28）
+
+`npm run test:all` で「型チェック → build → スモーク(API) → E2E(ブラウザ)」が順に走る。
+E2Eは Playwright で主要5画面（`/` `/organizations` `/actions` `/search` `/status`）を
+実際にChromiumで開き、5xx・Reactのクラッシュ・`console.error`・
+「取得に失敗しました」等の表示が無いことを見る。**読み取りのみで書き込みは出さない**
+（POST/PUT/PATCH/DELETEはテスト側でブロックしている）。
+
+ただし**自動化したのは5画面だけ**で、上のルールが要らなくなったわけではない。
+E2Eの対象外を触ったときは、これまで通り自分でブラウザを開くこと。
+クエリパラメータ付きの導線も自動化できていない。
+
 ## その他の再発防止
 
 - 埋め込み(gte-small)は日本語約500字で頭打ち。content は400字/チャンクに刻む（実測済み・全登録経路で厳守）。

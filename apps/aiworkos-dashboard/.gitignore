@@ -34,3 +34,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Playwright（E2Eの生成物。コミットしない）
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
