@@ -19,7 +19,7 @@
 // そのため exit コードは「いま失敗している」ときだけ出す。最新の実行が成功しているのに
 // exit 1 と併記すると、直っているものを落ちているように見せてしまう。
 
-import { WATCHED_JOBS } from "./advisor/watchlist";
+import { WATCHED_JOBS, TYPO_STALE_THRESHOLD_DAYS } from "./advisor/watchlist";
 
 /**
  * ジョブの状態。
@@ -30,7 +30,25 @@ import { WATCHED_JOBS } from "./advisor/watchlist";
  * 「正常」「警告」と言い切ると、根拠の無い判定になる。
  * 成功しているのは事実として出し、期限の判定だけを保留する。
  */
-export type GuardianState = "正常" | "警告" | "異常" | "未実行" | "基準なし";
+export type GuardianState = "正常" | "警告" | "異常" | "未実行" | "基準なし" | "別監視";
+
+/**
+ * WATCHED_JOBS には入れていないが、別の専用検知器が見ているジョブ。
+ *
+ * これが無いと、専用の監視が付いているジョブまで「基準なし」と出てしまい、
+ * 利用者からは「誰も見ていない」と読めてしまう（2026-08-28の指摘）。
+ * ここは表示のためだけの対応表で、期限の判定はしない（＝二重実装しない）。
+ * 判定はあくまで各検知器の側にあり、日数もそこと同じ定数を読む。
+ */
+const EXTERNAL_MONITORS: Record<string, { by: string; days: number; where: string }> = {
+  // 判定は lib/advisor/detectors/typos.ts。WATCHED_JOBS に足すと同じ停止で
+  // 「取り込み」と「辞書」の2件が鳴るため、あちらに一本化してある。
+  "typo-candidates": {
+    by: "辞書監視",
+    days: TYPO_STALE_THRESHOLD_DAYS,
+    where: "誤字候補の検知器",
+  },
+};
 
 export type GuardianRow = {
   job: string;
@@ -53,6 +71,11 @@ export type GuardianRow = {
   reason: string;
   /** 何時間の途絶で警告にするか。定義が無ければ null。 */
   stale_hours: number | null;
+  /**
+   * 別の仕組みが見ている場合の一言（例「辞書監視・40日」）。
+   * この一覧が判定しているという意味ではなく、どこが見ているかを伝えるだけ。
+   */
+  external_monitor: string | null;
   /** WATCHED_JOBS に載っている（＝朝の通知の対象）か。 */
   watched: boolean;
 };
@@ -103,6 +126,7 @@ export function judgeGuardian(
   const okMs = ms(okAt);
   const failMs = ms(failAt);
 
+  const ext = EXTERNAL_MONITORS[def.job];
   const base = {
     job: def.job,
     label: def.label,
@@ -110,6 +134,7 @@ export function judgeGuardian(
     last_fail_at: failAt,
     stale_hours: def.staleHours,
     watched: def.staleHours !== null,
+    external_monitor: ext ? `${ext.by}・${ext.days}日` : null,
   };
 
   // ① 一度も打刻が無い
@@ -145,8 +170,20 @@ export function judgeGuardian(
   // ここから先は「最後の実行は成功」。
   const hours = okAt ? Math.floor((now.getTime() - new Date(okAt).getTime()) / 3_600_000) : 0;
 
-  // ③ 閾値が定義されていない
+  // ③ この一覧には閾値が無い。
+  //    別の検知器が見ているなら「別監視」、どこも見ていないなら「基準なし」。
+  //    ここで日数の判定はしない（判定を2か所に持つと言い分が食い違うため）。
   if (def.staleHours === null) {
+    if (ext) {
+      return {
+        ...base,
+        last_run_at: lastRunAt,
+        last_result: "成功",
+        last_exit_code: null,
+        state: "別監視",
+        reason: `最後の実行は成功（${okAt ? ago(okAt, now) : "—"}）。${ext.where}が${ext.days}日で見ています（この一覧では期限を判定しません）`,
+      };
+    }
     return {
       ...base,
       last_run_at: lastRunAt,
@@ -210,7 +247,8 @@ export function buildGuardianRows(beats: HeartbeatRow[], now: Date): GuardianRow
     警告: 1,
     未実行: 2,
     基準なし: 3,
-    正常: 4,
+    別監視: 4,
+    正常: 5,
   };
   return rows.sort((a, b) => {
     const d = order[a.state] - order[b.state];
@@ -229,6 +267,7 @@ export function summarize(rows: GuardianRow[]): Record<GuardianState, number> {
     異常: 0,
     未実行: 0,
     基準なし: 0,
+    別監視: 0,
   };
   for (const r of rows) out[r.state] += 1;
   return out;

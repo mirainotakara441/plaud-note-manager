@@ -191,3 +191,18 @@ export const DIARY_STALE_THRESHOLD_DAYS = 3;
 
 /** 健康データが何日ぶん入っていなければ滞りとみなすか。 */
 export const HEALTH_STALE_THRESHOLD_DAYS = 3;
+
+/**
+ * 誤字候補の洗い出し（typo-candidates）が何日止まったら滞りとみなすか。
+ *
+ * 月1のジョブ（pg_cron が毎月2日8時JSTに refresh_typo_candidates() を実行）なので、
+ * 1回飛ばしたと分かる程度に余裕を持たせた40日。
+ *
+ * 判定するのは lib/advisor/detectors/typos.ts の専用検知器で、このジョブは
+ * WATCHED_JOBS には入れていない（入れると同じ停止で「取り込み」と「辞書」の
+ * 2件が同時に鳴り、朝の通知が二重になる）。
+ * /status の「ジョブの成否」は、この値を判定には使わず「別の仕組みが何日で
+ * 見ているか」を利用者に伝えるためだけに読む。数字を2か所に書かないよう、
+ * 他の閾値と同じくここを唯一の正にする。
+ */
+export const TYPO_STALE_THRESHOLD_DAYS = 40;

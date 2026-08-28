@@ -10,13 +10,18 @@
 // 無人で置換すると本文が壊れる。直すのは /transcription-typo-fix スキルで人が回す。
 
 import { getRows } from "../client";
+import { TYPO_STALE_THRESHOLD_DAYS } from "../watchlist";
 import { hoursSince, type Ctx, type Detector, type Finding } from "../types";
 
 type Candidate = { kind: string; wrong: string; suggested: string; hits: number };
 type Heartbeat = { last_ok_at: string };
 
-/** 月1のジョブなので、これを超えて心拍が無ければ止まっているとみなす。 */
-const STALE_DAYS = 40;
+/**
+ * 月1のジョブなので、これを超えて心拍が無ければ止まっているとみなす。
+ * 値の定義は lib/advisor/watchlist.ts（他の閾値と同じ置き場）。/status の
+ * 「ジョブの成否」も同じ定数を読むので、数字は1か所にしかない。
+ */
+const STALE_DAYS = TYPO_STALE_THRESHOLD_DAYS;
 
 /** これ以上の行数で残っていれば、ひと目で気づけるよう格上げする。 */
 const NOISY_HITS = 3;

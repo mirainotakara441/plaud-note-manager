@@ -1400,6 +1400,9 @@ const GUARDIAN_STYLE: Record<GuardianState, { dot: string; chip: string }> = {
   警告: { dot: "bg-amber-400", chip: "bg-amber-100 text-amber-800" },
   未実行: { dot: "bg-gray-300", chip: "bg-gray-100 text-gray-600" },
   基準なし: { dot: "bg-sky-300", chip: "bg-sky-100 text-sky-700" },
+  // 別監視は「見られている」側なので、緑寄り（安心side）の色にする。
+  // 基準なし（水色）と同じ見た目にすると、区別を足した意味が無くなる。
+  別監視: { dot: "bg-teal-400", chip: "bg-teal-100 text-teal-700" },
   正常: { dot: "bg-emerald-500", chip: "bg-emerald-100 text-emerald-700" },
 };
 
@@ -1439,7 +1442,7 @@ function GuardianPanel({
     acc[r.state] = (acc[r.state] ?? 0) + 1;
     return acc;
   }, {});
-  const order: GuardianState[] = ["異常", "警告", "未実行", "基準なし", "正常"];
+  const order: GuardianState[] = ["異常", "警告", "未実行", "基準なし", "別監視", "正常"];
 
   return (
     <div>
@@ -1473,6 +1476,10 @@ function GuardianPanel({
               >
                 {r.state}
               </span>
+              {/* どこが見ているか。状態だけだと「別監視」の中身が分からない。 */}
+              {r.external_monitor && (
+                <span className="shrink-0 text-xs text-gray-500">{r.external_monitor}</span>
+              )}
             </div>
             {/* 最終実行・最終成功・最終結果。3つを並べて出すのがこの画面の要。 */}
             <dl className="mt-1 grid grid-cols-3 gap-1 text-xs">
@@ -1510,8 +1517,10 @@ function GuardianPanel({
       </ul>
 
       <p className="mt-2 border-t border-gray-100 pt-2 text-xs leading-relaxed text-gray-400">
-        「基準なし」は打刻はあるが監視対象（朝の通知）に登録されていないジョブです。
-        止まってよい時間が決まっていないため、正常とも警告とも判定できません。
+        「基準なし」は打刻はあるが、どこからも監視されていないジョブです。止まってよい時間が
+        決まっていないため、正常とも警告とも判定できません。
+        「別監視」はこの一覧では判定していませんが、専用の検知器が見ているジョブです
+        （横に「どこが・何日で」を出しています）。
       </p>
     </div>
   );
