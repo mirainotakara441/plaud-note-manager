@@ -11,10 +11,12 @@ import { recordsDetector } from "./detectors/records";
 import { goalsDetector } from "./detectors/goals";
 import { dictionaryDetector } from "./detectors/dictionary";
 import { typosDetector } from "./detectors/typos";
+import { memoryDetector } from "./detectors/memory";
 
 export const DETECTORS: Detector[] = [
   goalsDetector,
   ingestDetector,
+  memoryDetector,
   recordsDetector,
   dictionaryDetector,
   typosDetector,

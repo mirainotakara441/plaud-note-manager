@@ -1625,7 +1625,42 @@ function MemoryShadowPanel({
 
   return (
     <div className="space-y-3">
-      {/* ★列が欠けている・版の中で番号がぶつかっているなら、正常な見た目にしない。 */}
+      {/* 健全性は正常のときも出す。異常のときだけ表示すると「見えない＝正常」なのか
+          「読めていない」のか区別が付かず、静かに壊れたときに気づけない。 */}
+      <div
+        className={`rounded-lg border px-2.5 py-2 ${
+          h.healthy ? "border-emerald-200 bg-emerald-50" : "border-rose-300 bg-rose-50"
+        }`}
+      >
+        <p className={`text-xs font-bold ${h.healthy ? "text-emerald-800" : "text-rose-800"}`}>
+          同一性の健全性：{h.healthy ? "異常なし" : "異常あり"}
+        </p>
+        <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[0.6875rem]">
+          {[
+            { label: "4列の未設定", n: h.canonicalNull + h.sourceDocumentNull + h.chunkIndexNull + h.ingestSchemeNull },
+            { label: "版の中の番号衝突", n: h.collisions.length },
+            { label: "実体をまたぐ取込文書", n: h.variantsSpanningCanonicals.length },
+            { label: "別version（正常）", n: s.multiVariant.length, ok: true },
+          ].map((x) => (
+            <div key={x.label} className="flex items-baseline justify-between gap-2">
+              <span className={h.healthy ? "text-emerald-900/70" : "text-rose-900/70"}>{x.label}</span>
+              <span
+                className={`font-bold tabular-nums ${
+                  x.n === 0 || x.ok
+                    ? h.healthy
+                      ? "text-emerald-700"
+                      : "text-gray-500"
+                    : "text-rose-700"
+                }`}
+              >
+                {x.n}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ★列が欠けている・版の中で番号がぶつかっているなら、内訳まで出す。 */}
       {!h.healthy && (
         <div className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-2 text-xs text-rose-800">
           <p className="font-bold">同一性の列が壊れています</p>
