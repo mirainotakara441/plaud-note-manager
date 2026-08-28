@@ -17,6 +17,7 @@ import {
   judgeJob,
   type JobHeartbeat,
 } from "../watchlist";
+import { guardianFailureAlerts } from "../../guardian";
 import type { Ctx, Detector, Finding } from "../types";
 import { hoursSince } from "../types";
 
@@ -39,6 +40,20 @@ async function run(ctx: Ctx): Promise<Finding[]> {
       severity: "alert",
       title: verdict.title,
       facts: verdict.facts,
+    });
+  }
+
+  // --- 監視対象に未登録のジョブが落ちていないか（OS Guardian） ---
+  // 上の WATCHED_JOBS の輪では拾えない範囲だけを埋める。判定は lib/guardian.ts の
+  // judgeGuardian() をそのまま使い、条件はここに書き写さない。
+  // 既に上で鳴らしたジョブは guardianFailureAlerts() 側で除いてあるので二重にならない。
+  for (const a of guardianFailureAlerts(beats, ctx.now)) {
+    findings.push({
+      id: `job:${a.job}`,
+      area: "取り込み",
+      severity: "alert",
+      title: a.title,
+      facts: a.facts,
     });
   }
 

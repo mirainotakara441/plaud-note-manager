@@ -19,7 +19,7 @@
 // そのため exit コードは「いま失敗している」ときだけ出す。最新の実行が成功しているのに
 // exit 1 と併記すると、直っているものを落ちているように見せてしまう。
 
-import { WATCHED_JOBS, TYPO_STALE_THRESHOLD_DAYS } from "./advisor/watchlist";
+import { WATCHED_JOBS, TYPO_STALE_THRESHOLD_DAYS, jstStamp } from "./advisor/watchlist";
 
 /**
  * ジョブの状態。
@@ -257,6 +257,56 @@ export function buildGuardianRows(beats: HeartbeatRow[], now: Date): GuardianRow
     const bm = ms(b.last_run_at) ?? 0;
     return am - bm;
   });
+}
+
+/**
+ * 通知に載せるべき「異常」だけを抜き出す。
+ *
+ * ■ なぜ WATCHED_JOBS の外だけなのか（二重通知を避けるため）
+ * WATCHED_JOBS に載っているジョブの失敗は、すでに watchlist.ts の judgeJob() が
+ * 「失敗が成功より新しい」として拾い、/api/advisor（検知器 ingest）と
+ * 朝のPush通知（/api/cron/daily-todo）の両方が鳴らしている。
+ * Guardianの「異常」はこれと同じ条件なので、そのまま足すと同じジョブが2回鳴る。
+ * 鳴りすぎると通知そのものを無視するようになる——それが一番怖い、と
+ * watchlist.ts の冒頭にある。だからここは既存が見ていない範囲だけを埋める。
+ *
+ * ■ 埋まる穴
+ * 打刻はしているが WATCHED_JOBS に登録されていないジョブが落ちても、
+ * これまではどこも鳴らなかった（ingest も daily-todo も WATCHED_JOBS しか回さない）。
+ * 実際この仕組みでは、新しいジョブがまず打刻だけ始めて登録は後から、という順に
+ * なりがちで（2026-08-28に4本まとめて発覚した）、その間ずっと無防備だった。
+ *
+ * 「警告」「未実行」「別監視」「基準なし」は返さない。異常だけ。
+ * 判定は judgeGuardian() をそのまま使う（条件をここに書き写さない）。
+ */
+export type GuardianAlert = {
+  job: string;
+  /** 朝のPush通知に入れる一行。 */
+  push: string;
+  /** ホームのカードの見出し。 */
+  title: string;
+  /** カードに出す根拠。 */
+  facts: string[];
+};
+
+export function guardianFailureAlerts(beats: HeartbeatRow[], now: Date): GuardianAlert[] {
+  return buildGuardianRows(beats, now)
+    .filter((r) => r.state === "異常" && !r.watched)
+    .map((r) => {
+      const ok = r.last_ok_at ? `最終成功 ${jstStamp(r.last_ok_at)}` : "まだ一度も成功していません";
+      const fail = r.last_fail_at ? `最終失敗 ${jstStamp(r.last_fail_at)}` : "";
+      const code = r.last_exit_code === null ? "" : `（exit ${r.last_exit_code}）`;
+      return {
+        job: r.job,
+        push: `${r.label}が異常です${code}。${ok}${fail ? `、${fail}` : ""}`,
+        title: `${r.label}が異常です`,
+        facts: [
+          fail ? `${fail}${code}` : "失敗の記録がありません",
+          ok,
+          "監視対象（WATCHED_JOBS）に未登録のジョブです。止まってよい時間が決まっていないため、失敗したときだけ知らせています",
+        ],
+      };
+    });
 }
 
 /** 状態ごとの件数。画面の見出しに出す。 */

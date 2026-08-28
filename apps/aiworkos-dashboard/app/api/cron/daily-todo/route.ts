@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import webpush from "web-push";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
+import { guardianFailureAlerts } from "@/lib/guardian";
 import {
   WATCHED_JOBS,
   WATCHED_SERVICES,
@@ -175,6 +176,9 @@ export async function GET(req: NextRequest) {
         const verdict = judgeJob(w, beats.get(w.job), now);
         if (verdict) staleAlerts.push(verdict.push);
       }
+      // 監視対象に未登録のジョブが落ちた場合（OS Guardian）。上の輪が回らない
+      // 範囲だけを埋める。判定は lib/guardian.ts をそのまま使い、書き写さない。
+      for (const a of guardianFailureAlerts(rows, now)) staleAlerts.push(a.push);
     } else {
       console.error("cron/daily-todo: ジョブ心拍の取得失敗", res.status);
       hadError = true;

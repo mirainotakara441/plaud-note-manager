@@ -91,7 +91,7 @@ export type JobVerdict = {
 };
 
 /** UTCのタイムスタンプを日本時間の「MM/DD HH:MM」にする（落ちた時刻は体感と合わせたい）。 */
-function jstStamp(iso: string): string {
+export function jstStamp(iso: string): string {
   const t = new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000).toISOString();
   return `${Number(t.slice(5, 7))}/${Number(t.slice(8, 10))} ${t.slice(11, 16)}`;
 }
