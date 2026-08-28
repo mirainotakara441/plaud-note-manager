@@ -2,20 +2,17 @@
 // organizationを省略すると、会議データを持つ自治体一覧（件数付き）を返す。
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+// タイトル末尾のチャンク接尾辞を落とす規則。**ここには書き写さない。**
+// 以前はこのファイルに `/｜\d+\/\d+$/` を1回かけるだけの実装を持っていたが、
+// アプリ側（lib/organizations.ts）だけが他形式まで落とすよう育ち、食い違った。
+// 本番の会議287行に ｜n/m は0行しか無く、ここは実データを1行も剥がせていなかった
+// ——札幌市が「会議6件」（実際2件）と表示されていた原因がこれ。
+import { stripChunkSuffix } from "../_shared/chunkTitle.mjs";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
-
-// タイトル末尾の「｜n/総数」（チャンク番号）を取り除く。
-// 1会議が複数チャンクに分かれているとき、これを外さないと同じ会議が
-// チャンクの数だけ別会議として数えられてしまう
-// （aiworkos-dashboard の lib/organizations.ts にある stripChunkSuffix と同じ規則。
-//  2026-08-26修正：八王子市の1会議が26チャンクに分かれ「27件」と誤カウントされていた）。
-function stripChunkSuffix(title: string): string {
-  return title.replace(/｜\d+\/\d+$/, "").trim();
-}
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {

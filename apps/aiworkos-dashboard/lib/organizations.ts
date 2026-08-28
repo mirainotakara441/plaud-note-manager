@@ -13,6 +13,7 @@
 // Edge Function（org-history / search-memory）は anon キーを Bearer で呼ぶ。
 
 import { restHeaders } from "@/lib/supabase";
+import { hasChunkSuffix, stripChunkSuffix } from "./chunkTitle.mjs";
 import { toJstDateString } from "@/lib/date";
 import { normalizeOrgCategory, type OrgCategory } from "@/lib/categories";
 
@@ -93,45 +94,12 @@ export function asString(v: unknown): string | null {
   return typeof v === "string" && v.trim() !== "" ? v : null;
 }
 
-// 「{タイトル}｜{n}/{全n}」形式の末尾チャンク番号を取り除く
-/**
- * タイトル末尾に積まれたチャンク番号を落として、親（文書）のタイトルに戻す。
- *
- * ■ なぜ書き換えたか（2026-08-28）
- * 以前は `｜1/16` 形式しか落としておらず、実データにある他の形式が残っていた。
- * その結果、1つの文書のチャンクが別々の文書として数えられていた。
- *
- * ■ 実データにある形式（監査で数えたもの。ここに無い形は消さない）
- *   ｜1/16    18件   ｜text1  119件   ｜p1     19件
- *   ｜p10-1   39件   ｜1（裸の数字） 621件（会議・日記・学び・学会・成果物・振り返りの6種別）
- * `｜slide1` `｜img1` も同じ書き手が使う形式なので含める。
- *
- * ■ 接尾辞は積み重なる
- * 「…｜報告書｜slide1｜1」「…｜1/7｜8」のように2段・3段になっている行がある。
- * 1回だけ剥がすと親に戻らないので、既知の形が無くなるまで繰り返す。
- *
- * ■ 広く消さない
- * 「2026-07-06週｜全体」の `｜全体` や `｜報告書` のような、チャンク番号でない
- * 末尾は残す。不明な末尾まで消すと、別の文書どうしを取り違えて潰してしまう。
- */
-const CHUNK_SUFFIX = /｜(?:\d+\/\d+|text\d+|slide\d+|img\d+|p\d+(?:-\d+)?|\d+)$/;
-
-/** まだ既知のチャンク接尾辞が残っているか。剥がし切れたかの確認に使う。 */
-export function hasChunkSuffix(title: string): boolean {
-  return CHUNK_SUFFIX.test(title.trim());
-}
-
-export function stripChunkSuffix(title: string): string {
-  let t = title.trim();
-  // 積み重なった接尾辞を落とし切る。取り違えを防ぐため、全部消えて空になる場合は
-  // 元のタイトルを返す（消しすぎるくらいなら、束ねないほうが安全）。
-  for (let i = 0; i < 5 && CHUNK_SUFFIX.test(t); i += 1) {
-    const next = t.replace(CHUNK_SUFFIX, "").trim();
-    if (next === "") return t;
-    t = next;
-  }
-  return t;
-}
+// タイトル末尾のチャンク接尾辞を落とす規則は、ここには実装しない。
+// 実体は supabase/functions/_shared/chunkTitle.mjs 1本だけ。Edge Function
+// （org-history）と同じ規則を使うためで、ここに書き写すと片方だけ育って
+// 食い違う——実際に2026-08-26〜08-29のあいだ食い違っていた。
+// 従来どおり lib/organizations から import している箇所を壊さないよう再輸出する。
+export { hasChunkSuffix, stripChunkSuffix };
 
 /**
  * 「これは同じ1つの文書か」を決める鍵。チャンク数と文書数の取り違えを防ぐ唯一の場所。
