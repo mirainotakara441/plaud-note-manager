@@ -8,6 +8,7 @@ import {
   municipalitySubcategory,
 } from "@/lib/municipalities";
 import type { GuardianRow, GuardianState } from "@/lib/guardian";
+import type { AuditResult } from "@/lib/memoryAudit";
 
 // レイアウト方針（2026-07-30 吉井さん指摘「縦に長すぎる」への対応）:
 //   - スマホ(既定)は1カラムのまま。lg以上で2カラムに段組みし、横幅の余りを使う。
@@ -273,6 +274,9 @@ export default function StatusPage() {
     checked_at: string;
   } | null>(null);
   const [guardianError, setGuardianError] = useState<string | null>(null);
+  // 記憶の健康診断。これも /api/status とは別に取る。
+  const [audit, setAudit] = useState<AuditResult | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   // silent=true は自動更新用（ボタンの「更新中」表示を出さず裏で差し替える）
   const load = useCallback(async (silent = false) => {
@@ -309,9 +313,24 @@ export default function StatusPage() {
     }
   }, []);
 
+  const loadAudit = useCallback(async () => {
+    try {
+      const res = await fetch("/api/memory-audit", { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error ?? `取得失敗 ${res.status}`);
+      setAudit(json);
+      setAuditError(null);
+    } catch (e) {
+      // ★空データを入れて「不整合ゼロ」に見せない。
+      setAuditError(e instanceof Error ? e.message : "記憶の監査データを取得できませんでした");
+      setAudit(null);
+    }
+  }, []);
+
   useEffect(() => {
     load();
     void loadGuardian();
+    void loadAudit();
     // 60秒ごとに裏で自動更新。開きっぱなしでも鮮度を保つ。
     const timer = setInterval(() => {
       load(true);
@@ -322,6 +341,9 @@ export default function StatusPage() {
       if (document.visibilityState === "visible") {
         load(true);
         void loadGuardian();
+        // 記憶の健康診断は全件を走査するので60秒ごとには回さない。
+        // タブに戻ってきたときだけ取り直す（中身は日単位でしか変わらない）。
+        void loadAudit();
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -329,7 +351,7 @@ export default function StatusPage() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load, loadGuardian]);
+  }, [load, loadGuardian, loadAudit]);
 
   const stats = data?.stats;
   const healthy = data?.ok === true && !!stats;
@@ -438,6 +460,23 @@ export default function StatusPage() {
             rows={guardian?.rows ?? null}
             error={guardianError}
             onRetry={() => void loadGuardian()}
+          />
+        </div>
+      </section>
+
+      {/* 記憶の健康診断。直さず、事実だけ並べる。 */}
+      <section className="mt-4">
+        <div className="mb-1.5 flex items-baseline justify-between gap-2 px-1">
+          <h2 className="text-sm font-semibold text-gray-500">記憶の健康診断</h2>
+          <span className="text-xs text-gray-400">
+            {audit ? `${audit.total}chunk${audit.truncated ? "以上" : ""}` : "重複・欠損・表記揺れ"}
+          </span>
+        </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+          <MemoryAuditPanel
+            audit={audit}
+            error={auditError}
+            onRetry={() => void loadAudit()}
           />
         </div>
       </section>
@@ -1522,6 +1561,152 @@ function GuardianPanel({
         「別監視」はこの一覧では判定していませんが、専用の検知器が見ているジョブです
         （横に「どこが・何日で」を出しています）。
       </p>
+    </div>
+  );
+}
+
+// ── 記憶の健康診断パネル ──────────────────────────────────
+//
+// 「確定した不整合」と「要確認の候補」を必ず分けて出す。混ぜると、機械が
+// 決めてよいことと人が決めることの境目が消える。判定は lib/memoryAudit.ts。
+
+function MemoryAuditPanel({
+  audit,
+  error,
+  onRetry,
+}: {
+  audit: AuditResult | null;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  // ★取得失敗を「不整合ゼロ」に見せない。
+  if (error) {
+    return (
+      <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+        <p className="font-bold">記憶の監査データを取得できませんでした</p>
+        <p className="mt-0.5 text-xs">{error}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 w-full rounded-lg border border-rose-300 bg-white py-1.5 text-xs font-bold text-rose-700 active:bg-rose-100"
+        >
+          再読み込み
+        </button>
+      </div>
+    );
+  }
+  if (!audit) return <p className="text-sm text-gray-400">読み込み中…</p>;
+
+  return (
+    <div className="space-y-3">
+      {audit.truncated && (
+        <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+          取得上限に達しました。以下の件数は「これ以上」の意味です。
+        </p>
+      )}
+
+      {/* source_type別。チャンク数と文書数を必ず並べて出す
+          （1会議26チャンクを26会議と数えた事故を繰り返さないため）。 */}
+      <div className="-mx-1 overflow-x-auto px-1">
+        <table className="w-full min-w-[22rem] text-xs">
+          <thead>
+            <tr className="border-b border-gray-200 text-left text-gray-500">
+              <th className="pb-1 pr-2 font-bold">種別</th>
+              <th className="pb-1 pr-2 text-right font-bold">chunk</th>
+              <th className="pb-1 pr-2 text-right font-bold">文書</th>
+              <th className="pb-1 pr-2 text-right font-bold">団体空</th>
+              <th className="pb-1 text-right font-bold">位置なし</th>
+            </tr>
+          </thead>
+          <tbody>
+            {audit.bySourceType.map((t) => (
+              <tr key={t.source_type} className="border-b border-gray-100 last:border-0">
+                <td className="py-1 pr-2 text-gray-700">{t.source_type}</td>
+                <td className="py-1 pr-2 text-right font-bold tabular-nums text-gray-900">
+                  {t.chunks}
+                </td>
+                <td className="py-1 pr-2 text-right tabular-nums text-gray-600">{t.docs}</td>
+                <td className="py-1 pr-2 text-right tabular-nums text-gray-600">{t.org_null}</td>
+                <td className="py-1 text-right tabular-nums text-gray-600">{t.pos_missing}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 確定した不整合 */}
+      <div>
+        <p className="mb-1 text-xs font-bold text-rose-700">確定した不整合</p>
+        {audit.confirmed.length === 0 ? (
+          <p className="text-xs text-gray-400">ありません。</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {audit.confirmed.map((c) => (
+              <li key={c.key} className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="min-w-0 flex-1 text-xs font-bold text-rose-800">{c.label}</span>
+                  <span className="shrink-0 text-xs font-bold tabular-nums text-rose-700">
+                    {c.count}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs leading-relaxed text-rose-900/70">{c.detail}</p>
+                {c.samples.length > 0 && (
+                  <p className="mt-0.5 truncate text-[0.6875rem] text-rose-900/50">
+                    例: {c.samples.join(" / ")}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* 要確認の候補（機械では決められないもの） */}
+      <div>
+        <p className="mb-1 text-xs font-bold text-amber-700">要確認の候補</p>
+        {audit.candidates.length === 0 ? (
+          <p className="text-xs text-gray-400">ありません。</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {audit.candidates.map((c) => (
+              <li key={c.key} className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="min-w-0 flex-1 text-xs font-bold text-amber-800">{c.label}</span>
+                  <span className="shrink-0 text-xs font-bold tabular-nums text-amber-700">
+                    {c.count}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs leading-relaxed text-amber-900/70">{c.detail}</p>
+                {c.samples.length > 0 && (
+                  <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-amber-900/50">
+                    例: {c.samples.join(" / ")}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* chunkが多い文書 */}
+      <div>
+        <p className="mb-1 text-xs font-bold text-gray-500">chunkが多い文書</p>
+        <ul className="space-y-1">
+          {audit.heavyDocs.map((d) => (
+            <li key={d.doc} className="flex items-center gap-2 text-xs">
+              <span className="min-w-0 flex-1 truncate text-gray-700">
+                {d.doc.replace(/__/, "  ")}
+              </span>
+              <span className="shrink-0 text-gray-400">{d.source_type}</span>
+              <span className="shrink-0 font-bold tabular-nums text-gray-900">{d.chunks}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2 border-t border-gray-100 pt-2 text-xs leading-relaxed text-gray-400">
+          「chunk」は行数、「文書」は資料名＋日付で束ねた実数です。この2つを取り違えると、
+          1会議26chunkを26会議と数える類の誤りが起きます。ここでは何も直していません。
+        </p>
+      </div>
     </div>
   );
 }
