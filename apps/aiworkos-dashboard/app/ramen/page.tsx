@@ -417,6 +417,11 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
   const [previews, setPreviews] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // 保存できたことを、その場で即座に伝えるための控え。
+  // 一覧の再取得（/api/ramen は219件・約187KBあり、実測0.5〜2.9秒かかる）を
+  // 待ってから知らせると、その間ずっと画面が変わらず「登録できていない」と
+  // 誤解される。実際にそう報告を受けた（2026-08-28）。
+  const [saved, setSaved] = useState<string | null>(null);
 
   // 選んだ写真をその場で見せる。反映されたことが目で分かるようにするため。
   useEffect(() => {
@@ -489,6 +494,9 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error ?? "記録に失敗しました");
+      // ★一覧の再取得を待たずに、先に「入った」ことを知らせる。
+      //   待たせると画面が数秒変わらず、二重登録の原因になる。
+      setSaved(shop.trim());
       setShop("");
       setMenu("");
       setMemo("");
@@ -504,13 +512,23 @@ function CaptureForm({ onSaved }: { onSaved: () => void }) {
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="mt-6 w-full rounded-2xl border border-dashed border-orange-300 bg-orange-50 p-4 text-sm font-bold text-orange-700 active:bg-orange-100"
-      >
-        ＋ 一杯を記録する
-      </button>
+      <div className="mt-6">
+        {saved && (
+          <div className="mb-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-800">
+            ✅ 「{saved}」を記録しました。下の一覧に出るまで少しかかります。
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setSaved(null);
+            setOpen(true);
+          }}
+          className="w-full rounded-2xl border border-dashed border-orange-300 bg-orange-50 p-4 text-sm font-bold text-orange-700 active:bg-orange-100"
+        >
+          ＋ 一杯を記録する
+        </button>
+      </div>
     );
   }
 
@@ -699,8 +717,14 @@ export default function RamenPage() {
   const [filter, setFilter] = useState<FilterKey>("all");
   const [month, setMonth] = useState<string>("");
 
+  // 再取得中かどうか。初回の loading とは別に持つ。
+  // 2回目以降は items が既にあるため loading が false のままで、
+  // 数秒かかる再取得の間「何も起きていない」ように見えていた（2026-08-28）。
+  const [refreshing, setRefreshing] = useState(false);
+
   const load = useCallback(async () => {
     setError(null);
+    setRefreshing(true);
     try {
       const res = await fetch("/api/ramen", { cache: "no-store" });
       const d = await res.json();
@@ -708,6 +732,8 @@ export default function RamenPage() {
       setItems(d.items ?? []);
     } catch {
       setError("ラーメン記録の取得に失敗しました");
+    } finally {
+      setRefreshing(false);
     }
   }, []);
 
@@ -824,7 +850,11 @@ export default function RamenPage() {
       {items && items.length > 0 && (
         <>
           <Section>
-            <ChartTitle color={C_BOWL} title="いまの積み上げ" hint={`記録 ${stats.total}件`} />
+            <ChartTitle
+              color={C_BOWL}
+              title="いまの積み上げ"
+              hint={refreshing ? "更新中…" : `記録 ${stats.total}件`}
+            />
             <div className="flex gap-2">
               <StatTile
                 label="通算杯数"
