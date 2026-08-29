@@ -218,5 +218,95 @@ check(
   }
 }
 
+// ── search-memory が v2 を読み、外へは旧9列だけ返すこと（第7.8弾）──────
+// 応答の契約を変えずに読む先だけ替えた、という意図をコードの形で固定する。
+{
+  const src = fs.readFileSync(path.join(ROOT, "supabase/functions/search-memory/index.ts"), "utf8");
+  check("search-memory: v2 を呼ぶ", src.includes('rpc("match_memory_chunks_v2"'));
+  check(
+    "search-memory: 旧関数はもう呼ばない",
+    !/rpc\("match_memory_chunks"/.test(src),
+    "v1 と v2 の両方を呼んでいる"
+  );
+  check("search-memory: 互換列の定義がある", src.includes("V1_COMPAT_COLUMNS"));
+  check("search-memory: 互換モードを実際に適用している", src.includes("toV1Compat(row)"));
+
+  // 互換列が旧9列ちょうど・順序も旧のままであること。
+  // ここに1つ足すだけで応答の契約が変わるので、リストごと固定する。
+  const listed = (src.match(/const V1_COMPAT_COLUMNS = \[([\s\S]*?)\]/) ?? [])[1] ?? "";
+  const cols = [...listed.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+  check(
+    "search-memory: 互換列は旧9列ちょうど（順序も同じ）",
+    JSON.stringify(cols) === JSON.stringify(V1_COLUMNS),
+    `実際=${JSON.stringify(cols)}`
+  );
+}
+
+// ── 応答の契約：デプロイ済みの search-memory は旧9列ちょうどを返す ──────
+// 4列が外に漏れたらここが落ちる。切替の前後どちらでも成り立つべき性質。
+{
+  const anon = env.SUPABASE_ANON_KEY;
+  if (anon) {
+    const res = await fetch(`${BASE}/functions/v1/search-memory`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${anon}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: "北九州市", match_count: 3 }),
+      cache: "no-store",
+    });
+    check("search-memory: HTTP 200", res.status === 200, `HTTP ${res.status}`);
+    const body = await res.json().catch(() => null);
+    const rows = Array.isArray(body?.results) ? body.results : [];
+    check("search-memory: 結果が返る", rows.length > 0);
+    if (rows.length > 0) {
+      check(
+        "search-memory: 応答は旧9列ちょうど（同一性4列を外に出さない）",
+        JSON.stringify(Object.keys(rows[0])) === JSON.stringify(V1_COLUMNS),
+        `実際=${JSON.stringify(Object.keys(rows[0]))}`
+      );
+    }
+  }
+}
+
+// ── iterative_scan が両関数で効いていること（第7.7弾の回帰防止）──────
+// 設定値を直接読めないので、挙動で固定する。off に戻ると実在数に届かなくなる。
+{
+  const FILTERED = [
+    { label: "豊島区 × 会議", org: "豊島区", st: "会議" },
+    { label: "新宿区 × 成果物", org: "新宿区", st: "成果物" },
+    { label: "北九州市 × 会議", org: "北九州市", st: "会議" },
+  ];
+  for (const f of FILTERED) {
+    const q = `${BASE}/rest/v1/memory_chunks?select=id,embedding&organization=eq.${encodeURIComponent(f.org)}` +
+      `&source_type=eq.${encodeURIComponent(f.st)}&limit=1`;
+    const rows = await (await fetch(q, { headers })).json();
+    const emb = rows[0]?.embedding;
+    const total = await (
+      await fetch(
+        `${BASE}/rest/v1/memory_chunks?select=id&organization=eq.${encodeURIComponent(f.org)}` +
+          `&source_type=eq.${encodeURIComponent(f.st)}`,
+        { headers: { ...headers, Prefer: "count=exact", Range: "0-0" } }
+      )
+    ).headers.get("content-range");
+    const existing = Number(String(total).split("/")[1]);
+    const params = {
+      query_embedding: emb,
+      match_count: 20,
+      filter_source_type: f.st,
+      filter_organization: f.org,
+    };
+    const [a, b] = await Promise.all([
+      rpc("match_memory_chunks", params),
+      rpc("match_memory_chunks_v2", params),
+    ]);
+    const want = Math.min(20, existing);
+    check(
+      `${f.label}: v1 が実在数まで返す（iterative_scanが効いている）`,
+      a.length === want,
+      `実在${existing}件 / 期待${want}件 / 返却${a.length}件。off に戻っていないか`
+    );
+    check(`${f.label}: v2 も同じ`, b.length === want, `期待${want}件 / 返却${b.length}件`);
+  }
+}
+
 console.log(`\n合格 ${passed} / ${passed + failed}`);
 process.exit(failed === 0 ? 0 : 1);
