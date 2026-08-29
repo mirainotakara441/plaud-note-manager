@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { monthlyReportSignature } from "@/lib/cacheSignature.mjs";
 import {
   DEFAULT_MODEL,
   llmErrorMessage,
@@ -192,20 +193,14 @@ function computeKpi(rows: WeeklyReportRow[], doneMap: Map<string, boolean>): Mon
   return { weeks, totalContacts, totalOrgs, tacticsTotal, tacticsDone, completionRate };
 }
 
-// weekly_reports の件数・最新更新・文字数合計による決定的署名（agent/route.ts の
-// computeSignature と同じ考え方）。いずれかが変われば（＝週報の追記・修正）
-// キャッシュが無効化され、月報が再生成される。
-function computeSignature(rows: WeeklyReportRow[]): string {
-  const latest = rows.reduce(
-    (max, r) => (r.created_at && (!max || r.created_at > max) ? r.created_at : max),
-    ""
-  );
-  const totalChars = rows.reduce(
-    (s, r) => s + (r.summary?.length ?? 0) + (r.insight?.length ?? 0) + (r.tactic?.length ?? 0),
-    0
-  );
-  return `${rows.length}:${latest}:${totalChars}`;
-}
+// 週報の決定的署名。いずれかが変われば（＝週報の追記・修正）キャッシュが
+// 無効化され、月報が再生成される。
+//
+// 実装は lib/cacheSignature.mjs 1本だけ。**weekly_reports に updated_at 列が
+// 無い**ので、既存の週報を書き直しても created_at は動かない。本文のハッシュが
+// 唯一の検知手段になる（旧版は文字数合計しか見ておらず、同じ文字数の書き直しを
+// 永久に取りこぼしていた）。
+const computeSignature = monthlyReportSignature;
 
 const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
 週報（週次の営業活動記録）をもとに、月報ドラフトを作成します。

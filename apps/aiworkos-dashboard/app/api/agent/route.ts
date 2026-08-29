@@ -7,6 +7,7 @@ import {
   structured,
 } from "@/lib/llm";
 import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
+import { proposalSignature } from "@/lib/cacheSignature.mjs";
 import { parseSegmentTarget } from "@/lib/categories";
 
 // thinking を有効化すると生成に時間がかかるため、Vercel の関数タイムアウトを引き上げる
@@ -189,20 +190,11 @@ async function fetchDeliverables(
 
 // 会議＋過去成果物の決定的署名。いずれかが変われば（＝新しい成果物を登録した等）
 // キャッシュが無効化され、提案が再生成される。
-function computeSignature(
-  meetings: Meeting[],
-  deliverables: MemoResult[],
-  commonDocs: MemoResult[]
-): string {
-  const latest = meetings.reduce(
-    (max, m) => (m.event_date && (!max || m.event_date > max) ? m.event_date : max),
-    ""
-  );
-  const totalChars = meetings.reduce((s, m) => s + (m.content?.length ?? 0), 0);
-  const delChars = deliverables.reduce((s, d) => s + (d.content?.length ?? 0), 0);
-  const comChars = commonDocs.reduce((s, d) => s + (d.content?.length ?? 0), 0);
-  return `${meetings.length}:${latest}:${totalChars}:d${deliverables.length}:${delChars}:c${commonDocs.length}:${comChars}`;
-}
+//
+// 実装は lib/cacheSignature.mjs 1本だけ。ここには書き写さない——月報側にも
+// 同じ役割の関数があり、以前は両方が別実装で同じ弱点（件数と content.length の
+// 合計しか見ない＝並べ替えても誤字を直しても署名が変わらない）を持っていた。
+const computeSignature = proposalSignature;
 
 // proposal-cache Edge Function から取得。失敗しても null を返し生成にフォールバック。
 async function fetchProposalCache(
