@@ -129,6 +129,8 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // 引用リポストの引用元URL。空なら通常の投稿。
+  const [quote, setQuote] = useState("");
 
   async function call(path: string, body: unknown, what: string) {
     setBusy(what);
@@ -286,15 +288,33 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
                     disabled={busy !== null}
                     onClick={() => {
                       // 公開かつ取り消せない操作。隣がコピーボタンなので、押し間違いをここで止める。
-                      if (!window.confirm("この本文と写真をXへ公開します。取り消せません。")) return;
-                      call("/api/ramen/post-x", { id: log.id }, "x");
+                      const q = quote.trim();
+                      const msg = q
+                        ? "この本文と写真を、貼った投稿への引用リポストとしてXへ公開します。取り消せません。"
+                        : "この本文と写真をXへ公開します。取り消せません。";
+                      if (!window.confirm(msg)) return;
+                      call("/api/ramen/post-x", { id: log.id, quote: q || undefined }, "x");
                     }}
                     className="rounded-full bg-violet-600 px-3 py-1 text-xs font-bold text-white active:scale-95 disabled:opacity-50"
                   >
-                    {busy === "x" ? "投稿中…" : "Xへ投稿"}
+                    {busy === "x" ? "投稿中…" : quote.trim() ? "引用してXへ投稿" : "Xへ投稿"}
                   </button>
                 )}
               </div>
+              {/* 引用リポスト。URLは本文には入れず quote_tweet_id で送るので、
+                  本文にURLを貼る方式と違って課金の跳ね上がりガードに引っかからない。 */}
+              {!log.x_url && (
+                <div className="mb-2">
+                  <input
+                    type="url"
+                    inputMode="url"
+                    value={quote}
+                    onChange={(e) => setQuote(e.target.value)}
+                    placeholder="引用リポストするならXの投稿URLを貼る（任意）"
+                    className="w-full rounded-lg border border-gray-300 px-2 py-1 text-xs"
+                  />
+                </div>
+              )}
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
                 {withShopHashtag(log.draft_x, log.shop)}
               </p>

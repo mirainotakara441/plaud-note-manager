@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, anonCreds, restHeaders } from "@/lib/supabase";
 import { captureAuthorized, withShopHashtag } from "@/lib/ramen";
-import { xCreds, uploadMedia, postTweet } from "@/lib/x";
+import { xCreds, uploadMedia, postTweet, tweetIdFromUrl } from "@/lib/x";
 
 // 下書きをXへ投稿する。写真は Supabase Storage（非公開）から取り出して media/upload に流す。
 // 投稿できたら ramen_logs に x_url / x_posted_on を書き戻し、記録と投稿が二度と乖離しないようにする。
@@ -66,16 +66,31 @@ export async function POST(req: NextRequest) {
   let id: number | null = null;
   let force = false;
   let overrideText: string | null = null;
+  // 引用リポストの引用元。URLでもID単体でも受ける（画面からはURLを貼る想定）。
+  let quoteRaw: string | null = null;
   try {
     const body = await req.json();
     id = typeof body?.id === "number" ? body.id : parseInt(String(body?.id), 10);
     force = body?.force === true;
     overrideText = typeof body?.text === "string" ? body.text : null;
+    quoteRaw = typeof body?.quote === "string" && body.quote.trim() ? body.quote.trim() : null;
   } catch {
     /* 下で弾く */
   }
   if (!id || !Number.isFinite(id)) {
     return NextResponse.json({ error: "対象のidが必要です" }, { status: 400 });
+  }
+  // 引用元の解釈はロックを取る前に済ませる。ここで弾けるものを掴んだまま
+  // 予約すると、投稿もせずロックだけ残った状態を作ってしまう。
+  let quoteTweetId: string | null = null;
+  if (quoteRaw) {
+    quoteTweetId = tweetIdFromUrl(quoteRaw);
+    if (!quoteTweetId) {
+      return NextResponse.json(
+        { error: "引用元がXの投稿URLとして読めません（例: https://x.com/xxx/status/123...）" },
+        { status: 400 }
+      );
+    }
   }
 
   const getRes = await fetch(
@@ -170,7 +185,7 @@ export async function POST(req: NextRequest) {
 
   let posted: { id: string; url: string };
   try {
-    posted = await postTweet(text, mediaIds, x);
+    posted = await postTweet(text, mediaIds, x, { quoteTweetId: quoteTweetId ?? undefined });
   } catch (e) {
     console.error("X投稿失敗:", e);
     // Xへの投稿自体が失敗している（まだ投稿されていない）ので、これも再試行可能に戻す。

@@ -132,13 +132,27 @@ export async function uploadMedia(
   return mediaId;
 }
 
+// XのURLから投稿IDを取り出す。x.com / twitter.com のどちらでも、
+// ?s=20 のような追跡パラメータが付いていても拾える。
+export function tweetIdFromUrl(input: string): string | null {
+  const t = input.trim();
+  if (/^\d{5,25}$/.test(t)) return t; // IDそのものを渡された場合
+  const m = t.match(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/]+\/status(?:es)?\/(\d{5,25})/i);
+  return m ? m[1] : null;
+}
+
+// 引用リポストは payload の quote_tweet_id で送る。本文にURLを貼る方式とは別物で、
+// text にURLが入らないため post-x 側のURLガード（課金が跳ねるので止めている）にも
+// 引っかからない。
 export async function postTweet(
   text: string,
   mediaIds: string[],
-  c: XCreds
+  c: XCreds,
+  opts: { quoteTweetId?: string } = {}
 ): Promise<{ id: string; url: string }> {
   const payload: Record<string, unknown> = { text };
   if (mediaIds.length > 0) payload.media = { media_ids: mediaIds };
+  if (opts.quoteTweetId) payload.quote_tweet_id = opts.quoteTweetId;
 
   const res = await fetch(TWEETS_URL, {
     method: "POST",
