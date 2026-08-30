@@ -42,12 +42,16 @@ type DayRow = {
   day: string;
   weight_kg: number | null;
   body_fat_pct: number | null;
+  /** 筋肉量。体組成計の写真からしか入らない（自動連携に項目が無い）。 */
+  muscle_kg: number | null;
   bmi: number | null;
   steps: number | null;
   kcal: number | null;
   protein_g: number | null;
   fat_g: number | null;
   carbs_g: number | null;
+  /** 塩分相当量(g)。写真はそのまま、Apple Health の sodium(mg) は換算済み。 */
+  salt_g: number | null;
   walking_speed_kmh: number | null;
   walking_step_length_cm: number | null;
 };
@@ -871,12 +875,70 @@ export default function HealthPage() {
               />
             </div>
 
-            {/* 写メから体重・体脂肪率を入れる。HealthPlanetの連携が飛んだ日を後から埋める。 */}
+            {/* 写メから体重・体脂肪率・筋肉量を入れる。HealthPlanetの連携が飛んだ日を後から埋める。 */}
             <PhotoImportCard
               kind="weight"
-              title="写メから体重・体脂肪率を入れる"
+              title="写メから体重・体脂肪率・筋肉量を入れる"
               hint="体組成計アプリの一覧画面を撮って送ると、日付ごとに読み取ります"
               today={todayLocal()}
+              onSaved={() => {
+                load(rangeDays);
+                loadStatus();
+              }}
+            />
+          </Section>
+
+          {/* 食事。体重の推移と睡眠時間の推移の間に置く（体重の増減と食べた量を続けて見るため） */}
+          <Section>
+            <ChartTitle
+              color={HEALTH_COLORS.kcal}
+              title="食事の推移"
+              hint="摂取カロリー。7日移動平均（太線）／実測（薄線）"
+            />
+            <LineChart
+              points={kcalPoints}
+              color={HEALTH_COLORS.kcal}
+              maWindow={7}
+              unit="kcal"
+              valueFormat={(v) => Math.round(v).toLocaleString()}
+            />
+
+            {/* 直近7日のPFCと塩分。カロリーだけでは中身が分からないので並べる。
+                件数も出す——記録が2日しかない週の平均を、7日の平均と同じ顔で
+                出すと読み違える。 */}
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {[
+                { label: "たんぱく質", key: "protein_g" as const, unit: "g", digits: 1 },
+                { label: "脂質", key: "fat_g" as const, unit: "g", digits: 1 },
+                { label: "炭水化物", key: "carbs_g" as const, unit: "g", digits: 1 },
+                { label: "塩分", key: "salt_g" as const, unit: "g", digits: 2 },
+              ].map((m) => {
+                const vals = days
+                  .slice(-7)
+                  .map((d) => d[m.key])
+                  .filter((v): v is number => v != null);
+                const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+                return (
+                  <div key={m.key} className="rounded-xl bg-gray-50 px-3 py-2">
+                    <p className="text-xs text-gray-500">{m.label}</p>
+                    <p className="text-base font-bold tabular-nums text-gray-900">
+                      {avg == null ? "—" : `${avg.toFixed(m.digits)}${m.unit}`}
+                    </p>
+                    <p className="text-[0.6875rem] text-gray-400">
+                      直近7日 {vals.length ? `${vals.length}日ぶんの平均` : "記録なし"}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* カロミルの日次サマリを撮って入れる。画面に日付が出ないので日付を選ばせる。 */}
+            <PhotoImportCard
+              kind="meal"
+              title="写メから食事を入れる"
+              hint="カロミルの1日ぶんの合計画面を撮って送ると、カロリー・PFC・塩分を読み取ります"
+              today={todayLocal()}
+              undated
               onSaved={() => {
                 load(rangeDays);
                 loadStatus();

@@ -51,7 +51,21 @@ type FieldSpec = {
   required: boolean;
 };
 
-const KINDS: Record<string, { label: string; hint: string; fields: FieldSpec[] }> = {
+const KINDS: Record<
+  string,
+  {
+    label: string;
+    hint: string;
+    fields: FieldSpec[];
+    /**
+     * 画面に日付が写っているか。
+     * 体組成や歩数の一覧には日付が並んでいるが、食事アプリの日次サマリは
+     * その日の合計だけで日付が入らないことがある。false のときは
+     * 画面で選んだ日付（body.day）を使う。推測で今日にしない。
+     */
+    dated?: boolean;
+  }
+> = {
   steps: {
     label: "歩数",
     hint: "日付ごとの歩数が並んだ一覧",
@@ -69,8 +83,8 @@ const KINDS: Record<string, { label: string; hint: string; fields: FieldSpec[] }
     ],
   },
   weight: {
-    label: "体重・体脂肪率",
-    hint: "日付ごとの体重や体脂肪率が並んだ一覧",
+    label: "体重・体脂肪率・筋肉量",
+    hint: "日付ごとの体重・体脂肪率・筋肉量が並んだ一覧（HealthPlanet など）",
     fields: [
       {
         key: "weight",
@@ -90,6 +104,99 @@ const KINDS: Record<string, { label: string; hint: string; fields: FieldSpec[] }
         min: 3,
         max: 60,
         decimals: 1,
+        required: false,
+      },
+      {
+        // 体組成計の一覧には体重・体脂肪率と並んで筋肉量も出ている。
+        // 週次レポートに載せているのに、これまで取り込めていなかった唯一の項目。
+        key: "muscle",
+        metric: "muscle_mass",
+        unit: "kg",
+        label: "筋肉量",
+        min: 10,
+        max: 120,
+        decimals: 1,
+        required: false,
+      },
+    ],
+  },
+  meal: {
+    label: "食事（カロミル）",
+    hint: "1日ぶんの合計が出ている栄養サマリ（カロリー・PFC・塩分）",
+    // 画面に日付が入らないので、UIで選んだ日付を使う。
+    dated: false,
+    fields: [
+      // ★単位に注意。HealthKit 由来の dietary_energy は kJ、sodium は mg で入っている。
+      //   こちらは画面に出ている kcal / g をそのまま入れたいので、別の metric 名にする。
+      //   混ぜると同じ列に kJ と kcal が並び、グラフが8倍ずれる。
+      {
+        key: "energy",
+        metric: "meal_energy",
+        unit: "kcal",
+        label: "カロリー",
+        min: 0,
+        max: 8000,
+        decimals: 0,
+        required: true,
+      },
+      {
+        key: "protein",
+        metric: "meal_protein",
+        unit: "g",
+        label: "たんぱく質",
+        min: 0,
+        max: 500,
+        decimals: 1,
+        required: false,
+      },
+      {
+        key: "fat",
+        metric: "meal_fat",
+        unit: "g",
+        label: "脂質",
+        min: 0,
+        max: 400,
+        decimals: 1,
+        required: false,
+      },
+      {
+        key: "carbs",
+        metric: "meal_carbs",
+        unit: "g",
+        label: "炭水化物",
+        min: 0,
+        max: 900,
+        decimals: 1,
+        required: false,
+      },
+      {
+        key: "sugar",
+        metric: "meal_sugar",
+        unit: "g",
+        label: "糖質",
+        min: 0,
+        max: 900,
+        decimals: 1,
+        required: false,
+      },
+      {
+        key: "fiber",
+        metric: "meal_fiber",
+        unit: "g",
+        label: "食物繊維",
+        min: 0,
+        max: 200,
+        decimals: 1,
+        required: false,
+      },
+      {
+        key: "salt",
+        metric: "meal_salt",
+        unit: "g",
+        label: "塩分",
+        min: 0,
+        max: 50,
+        decimals: 2,
         required: false,
       },
     ],
@@ -163,21 +270,32 @@ function buildSchema(fields: FieldSpec[]) {
   };
 }
 
-function buildSystem(fields: FieldSpec[]) {
+function buildSystem(fields: FieldSpec[], dated: boolean) {
   const list = fields.map((f) => `- ${f.label}（${f.unit}）`).join("\n");
+
+  // 日付が並んでいる一覧と、1日ぶんのサマリでは、守るべきことが違う。
+  const perKind = dated
+    ? `- 画面に見えている「日付ごとの記録」の行だけを entries に入れる。
+- 「平均」「AVG」「合計」「1週間のデータ」のような集計値は、日別の記録ではない。
+  これらは entries に入れず summaries に分けること。ここを混ぜると、平均値が
+  その日1日の値として記録されてしまう。
+- 同じ日が複数の画像に出てくる場合も、見えたものをそのまま両方入れてよい（後で突き合わせる）。`
+    : `- この画面は1日ぶんの合計です。entries は1件だけにすること。
+- 日付は画面に出ていないので md と weekday は空文字にする。**推測して日付を書かない。**
+- ★「1916 / 1800kcal」「69.0 / 81.0g」のように2つの数字が並んでいたら、
+  **左が実績、右が目標**。拾うのは必ず左の実績のほう。目標値を入れると、
+  食べた量ではなく設定値がその日の記録として残ってしまう。
+- 「あと12.0g」「+7.6g」のような目標との差分は拾わない。それは実績ではない。`;
+
   return `あなたは健康アプリのスクリーンショットから数字を書き起こす作業をしています。
 
 拾うもの:
 ${list}
 
 守ること:
-- 画面に見えている「日付ごとの記録」の行だけを entries に入れる。
-- 「平均」「AVG」「合計」「1週間のデータ」のような集計値は、日別の記録ではない。
-  これらは entries に入れず summaries に分けること。ここを混ぜると、平均値が
-  その日1日の値として記録されてしまう。
+${perKind}
 - 画面に出ていない項目は推測せず null にする。
 - 途中で切れていて数字が読み切れない行は、推測で埋めず notes に書いて entries から外す。
-- 同じ日が複数の画像に出てくる場合も、見えたものをそのまま両方入れてよい（後で突き合わせる）。
 - 数字は画面に出ている値をそのまま。四捨五入や補正をしない。`;
 }
 
@@ -274,7 +392,7 @@ export async function POST(req: NextRequest) {
   let read: OcrResult;
   try {
     read = await structured<OcrResult>({
-      system: buildSystem(kind.fields),
+      system: buildSystem(kind.fields, kind.dated !== false),
       messages: [
         {
           role: "user",
@@ -315,8 +433,23 @@ export async function POST(req: NextRequest) {
   // ── 年を決めて、同じ日が複数枚に写っていた場合をまとめる ──────────────
   const byDay = new Map<string, { values: Record<string, number>; warning?: string }>();
   const dropped: string[] = [];
+  // 日付が画面に無い種類（食事サマリなど）は、選んだ日付を使う。
+  // ここを「読めなければ今日」にしない。昨日ぶんを入れているのに今日の行が
+  // できると、あとから見て取り違えようがない嘘になる。
+  const chosenDay =
+    typeof body?.day === "string" && DAY_RE.test(body.day) ? body.day : null;
+  if (kind.dated === false && !chosenDay) {
+    return NextResponse.json(
+      { error: "この種類は画面に日付が出ないので、日付を選んでから読み取ってください" },
+      { status: 400 }
+    );
+  }
+
   for (const e of Array.isArray(read.entries) ? read.entries : []) {
-    const r = resolveDay(String(e?.md ?? ""), String(e?.weekday ?? ""), today);
+    const r =
+      kind.dated === false
+        ? { day: chosenDay as string, warning: undefined as string | undefined }
+        : resolveDay(String(e?.md ?? ""), String(e?.weekday ?? ""), today);
     if (!r) {
       dropped.push(`「${e?.md ?? "?"}」は日付として読めませんでした`);
       continue;

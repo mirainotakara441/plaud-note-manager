@@ -78,12 +78,19 @@ export function PhotoImportCard({
   title,
   hint,
   today,
+  undated,
   onSaved,
 }: {
-  kind: "steps" | "weight";
+  kind: "steps" | "weight" | "meal";
   title: string;
   hint: string;
   today: string;
+  /**
+   * 画面に日付が写らない種類（食事の日次サマリなど）。
+   * true のときは日付を選ばせ、それを読み取りAPIへ渡す。
+   * 選ばせずに今日で埋めると、昨日ぶんを入れたつもりが今日の記録になる。
+   */
+  undated?: boolean;
   onSaved: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -95,6 +102,8 @@ export function PhotoImportCard({
   const [summaries, setSummaries] = useState<{ label: string; text: string }[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  /** 日付が写らない種類のときに使う。既定は今日。 */
+  const [day, setDay] = useState<string>(today);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputId = `photo-input-${kind}`;
 
@@ -127,7 +136,7 @@ export function PhotoImportCard({
       const res = await fetch("/api/health/photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, images, today }),
+        body: JSON.stringify({ kind, images, today, ...(undated ? { day } : {}) }),
       });
       const json = (await res.json()) as ReadResponse;
       if (!res.ok || json.error) throw new Error(json.error ?? "読み取りに失敗しました");
@@ -140,7 +149,11 @@ export function PhotoImportCard({
       setSummaries(json.summaries ?? []);
       setNotes(json.notes ?? []);
       if (got.length === 0) {
-        setError("日付ごとの記録を読み取れませんでした。一覧が写った画面を送ってください。");
+        setError(
+          undated
+            ? "数値を読み取れませんでした。1日ぶんの合計が写った画面を送ってください。"
+            : "日付ごとの記録を読み取れませんでした。一覧が写った画面を送ってください。"
+        );
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "読み取りに失敗しました");
@@ -197,6 +210,21 @@ export function PhotoImportCard({
 
       {open && (
         <div className="mt-3">
+          {/* 日付が写らない種類は、写真を選ぶ前に日付を決めさせる。
+              あとから直せる欄にしないのは、読み取り結果と日付がずれたまま
+              登録される余地を作らないため。 */}
+          {undated && (
+            <label className="mb-3 flex items-center gap-2 text-sm">
+              <span className="font-medium text-gray-700">いつのぶん</span>
+              <input
+                type="date"
+                value={day}
+                max={today}
+                onChange={(e) => setDay(e.target.value)}
+                className="min-h-[2.75rem] rounded-xl border border-gray-300 px-3 text-sm"
+              />
+            </label>
+          )}
           <input
             ref={fileRef}
             type="file"
