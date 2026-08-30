@@ -159,7 +159,10 @@ const ids = (f) => f.map((x) => x.id);
     new URL("../lib/advisor/detectors/memory.ts", import.meta.url),
     "utf8"
   );
-  check("検知器はページングしている（1000行で切られない）", det.includes('"Range-Unit": "items"'), true);
+  // 全行を運ぶとここが重くなり、朝の通知そのものが遅れる（2026-08-30に11.3秒で落ちた）。
+  // DB側で絞り込み、壊れている行だけを受け取る。
+  check("検知器は全行を運ばずDB側で絞る", det.includes("memory_identity_problems"), true);
+  check("検知器は全行取得のページングを持たない", det.includes('"Range-Unit"'), false);
   check("検知器は判定を持たず共有モジュールを呼ぶ", det.includes("memoryHealthFindings.mjs"), true);
 }
 

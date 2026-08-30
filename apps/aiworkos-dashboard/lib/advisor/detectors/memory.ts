@@ -6,22 +6,23 @@
 // ここが返した Finding は、ホームの「今朝の気づき」（/api/advisor）と
 // 朝のPush通知（/api/cron/daily-todo）の両方が拾う。新しい通知の仕組みは作らない。
 //
+// ■ 全行を運ばない（2026-08-30に直した）
+// 最初は memory_chunks の同一性4列を全行取ってきて数えていた。1469行で364KB、
+// 取得だけで3.0〜3.6秒かかり、/advisor が11秒を超えてスモークの8秒判定に落ちた。
+// 参謀は毎朝の通知にも使うので、ここが重いと通知そのものが遅れる。
+//
+// いまは DB 側の memory_identity_problems() が**壊れている行だけ**を返す。
+// 正常なら0行なので、通信量はほぼゼロ。判定そのもの（何を壊れているとみなすか）は
+// アプリ側の auditShadowColumns に残してある——DBとアプリの2か所に判定を持つと、
+// 片方だけ直したときに画面と通知で言い分が食い違う。
+//
 // ■ 判定はここに書かない
-// 何を異常とみなすかは lib/memoryHealthFindings.mjs（さらにその中身は
-// lib/memoryShadow.mjs の auditShadowColumns）が唯一の正。ここは取ってきて渡すだけ。
-// I/Oと判定を分けてあるので、判定は合成データでテストできる（tests/memory-health.mjs）。
+// lib/memoryHealthFindings.mjs（→ lib/memoryShadow.mjs の auditShadowColumns）が
+// 唯一の正。ここは取ってきて渡すだけ。合成データでのテストは tests/memory-health.mjs。
 
-import { restHeaders } from "@/lib/supabase";
+import { callRpc } from "../client";
 import { buildMemoryFindings } from "../../memoryHealthFindings.mjs";
 import type { Ctx, Detector, Finding } from "../types";
-
-/** PostgREST のサーバ側上限。これを超える分はページを送らないと黙って切られる。 */
-const PAGE = 1000;
-const MAX_ROWS = 20000;
-
-/** 判定に要る列だけ。content と embedding は重いので取らない。 */
-const SELECT =
-  "canonical_document_id,source_document_id,chunk_index,ingest_scheme,source_type,created_at";
 
 export type IdentityRow = {
   canonical_document_id: string | null;
@@ -32,51 +33,12 @@ export type IdentityRow = {
   created_at: string;
 };
 
-/**
- * 行を全部取る。**ページングを省かないこと。**
- * memory_chunks は2026-08時点で1458行あり、PostgREST の既定上限1000で
- * 黙って切られる。切られたまま数えると「異常なし」と嘘をつく
- * （lib/advisor/client.ts の getRows はページングしないので使わない）。
- */
-async function fetchAll(ctx: Ctx): Promise<{ rows: IdentityRow[]; expected: number | null }> {
-  const rows: IdentityRow[] = [];
-  let expected: number | null = null;
-
-  for (let from = 0; from < MAX_ROWS; from += PAGE) {
-    const res = await fetch(
-      `${ctx.creds.url}/rest/v1/memory_chunks?select=${SELECT}&order=created_at.asc,id.asc`,
-      {
-        headers: {
-          ...restHeaders(ctx.creds.key),
-          Range: `${from}-${from + PAGE - 1}`,
-          "Range-Unit": "items",
-          Prefer: "count=exact",
-        },
-        cache: "no-store",
-      }
-    );
-    if (!res.ok && res.status !== 206) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(`memory_chunks の取得に失敗 (${res.status}) ${detail.slice(0, 120)}`);
-    }
-    const total = res.headers.get("content-range")?.split("/")[1];
-    if (expected === null && total && total !== "*") expected = Number(total);
-
-    const page = (await res.json()) as IdentityRow[];
-    if (!Array.isArray(page)) throw new Error("memory_chunks: 配列ではない応答");
-    rows.push(...page);
-    if (page.length < PAGE) break;
-  }
-  return { rows, expected };
-}
-
 async function run(ctx: Ctx): Promise<Finding[]> {
-  const { rows, expected } = await fetchAll(ctx);
-  const truncated = expected !== null && rows.length < expected;
-  if (truncated) {
-    console.error(`memory検知器: 取り切れていません（${rows.length}/${expected}）`);
-  }
-  return buildMemoryFindings(rows, truncated) as Finding[];
+  // 正常なら0行。異常があるときだけ、その組に属する行がまとめて返る
+  // （衝突なら同じ番号の行を全部、実体またぎならその取り込み文書の行を全部）。
+  const rows = await callRpc<IdentityRow>(ctx, "memory_identity_problems", {});
+  // 取り切れないことが無い（絞り込み済みなので）ため truncated は常に false。
+  return buildMemoryFindings(rows, false) as Finding[];
 }
 
 export const memoryDetector: Detector = { name: "Memory 2.0 の同一性", run };
