@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, anonCreds, restHeaders } from "@/lib/supabase";
 import { captureAuthorized, withShopHashtag } from "@/lib/ramen";
-import { xCreds, uploadMedia, postTweet, tweetIdFromUrl } from "@/lib/x";
+import {
+  xCreds,
+  uploadMedia,
+  postTweet,
+  tweetIdFromUrl,
+  tweetAuthorUsername,
+  X_USERNAME,
+} from "@/lib/x";
 
 // 下書きをXへ投稿する。写真は Supabase Storage（非公開）から取り出して media/upload に流す。
 // 投稿できたら ramen_logs に x_url / x_posted_on を書き戻し、記録と投稿が二度と乖離しないようにする。
@@ -88,6 +95,26 @@ export async function POST(req: NextRequest) {
     if (!quoteTweetId) {
       return NextResponse.json(
         { error: "引用元がXの投稿URLとして読めません（例: https://x.com/xxx/status/123...）" },
+        { status: 400 }
+      );
+    }
+    // ★他人の投稿はAPIから引用できない（2026年2月ごろのXの仕様変更）。
+    //   送ってしまうと 403 の生のエラーが画面に出るうえ、ロックの後始末も要る。
+    //   投稿する前にここで止めて、何をすればよいかまで日本語で返す。
+    const author = await tweetAuthorUsername(quoteTweetId, x);
+    if (author === null) {
+      return NextResponse.json(
+        { error: "引用元の投稿を読めませんでした。URLが正しいか、消えていないか確かめてください。" },
+        { status: 400 }
+      );
+    }
+    if (author.toLowerCase() !== X_USERNAME.toLowerCase()) {
+      return NextResponse.json(
+        {
+          error:
+            `引用元が @${author} の投稿です。Xの仕様で、APIからは自分（@${X_USERNAME}）の投稿しか引用できません。` +
+            "Xのアプリから手で引用リポストしてください（画面からなら制限されません）。",
+        },
         { status: 400 }
       );
     }

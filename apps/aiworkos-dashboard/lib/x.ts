@@ -12,6 +12,13 @@ import crypto from "node:crypto";
 //   本文にリンクを入れない運用にしている（lib/ramen.ts の文体ルールにも明記）。
 
 const TWEETS_URL = "https://api.x.com/2/tweets";
+const TWEET_LOOKUP_URL = "https://api.x.com/2/tweets";
+
+/**
+ * 投稿するアカウント。引用元が自分の投稿かどうかの判定に使う。
+ * 環境変数のトークンとずれると判定が嘘になるので、キーを差し替えたらここも直すこと。
+ */
+export const X_USERNAME = "0kara1_man";
 const MEDIA_URL = "https://api.x.com/2/media/upload";
 
 // 画像1枚の上限。これを超えるものは投稿前に弾く（縮小は呼び出し側の責任）。
@@ -139,6 +146,36 @@ export function tweetIdFromUrl(input: string): string | null {
   if (/^\d{5,25}$/.test(t)) return t; // IDそのものを渡された場合
   const m = t.match(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/]+\/status(?:es)?\/(\d{5,25})/i);
   return m ? m[1] : null;
+}
+
+/**
+ * 引用元の投稿を書いたアカウント名を返す。読めなければ null。
+ *
+ * ★2026年2月ごろ、Xが予告なく仕様を変えた。API から quote_tweet_id で
+ *   **他人の投稿を引用することができなくなった**（自分が著者か、自分が
+ *   メンションされている投稿だけ）。違反すると投稿時に 403 が返る:
+ *     "You can only reply to or quote posts where you are mentioned or are the author."
+ *   投稿してから403を見るのでは、画面に生のエラーが出るうえロックの後始末も要る。
+ *   送る前にここで確かめて、日本語で理由を返す。
+ *   なお**画面から手で引用するぶんには制限されない**。APIだけが塞がれている。
+ */
+export async function tweetAuthorUsername(
+  tweetId: string,
+  c: XCreds
+): Promise<string | null> {
+  const params = { expansions: "author_id", "user.fields": "username" };
+  const qs = Object.entries(params)
+    .map(([k, v]) => `${pct(k)}=${pct(v)}`)
+    .join("&");
+  const url = `${TWEET_LOOKUP_URL}/${tweetId}`;
+  const res = await fetch(`${url}?${qs}`, {
+    headers: { Authorization: authHeader("GET", url, params, c) },
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  const json = await res.json().catch(() => null);
+  const u = json?.includes?.users?.[0]?.username;
+  return typeof u === "string" ? u : null;
 }
 
 // 引用リポストは payload の quote_tweet_id で送る。本文にURLを貼る方式とは別物で、
