@@ -88,6 +88,16 @@ const PROPOSE_FEATURES: Feature[] = [
     accent: "bg-indigo-100 text-indigo-700",
   },
   {
+    // 議員リストと分けてあるのは、辿り方が違うため。議員は会派→議会という
+    // 公的な階層を辿るが、企業には名簿という正が無く、代わりに
+    // 「何に賭けているか」と「誰に会えばええか」を読む道具になる。
+    href: "/partners",
+    icon: "🤝",
+    title: "協力企業",
+    desc: "委託会社と事業者の役員を経歴つきで持ち、その会社が何に賭けているかを出典つきで読む",
+    accent: "bg-teal-100 text-teal-700",
+  },
+  {
     href: "/agent",
     icon: "🤖",
     title: "提案エージェント",
