@@ -8,11 +8,13 @@ import {
   buildTree,
   careerCoverage,
   matches,
+  reportChapters,
   starredLines,
   type Company,
   type CompanyWithExecutives,
   type Executive,
   type PartnerCategory,
+  type Report,
 } from "@/lib/partners";
 
 // 協力企業の人脈DB。
@@ -29,7 +31,7 @@ import {
 
 const C_ACCENT = "#0f766e"; // teal-700。議員リスト（indigo）と取り違えないよう別系統にする
 
-type Payload = { companies: Company[]; executives: Executive[] };
+type Payload = { companies: Company[]; executives: Executive[]; reports: Report[] };
 
 export default function PartnersPage() {
   const [data, setData] = useState<Payload | null>(null);
@@ -146,6 +148,21 @@ export default function PartnersPage() {
             className="mt-3 w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none placeholder:text-gray-400 focus:border-teal-500"
           />
 
+          {/* 会社をまたいだ考察。会社の一覧より先に置く——「どこから読むか」を
+              毎回探させないため。検索中は会社を探しているので畳んで邪魔しない */}
+          {(data.reports ?? []).length > 0 && !query && (
+            <div className="mt-5">
+              <h2 className="mb-2 text-[0.72rem] font-bold tracking-wide text-gray-400">
+                レポート（会社をまたいだ考察）
+              </h2>
+              <div className="space-y-2">
+                {(data.reports ?? []).map((r) => (
+                  <ReportCard key={r.id} report={r} />
+                ))}
+              </div>
+            </div>
+          )}
+
           {shown.length === 0 && (
             <p className="mt-8 text-center text-sm text-gray-400">
               該当する会社がありません。
@@ -165,6 +182,85 @@ export default function PartnersPage() {
         </>
       )}
     </main>
+  );
+}
+
+function ReportCard({ report: r }: { report: Report }) {
+  const [open, setOpen] = useState(false);
+  const chapters = useMemo(() => (open ? reportChapters(r.body) : []), [open, r.body]);
+
+  return (
+    <article className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-full px-4 py-3.5 text-left transition active:bg-gray-50"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[0.7rem] text-gray-400">{r.reported_on}</p>
+            <h3 className="mt-0.5 text-[0.95rem] font-bold leading-snug text-gray-900">
+              {r.title}
+            </h3>
+          </div>
+          <span className="shrink-0 pt-1 text-xs text-gray-400">{open ? "▲" : "▼"}</span>
+        </div>
+        {r.summary && (
+          <p
+            className={`mt-1.5 text-[0.78rem] leading-relaxed text-gray-600${
+              open ? "" : " line-clamp-2"
+            }`}
+          >
+            {r.summary}
+          </p>
+        )}
+        {r.companies.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {r.companies.map((name) => (
+              <span
+                key={name}
+                className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[0.68rem] text-gray-500"
+              >
+                {name}
+              </span>
+            ))}
+          </div>
+        )}
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 px-4 pb-4 pt-3">
+          {chapters.map((ch, i) => (
+            <div key={i} className="mt-3 first:mt-0">
+              {ch.heading && (
+                <h4 className="mb-1 text-[0.8rem] font-bold text-teal-700">{ch.heading}</h4>
+              )}
+              {ch.lines.map((line, j) => (
+                <p
+                  key={j}
+                  className={`text-[0.78rem] leading-relaxed text-gray-700${
+                    // 箇条書きは字下げして、地の文と区別が付くようにする
+                    line.startsWith("・") ? " pl-3 -indent-3" : ""
+                  } ${j > 0 ? "mt-1.5" : ""}`}
+                >
+                  {line}
+                </p>
+              ))}
+            </div>
+          ))}
+          {r.artifact_url && (
+            <a
+              href={r.artifact_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-block text-[0.75rem] font-medium text-teal-700 underline"
+            >
+              清書版を開く
+            </a>
+          )}
+        </div>
+      )}
+    </article>
   );
 }
 

@@ -61,13 +61,23 @@ async function fetchAll(url: string, key: string, path: string, label: string) {
   return res.json();
 }
 
+const REPORT_COLUMNS = [
+  "id",
+  "title",
+  "summary",
+  "body",
+  "companies",
+  "artifact_url",
+  "reported_on",
+].join(",");
+
 export async function GET() {
   const c = anonCreds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
 
   try {
-    // 会社と役員を同時に取る。片方が遅いぶんだけ待つ形にする。
-    const [companies, executives] = await Promise.all([
+    // 会社・役員・レポートを同時に取る。いちばん遅いぶんだけ待つ形にする。
+    const [companies, executives, reports] = await Promise.all([
       fetchAll(
         c.url,
         c.key,
@@ -80,8 +90,14 @@ export async function GET() {
         `partner_executives?select=${EXECUTIVE_COLUMNS}&order=sort_order.asc`,
         "役員"
       ),
+      fetchAll(
+        c.url,
+        c.key,
+        `partner_reports?select=${REPORT_COLUMNS}&order=reported_on.desc`,
+        "レポート"
+      ),
     ]);
-    return NextResponse.json({ companies, executives });
+    return NextResponse.json({ companies, executives, reports });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "取得に失敗しました" },

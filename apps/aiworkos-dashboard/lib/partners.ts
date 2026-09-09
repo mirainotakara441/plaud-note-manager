@@ -64,6 +64,44 @@ export type Company = {
 
 export type CompanyWithExecutives = Company & { executives: Executive[] };
 
+/**
+ * 会社をまたいだ考察。
+ *
+ * 会社の memo は「その会社について分かったこと」で1社に閉じるが、
+ * 「トライアル申込のまま動いていない3社を並べると何が言えるか」は
+ * どの会社にもぶら下がらない。memo に書くと3社に同じ文章がコピーされ、
+ * 直すときに片方だけ直る。
+ *
+ * companies は会社IDでなく社名の配列。レポートは未登録の会社にも言及するので、
+ * 外部キーで縛ると「TOPPANにも触れた」だけで登録が通らなくなる。
+ */
+export type Report = {
+  id: string;
+  title: string;
+  summary: string | null;
+  body: string;
+  companies: string[];
+  artifact_url: string | null;
+  reported_on: string;
+};
+
+/** 本文を「■ 見出し」で章に割る。見出しが無ければ全体を1章として返す。 */
+export function reportChapters(body: string): { heading: string | null; lines: string[] }[] {
+  const out: { heading: string | null; lines: string[] }[] = [];
+  let current: { heading: string | null; lines: string[] } = { heading: null, lines: [] };
+  for (const raw of body.split("\n")) {
+    const line = raw.trimEnd();
+    if (line.startsWith("■")) {
+      if (current.heading !== null || current.lines.length > 0) out.push(current);
+      current = { heading: line.replace(/^■\s*/, ""), lines: [] };
+    } else if (line.trim() !== "") {
+      current.lines.push(line);
+    }
+  }
+  if (current.heading !== null || current.lines.length > 0) out.push(current);
+  return out;
+}
+
 export const CATEGORIES: PartnerCategory[] = ["委託会社", "事業者"];
 
 export const CATEGORY_DESC: Record<PartnerCategory, string> = {
