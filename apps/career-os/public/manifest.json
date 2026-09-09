@@ -1,0 +1,14 @@
+{
+  "name": "キャリアOS",
+  "short_name": "キャリアOS",
+  "description": "転職メールを案件データベースに変え、自分の判断軸で採点する",
+  "lang": "ja",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

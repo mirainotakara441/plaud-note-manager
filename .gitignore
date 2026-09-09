@@ -1,0 +1,36 @@
+# リポジトリ共通の除外（2026-09-09 追加）
+# apps 配下の各アプリが個別に .gitignore を持つ場合もあるが、
+# 持たないアプリ（task-manager など）が依存物ごとコミットされるのを防ぐ安全網。
+# 書式は Desktop/AI リポジトリの .gitignore に揃えている。
+
+# ===== macOS =====
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# ===== 依存物（消しても再生成できる） =====
+node_modules/
+.next/
+.turbo/
+.vercel/
+dist/
+build/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# ===== 機密（絶対にコミットしない） =====
+.env
+.env.*
+*.pem
+*.key
+*credential*
+*secret*
+# ひな形は追跡してよい（値が入っていないため）
+!.env.example
+!.env.local.example
+
+# ===== ログ =====
+*.log
