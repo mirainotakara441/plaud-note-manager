@@ -11,9 +11,19 @@
 //   直すときに片方だけ直る。
 //
 // ■ 区分は週報ダッシュボードと同じ語を使う
-//   委託会社 … こちらが業務を委託する側（窓口・BPOの担い手）
-//   事業者   … 法人請求オンラインサービスを使う側（大量請求元）
+//   委託会社 … **自治体の中で郵送請求業務を受託している会社。** うちのパートナー。
+//              エイジェックとは業務連携協定を結び、キャリアリンクとは協力関係にある。
+//              単なる取引先ではなく、自治体へ一緒に入っていく相手。
+//   事業者   … **法人請求オンラインサービスの利用者。** 債権保全のために住民票を
+//              取り寄せる民間企業（カード・クレジット・消費者金融・債権回収）と、
+//              自治体向け郵送請求を代行するBPO事業者。
 //   攻め方が逆向きなので、混ぜると使えない台帳になる。
+//
+// ■ relationship は区分と別に持つ
+//   区分は「どういう立場の会社か」しか表さない。「もう使ってくれているのか」
+//   「まだ申込だけか」「協定まで結んだ相手か」が消えると、攻め方を間違える。
+//   （アグレックスを当初「委託会社」と誤って登録した。自治体BPOの担い手に見えたが、
+//     実際は自治体向け郵送請求を代行する側＝利用者だった。2026-09-09に訂正）
 
 export type PartnerCategory = "委託会社" | "事業者";
 
@@ -46,6 +56,8 @@ export type Company = {
   values_summary: string | null;
   values_quote: string | null;
   values_source: string | null;
+  /** うちとその会社の関係。利用中／トライアル申込済み／業務連携協定を締結 など。 */
+  relationship: string | null;
   memo: string | null;
   as_of: string | null;
 };
@@ -55,8 +67,10 @@ export type CompanyWithExecutives = Company & { executives: Executive[] };
 export const CATEGORIES: PartnerCategory[] = ["委託会社", "事業者"];
 
 export const CATEGORY_DESC: Record<PartnerCategory, string> = {
-  委託会社: "こちらが業務を委託する側。窓口・BPOの担い手",
-  事業者: "法人請求オンラインサービスを使う側。大量請求元",
+  委託会社:
+    "自治体の中で郵送請求業務を受託している会社。単なる取引先でなく、自治体へ一緒に入っていくパートナー",
+  事業者:
+    "法人請求オンラインサービスの利用者。債権保全で住民票を取り寄せる民間企業と、郵送請求を代行するBPO事業者",
 };
 
 /**
@@ -94,6 +108,7 @@ export function matches(c: CompanyWithExecutives, query: string): boolean {
   const haystack = [
     c.name,
     c.name_kana,
+    c.relationship,
     c.business,
     c.values_summary,
     c.values_quote,

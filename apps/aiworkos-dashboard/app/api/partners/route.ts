@@ -29,6 +29,7 @@ const COMPANY_COLUMNS = [
   "values_summary",
   "values_quote",
   "values_source",
+  "relationship",
   "memo",
   "as_of",
 ].join(",");

@@ -190,12 +190,28 @@ function CompanyCard({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <span
-              className="inline-block rounded-md px-1.5 py-0.5 text-[0.7rem] font-semibold"
-              style={{ background: "#ccfbf1", color: C_ACCENT }}
-            >
-              {c.category}
-            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span
+                className="inline-block rounded-md px-1.5 py-0.5 text-[0.7rem] font-semibold"
+                style={{ background: "#ccfbf1", color: C_ACCENT }}
+              >
+                {c.category}
+              </span>
+              {/* 区分だけでは「もう使ってくれているのか」「協定まで結んだ相手か」が
+                  消える。攻め方がいちばん変わるのはそこなので、社名の真上に置く */}
+              {c.relationship && (
+                <span
+                  className="inline-block rounded-md px-1.5 py-0.5 text-[0.7rem] font-semibold"
+                  style={
+                    c.relationship.startsWith("★")
+                      ? { background: "#fef3c7", color: "#92400e" }
+                      : { background: "#f3f4f6", color: "#6b7280" }
+                  }
+                >
+                  {c.relationship.replace(/^★/, "")}
+                </span>
+              )}
+            </div>
             <h2 className="mt-1.5 text-base font-bold leading-snug text-gray-900">
               {c.name}
             </h2>
