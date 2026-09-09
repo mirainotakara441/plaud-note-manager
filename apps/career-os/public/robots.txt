@@ -1,0 +1,4 @@
+# 転職活動の内容は検索エンジンに載せない。
+# 合言葉認証(proxy.ts)と layout.tsx の robots メタと合わせて三重に塞ぐ。
+User-agent: *
+Disallow: /
