@@ -104,6 +104,12 @@ export function PhotoImportCard({
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   /** 日付が写らない種類のときに使う。既定は今日。 */
   const [day, setDay] = useState<string>(today);
+  /**
+   * 貼り付けたテキスト。写メが手元に無くても、確定版レポートの表をそのまま
+   * 貼れば入る。読み取った先は写メと同じ形なので、確認フォームも登録も共通。
+   */
+  const [text, setText] = useState("");
+  const [mode, setMode] = useState<"photo" | "text">("photo");
   const fileRef = useRef<HTMLInputElement>(null);
   const inputId = `photo-input-${kind}`;
 
@@ -122,21 +128,16 @@ export function PhotoImportCard({
     return fs.every((f) => r.values[f.key] == null || r.current[f.key] === r.values[f.key]);
   }
 
-  async function handleFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    if (files.length > MAX_IMAGES) {
-      setError(`一度に読めるのは${MAX_IMAGES}枚までです`);
-      return;
-    }
+  /** 写メとテキストで違うのは送る中身だけ。読み取った後の扱いは共通にする。 */
+  async function read(payload: Record<string, unknown>, fromText: boolean) {
     setBusy("reading");
     setError(null);
     setSavedMsg(null);
     try {
-      const images = await Promise.all(Array.from(files).map(downscaleToJpeg));
       const res = await fetch("/api/health/photo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind, images, today, ...(undated ? { day } : {}) }),
+        body: JSON.stringify(payload),
       });
       const json = (await res.json()) as ReadResponse;
       if (!res.ok || json.error) throw new Error(json.error ?? "読み取りに失敗しました");
@@ -150,9 +151,11 @@ export function PhotoImportCard({
       setNotes(json.notes ?? []);
       if (got.length === 0) {
         setError(
-          undated
-            ? "数値を読み取れませんでした。1日ぶんの合計が写った画面を送ってください。"
-            : "日付ごとの記録を読み取れませんでした。一覧が写った画面を送ってください。"
+          fromText
+            ? "数値を読み取れませんでした。日付と数字が並んだ表や箇条書きを貼ってください。"
+            : undated
+              ? "数値を読み取れませんでした。1日ぶんの合計が写った画面を送ってください。"
+              : "日付ごとの記録を読み取れませんでした。一覧が写った画面を送ってください。"
         );
       }
     } catch (e) {
@@ -161,6 +164,23 @@ export function PhotoImportCard({
       setBusy(null);
       if (fileRef.current) fileRef.current.value = "";
     }
+  }
+
+  async function handleFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    if (files.length > MAX_IMAGES) {
+      setError(`一度に読めるのは${MAX_IMAGES}枚までです`);
+      return;
+    }
+    const images = await Promise.all(Array.from(files).map(downscaleToJpeg));
+    await read({ kind, images, today, ...(undated ? { day } : {}) }, false);
+  }
+
+  async function handleText() {
+    if (text.trim() === "") return;
+    // テキストには日付の列が入っている前提なので、日付は送らない
+    // （送ると全行がその1日に潰れる）。
+    await read({ kind, text, today }, true);
   }
 
   async function save() {
@@ -202,7 +222,7 @@ export function PhotoImportCard({
         className="flex w-full items-center justify-between text-left"
       >
         <span>
-          <span className="text-sm font-bold text-gray-900">📷 {title}</span>
+          <span className="text-sm font-bold text-gray-900">📷 {title.replace(/^写メから/, "写メかテキストで")}</span>
           <span className="mt-0.5 block text-xs text-gray-500">{hint}</span>
         </span>
         <span className="text-gray-400">{open ? "▲" : "▼"}</span>
@@ -210,10 +230,72 @@ export function PhotoImportCard({
 
       {open && (
         <div className="mt-3">
+          {/* 入れ方の切り替え。写メが手元に無くても、表を貼れば入るようにする。 */}
+          <div className="mb-3 flex gap-1.5">
+            {([
+              ["photo", "📷 写メ"],
+              ["text", "📝 テキスト"],
+            ] as const).map(([m, label]) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setMode(m);
+                  setError(null);
+                }}
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold transition active:opacity-70"
+                style={
+                  mode === m
+                    ? { borderColor: "#4f46e5", background: "#4f46e5", color: "#fff" }
+                    : { borderColor: "#e5e7eb", background: "#fff", color: "#6b7280" }
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {mode === "text" && (
+            <div className="mb-3">
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={5}
+                placeholder={
+                  "日付と数字が並んだ表や箇条書きをそのまま貼る。例：\n8/15(土)\t90.05kg\t29.30%\t60.35kg\n8/16(日)\t91.55kg\t30.20%\t60.55kg"
+                }
+                className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none placeholder:text-gray-300 focus:border-indigo-400"
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleText}
+                  disabled={busy !== null || text.trim() === ""}
+                  className="inline-flex min-h-[2.75rem] items-center rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white transition active:scale-95 disabled:opacity-40"
+                >
+                  {busy === "reading" ? "読み取り中…" : "テキストから読む"}
+                </button>
+                {text.trim() !== "" && (
+                  <button
+                    type="button"
+                    onClick={() => setText("")}
+                    className="text-xs text-gray-400 underline"
+                  >
+                    消す
+                  </button>
+                )}
+              </div>
+              <p className="mt-1.5 text-[0.7rem] leading-relaxed text-gray-400">
+                単位（kg・%・kcal・g・歩）が付いていても数値だけ拾います。週平均や週間総歩数のような集計値は、日別の記録とは分けて扱います。
+              </p>
+            </div>
+          )}
+
           {/* 日付が写らない種類は、写真を選ぶ前に日付を決めさせる。
               あとから直せる欄にしないのは、読み取り結果と日付がずれたまま
-              登録される余地を作らないため。 */}
-          {undated && (
+              登録される余地を作らないため。
+              テキストは表に日付が入っているので、この欄は出さない。 */}
+          {undated && mode === "photo" && (
             <label className="mb-3 flex items-center gap-2 text-sm">
               <span className="font-medium text-gray-700">いつのぶん</span>
               <input
@@ -235,15 +317,19 @@ export function PhotoImportCard({
             id={inputId}
           />
           <div className="flex flex-wrap items-center gap-2">
-            <label
-              htmlFor={inputId}
-              className={`inline-flex min-h-[2.75rem] cursor-pointer items-center rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white transition active:scale-95 ${
-                busy ? "pointer-events-none opacity-50" : ""
-              }`}
-            >
-              {busy === "reading" ? "読み取り中…" : "写真を選ぶ"}
-            </label>
-            <span className="text-xs text-gray-400">一度に{MAX_IMAGES}枚まで</span>
+            {mode === "photo" && (
+              <>
+                <label
+                  htmlFor={inputId}
+                  className={`inline-flex min-h-[2.75rem] cursor-pointer items-center rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white transition active:scale-95 ${
+                    busy ? "pointer-events-none opacity-50" : ""
+                  }`}
+                >
+                  {busy === "reading" ? "読み取り中…" : "写真を選ぶ"}
+                </label>
+                <span className="text-xs text-gray-400">一度に{MAX_IMAGES}枚まで</span>
+              </>
+            )}
             {(rows.length > 0 || error) && (
               <button
                 type="button"

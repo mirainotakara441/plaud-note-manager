@@ -166,9 +166,13 @@ export function WeeklyReport() {
   const noMeal = (rows ?? []).filter((r) => r.kcal == null).map((r) => fmtMd(r.day));
 
   // ★同じ値が複数日に並んでいたら疑う。
-  //   カロミル連携が1食分で止まると、同じ数字が何日も続く（2026-09は10日中9日が
-  //   222kcalで並んだ）。平均だけ見ていると気づけず、レポートが静かに嘘をつく。
-  //   ここは「記録が無い」より質が悪い——値が入っている顔をしているため。
+  //   カロミルは1日の合計を1件だけ書き出す（health_metrics の extra は
+  //   全栄養素・全日で n_points=1）。取り込み側は壊れていない。
+  //   では何が起きているかというと、カロミルへの記録がその日1品で止まっていると、
+  //   その1品の値がそのまま「1日の合計」として入る。2026-09は10日中9日が
+  //   222kcal/P28.2/F5.1/C20.2/塩0.78 で完全一致していた（プロテイン1杯ぶん）。
+  //   平均だけ見ていると気づけず、レポートが静かに嘘をつく。
+  //   「記録が無い」より質が悪い——値が入っている顔をしているため、日を名指しする。
   const suspectMeal = useMemo(() => {
     const seen = new Map<string, string[]>();
     for (const r of rows ?? []) {
@@ -291,9 +295,9 @@ export function WeeklyReport() {
             </Foot>
             {suspectMeal.length > 0 && (
               <p className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[0.72rem] leading-relaxed text-amber-900">
-                ⚠️ <strong>{suspectMeal.join("・")}</strong> が同じ値で並んでいます。
-                カロミル連携が1食分で止まっている可能性が高く、この週の食事の数字はそのまま使えません。
-                写メから入れ直すと上書きされます。
+                ⚠️ <strong>{suspectMeal.join("・")}</strong> が1gの狂いもなく同じ値で並んでいます。
+                カロミルへの記録がその日1品で止まっていると、その値がそのまま1日の合計として入ります。
+                この週の食事の数字はそのまま使えません。写メかテキストで入れ直すと上書きされます。
               </p>
             )}
           </Block>

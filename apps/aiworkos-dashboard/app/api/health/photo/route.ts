@@ -32,6 +32,8 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_IMAGES = 6;
 /** 一度に書き込める日数の上限。1〜2か月ぶんをまとめて入れる想定。 */
 const MAX_ROWS = 120;
+/** 貼り付けるテキストの上限。週次レポート数本ぶんが入れば足りる。 */
+const MAX_TEXT_LENGTH = 20000;
 
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -93,7 +95,7 @@ const KINDS: Record<
         label: "体重",
         min: 20,
         max: 200,
-        decimals: 1,
+        decimals: 2,
         required: true,
       },
       {
@@ -103,7 +105,7 @@ const KINDS: Record<
         label: "体脂肪率",
         min: 3,
         max: 60,
-        decimals: 1,
+        decimals: 2,
         required: false,
       },
       {
@@ -115,7 +117,7 @@ const KINDS: Record<
         label: "筋肉量",
         min: 10,
         max: 120,
-        decimals: 1,
+        decimals: 2,
         required: false,
       },
     ],
@@ -373,9 +375,21 @@ export async function POST(req: NextRequest) {
   const kind = kindOf(body?.kind);
   if (!kind) return NextResponse.json({ error: "読み取る種類の指定が不正です" }, { status: 400 });
 
+  // テキスト貼り付けからも読めるようにする（2026-09-12）。
+  // 写メが手元に無くても、確定版レポートの表をそのまま貼れば入る。
+  // 読み取った先は画像とまったく同じ形（entries）なので、確認フォームも
+  // 登録（PUT）もそのまま使い回せる——書き込み経路を増やさない。
+  const rawText = typeof body?.text === "string" ? body.text.trim() : "";
+  if (rawText.length > MAX_TEXT_LENGTH) {
+    return NextResponse.json(
+      { error: `テキストが長すぎます（${MAX_TEXT_LENGTH}文字まで）` },
+      { status: 400 }
+    );
+  }
+
   const rawImages = Array.isArray(body?.images) ? body.images : [];
-  if (rawImages.length === 0) {
-    return NextResponse.json({ error: "画像がありません" }, { status: 400 });
+  if (rawImages.length === 0 && rawText === "") {
+    return NextResponse.json({ error: "画像もテキストもありません" }, { status: 400 });
   }
   if (rawImages.length > MAX_IMAGES) {
     return NextResponse.json({ error: `一度に読めるのは${MAX_IMAGES}枚までです` }, { status: 400 });
@@ -386,13 +400,17 @@ export async function POST(req: NextRequest) {
   }
   const ready = parsed as { media_type: string; data: string }[];
 
+  // 貼り付けた表には日付の列が入っているのが普通なので、テキストのときは
+  // 「日付ごとの一覧」として読む（写メのカロミルは1日ぶんで日付が写らない）。
+  const dated = rawText !== "" ? true : kind.dated !== false;
+
   const today =
     typeof body?.today === "string" && DAY_RE.test(body.today) ? body.today : todayLocalFallback();
 
   let read: OcrResult;
   try {
     read = await structured<OcrResult>({
-      system: buildSystem(kind.fields, kind.dated !== false),
+      system: buildSystem(kind.fields, dated),
       messages: [
         {
           role: "user",
@@ -407,7 +425,13 @@ export async function POST(req: NextRequest) {
             })),
             {
               type: "text" as const,
-              text: `この画面（${kind.hint}）から、日付ごとの${kind.label}を書き起こしてください。今日は${today}です。`,
+              text:
+                rawText !== ""
+                  ? `次のテキストから、日付ごとの${kind.label}を書き起こしてください。今日は${today}です。\n` +
+                    `表・箇条書き・文章のどれで書かれていてもよい。単位（kg・%・kcal・g・歩）が付いていても数値だけを取り出す。\n` +
+                    `「⚠️」「✅」のような印や注釈は無視する。週平均・週間総歩数のような集計値は entries に入れず summaries へ。\n\n` +
+                    `--- ここからテキスト ---\n${rawText}\n--- ここまで ---`
+                  : `この画面（${kind.hint}）から、日付ごとの${kind.label}を書き起こしてください。今日は${today}です。`,
             },
           ],
         },
@@ -438,7 +462,9 @@ export async function POST(req: NextRequest) {
   // できると、あとから見て取り違えようがない嘘になる。
   const chosenDay =
     typeof body?.day === "string" && DAY_RE.test(body.day) ? body.day : null;
-  if (kind.dated === false && !chosenDay) {
+  // dated は「日付が読み取れる入力か」。写メの食事サマリは false だが、
+  // 同じ食事でもテキスト貼り付けなら表に日付が入っているので true になる。
+  if (!dated && !chosenDay) {
     return NextResponse.json(
       { error: "この種類は画面に日付が出ないので、日付を選んでから読み取ってください" },
       { status: 400 }
@@ -446,10 +472,9 @@ export async function POST(req: NextRequest) {
   }
 
   for (const e of Array.isArray(read.entries) ? read.entries : []) {
-    const r =
-      kind.dated === false
-        ? { day: chosenDay as string, warning: undefined as string | undefined }
-        : resolveDay(String(e?.md ?? ""), String(e?.weekday ?? ""), today);
+    const r = !dated
+      ? { day: chosenDay as string, warning: undefined as string | undefined }
+      : resolveDay(String(e?.md ?? ""), String(e?.weekday ?? ""), today);
     if (!r) {
       dropped.push(`「${e?.md ?? "?"}」は日付として読めませんでした`);
       continue;
