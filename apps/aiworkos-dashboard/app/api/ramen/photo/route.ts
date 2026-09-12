@@ -1,23 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds } from "@/lib/supabase";
-import { captureAuthorized } from "@/lib/ramen";
+import { captureAuthorized, isSafePhotoPath, PHOTO_EXT, RAMEN_BUCKET } from "@/lib/ramen";
 
-// 写真の受け口。iPhoneショートカットは multipart を組み立てにくいので、
-// 画像を base64 で1枚ずつ送ってもらい、ここで Supabase Storage（非公開）へ置く。
-// 返すのはバケット内のパスで、X投稿時にサーバーが service role で取り出す。
-// 公開URLは発行しない（誰でも見られる場所に生写真を置かないため）。
+// 写真の出し入れ。
+//
+// POST: iPhoneショートカットは multipart を組み立てにくいので、画像を base64 で
+//       1枚ずつ送ってもらい、ここで Supabase Storage（非公開）へ置く。
+//       返すのはバケット内のパスで、X投稿時にサーバーが service role で取り出す。
+//       公開URLは発行しない（誰でも見られる場所に生写真を置かないため）。
+// GET:  そのパスの画像を、このアプリ自身が service role で取り出して返す。
+//       署名付きURLではなくプロキシにしているのは、URLが独り歩きしないようにするため
+//       （/api/family/photo と同じ方式）。
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const BUCKET = "ramen-photos";
-
-const EXT: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/heic": "heic",
-};
+const BUCKET = RAMEN_BUCKET;
+const EXT = PHOTO_EXT;
 
 export async function POST(req: NextRequest) {
   if (!(await captureAuthorized(req))) {
@@ -98,4 +97,44 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, path, bytes: bytes.byteLength });
+}
+
+export async function GET(req: NextRequest) {
+  if (!(await captureAuthorized(req))) {
+    return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+  }
+  const c = serviceCreds();
+  if (!c) {
+    return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
+  }
+
+  const path = new URL(req.url).searchParams.get("path") ?? "";
+  if (!isSafePhotoPath(path)) {
+    return NextResponse.json({ error: "パスが不正です" }, { status: 400 });
+  }
+
+  const res = await fetch(`${c.url}/storage/v1/object/${BUCKET}/${path}`, {
+    headers: { apikey: c.key, Authorization: `Bearer ${c.key}` },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    // 消した写真・存在しないパスは storage が 400/404 のどちらでも返してくるので
+    // まとめて404に寄せる（502だとサーバー障害と見分けがつかない）。
+    const missing = res.status === 400 || res.status === 404;
+    return NextResponse.json(
+      { error: missing ? "写真が見つかりません" : `写真を取得できませんでした（${res.status}）` },
+      { status: missing ? 404 : 502 }
+    );
+  }
+
+  const buf = await res.arrayBuffer();
+  return new NextResponse(buf, {
+    headers: {
+      "Content-Type": res.headers.get("content-type") ?? "image/jpeg",
+      // パスは毎回ユニーク（上書きしない）ので端末側に長く置いてよい。
+      // private を付けて共有キャッシュには残さない。
+      "Cache-Control": "private, max-age=31536000, immutable",
+    },
+  });
 }

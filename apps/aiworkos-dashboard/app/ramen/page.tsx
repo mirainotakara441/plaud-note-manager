@@ -75,6 +75,12 @@ function fmtMonth(ym: string) {
   return `${Number(ym.split("-")[1])}月`;
 }
 
+// 写真は非公開バケットに置いてあり、公開URLを持たない。
+// 表示はこのプロキシ経由（合言葉認証の内側の端末からしか見えない）。
+function photoUrl(path: string) {
+  return `/api/ramen/photo?path=${encodeURIComponent(path)}`;
+}
+
 function Section({ children }: { children: React.ReactNode }) {
   return (
     <section className="mt-6 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -131,6 +137,15 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   // 引用リポストの引用元URL。空なら通常の投稿。
   const [quote, setQuote] = useState("");
+  // 写真の拡大表示（タップした1枚のパス）
+  const [zoom, setZoom] = useState<string | null>(null);
+  // 「点数と写真を直す」パネルの開閉と、点数の入力値
+  const [editing, setEditing] = useState(false);
+  const [scoreInput, setScoreInput] = useState(
+    log.score != null ? log.score.toFixed(1) : ""
+  );
+
+  const photos = log.photo_urls ?? [];
 
   async function call(path: string, body: unknown, what: string) {
     setBusy(what);
@@ -147,6 +162,75 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
     } catch (e) {
       setErr(e instanceof Error ? e.message : "失敗しました");
     } finally {
+      setBusy(null);
+    }
+  }
+
+  // 点数・写真の後付け。/api/ramen/update は変更したい項目だけを受けるので、
+  // 点数を直すときに写真を送らない（送ると配列ごと入れ替わってしまう）。
+  async function patch(body: Record<string, unknown>, what: string) {
+    setBusy(what);
+    setErr(null);
+    try {
+      const res = await fetch("/api/ramen/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: log.id, ...body }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error ?? `失敗しました（${res.status}）`);
+      onChanged();
+      return true;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "失敗しました");
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // 後から写真を足す。Storageへ1枚ずつ上げてパスを集め、最後に一度だけ行へ書く。
+  // 1枚ごとに行を更新すると、途中で失敗したときに何枚入ったのか分からなくなる。
+  async function addPhotos(picked: File[]) {
+    if (picked.length === 0) return;
+    setBusy("photo");
+    setErr(null);
+    try {
+      const paths: string[] = [];
+      for (let i = 0; i < picked.length; i++) {
+        const { dataUrl, type } = await downscaleToJpeg(picked[i]);
+        const approxBytes = Math.ceil((dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75);
+        if (approxBytes > 4_000_000) {
+          throw new Error(
+            `${i + 1}枚目が大きすぎます（約${(approxBytes / 1024 / 1024).toFixed(1)}MB）`
+          );
+        }
+        const up = await fetch("/api/ramen/photo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: dataUrl, content_type: type, id: log.id }),
+        });
+        // 413はJSONで返らない。素の json() だと原因が写真だと分からなくなる。
+        const upText = await up.text();
+        let upJson: { path?: string; error?: string } = {};
+        try {
+          upJson = JSON.parse(upText);
+        } catch {
+          throw new Error(
+            up.status === 413
+              ? `${i + 1}枚目が大きすぎて送れませんでした（サーバー上限）`
+              : `${i + 1}枚目の保存に失敗しました（${up.status}）`
+          );
+        }
+        if (!up.ok || !upJson.path) {
+          throw new Error(upJson?.error ?? "写真の保存に失敗しました");
+        }
+        paths.push(upJson.path);
+      }
+      setBusy(null);
+      await patch({ add_photos: paths }, "photo");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "写真の保存に失敗しました");
       setBusy(null);
     }
   }
@@ -227,6 +311,33 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
             <span className="ml-1 text-gray-400">{log.price.toLocaleString()}円</span>
           )}
         </p>
+      )}
+
+      {photos.length > 0 && (
+        <div
+          className={`mt-3 grid gap-1.5 ${
+            photos.length === 1 ? "grid-cols-1" : "grid-cols-3"
+          }`}
+        >
+          {photos.map((p, i) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setZoom(p)}
+              className="overflow-hidden rounded-lg active:opacity-80"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photoUrl(p)}
+                alt={`${log.shop} の写真 ${i + 1}`}
+                loading="lazy"
+                className={`w-full object-cover ${
+                  photos.length === 1 ? "max-h-72" : "aspect-square"
+                }`}
+              />
+            </button>
+          ))}
+        </div>
       )}
 
       {log.memo && (
@@ -323,6 +434,106 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
         </div>
       )}
 
+      {/* 点数と写真を後から直すところ。店名・日付・杯番号は触らない
+          （食べログ側の取り込みと突合しているので、ここで動かすと合わなくなる）。 */}
+      {editing && (
+        <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <div>
+            <label className="block text-xs font-bold text-amber-800">
+              点数（0.0〜5.0）
+            </label>
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min="0"
+                max="5"
+                value={scoreInput}
+                onChange={(e) => setScoreInput(e.target.value)}
+                placeholder="例：3.8"
+                className="w-24 rounded-lg border border-amber-300 bg-white px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => patch({ score: scoreInput.trim() }, "score")}
+                className="rounded-full bg-amber-600 px-3 py-1 text-xs font-bold text-white active:scale-95 disabled:opacity-50"
+              >
+                {busy === "score" ? "保存中…" : "点数を保存"}
+              </button>
+              {log.score != null && (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    setScoreInput("");
+                    patch({ score: null }, "score");
+                  }}
+                  className="text-xs text-amber-700 underline active:opacity-70 disabled:opacity-40"
+                >
+                  点数を消す
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-[0.625rem] text-amber-700">
+              食べログに付けた点と同じ欄。平均点のタイルにも効きます
+            </p>
+          </div>
+
+          <div>
+            <label className="block">
+              <span className="inline-block w-full cursor-pointer rounded-lg border border-dashed border-amber-400 bg-white px-3 py-2 text-center text-sm font-bold text-amber-800 active:bg-amber-100">
+                {busy === "photo" ? "写真を上げています…" : "📷 この一杯に写真を足す"}
+              </span>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                className="sr-only"
+                disabled={busy !== null}
+                onChange={(e) => {
+                  // FileList は value を空にすると中身も消える。先に配列へ写す。
+                  const picked = Array.from(e.target.files ?? []);
+                  e.target.value = "";
+                  addPhotos(picked);
+                }}
+              />
+            </label>
+            <p className="mt-1 text-[0.625rem] text-amber-700">
+              iPhoneの写真アプリから複数まとめて選べます（1杯12枚まで・Xに出るのは先頭4枚）
+            </p>
+          </div>
+
+          {photos.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {photos.map((p, i) => (
+                <span key={p} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photoUrl(p)}
+                    alt={`写真 ${i + 1}`}
+                    className="h-16 w-16 rounded-lg object-cover"
+                  />
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      if (!window.confirm("この写真を外します。元に戻せません。")) return;
+                      patch({ remove_photo: p }, "photo");
+                    }}
+                    className="absolute -right-1 -top-1 h-5 w-5 rounded-full bg-gray-900 text-xs font-bold text-white disabled:opacity-40"
+                    aria-label="この写真を外す"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -360,9 +571,26 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
             X未リンク
           </span>
         )}
-        {log.photo_count > 0 && (
-          <span className="text-xs text-gray-400">📷 {log.photo_count}枚</span>
+        {/* 手元の写真（photo_urls）と、食べログ口コミに付けた枚数（photo_count）は別物。
+            画面で見られるのは手元のぶんだけなので、そちらを優先して出す。 */}
+        {photos.length > 0 ? (
+          <span className="text-xs text-gray-400">📷 {photos.length}枚</span>
+        ) : (
+          log.photo_count > 0 && (
+            <span className="text-xs text-gray-300">📷 食べログに{log.photo_count}枚</span>
+          )
         )}
+        <button
+          type="button"
+          onClick={() => setEditing((v) => !v)}
+          className={`rounded-full px-3 py-1 text-xs font-bold active:scale-95 ${
+            editing
+              ? "bg-amber-600 text-white"
+              : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+          }`}
+        >
+          {editing ? "閉じる" : "✏️ 点数・写真"}
+        </button>
         <button
           type="button"
           disabled={busy !== null}
@@ -373,6 +601,22 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
           {busy === "del" ? "削除中…" : "🗑 削除"}
         </button>
       </div>
+
+      {zoom && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setZoom(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={photoUrl(zoom)}
+            alt={log.shop}
+            className="max-h-full max-w-full rounded-lg object-contain"
+          />
+        </div>
+      )}
     </article>
   );
 }
@@ -783,6 +1027,9 @@ export default function RamenPage() {
       avgScore: scored.length ? scored.reduce((a, b) => a + b, 0) / scored.length : null,
       posted,
       postRate: ramen.length ? Math.round((posted / ramen.length) * 100) : null,
+      // 写真がこの画面で見られる杯数。iPhoneのアルバムから移し終えたかの目印になる。
+      withPhoto: all.filter((i) => (i.photo_urls ?? []).length > 0).length,
+      noScore: all.filter((i) => i.score == null).length,
     };
   }, [items]);
 
@@ -873,7 +1120,11 @@ export default function RamenPage() {
             <ChartTitle
               color={C_BOWL}
               title="いまの積み上げ"
-              hint={refreshing ? "更新中…" : `記録 ${stats.total}件`}
+              hint={
+                refreshing
+                  ? "更新中…"
+                  : `記録 ${stats.total}件・写真つき ${stats.withPhoto}杯・点数なし ${stats.noScore}杯`
+              }
             />
             <div className="flex gap-2">
               <StatTile
@@ -890,7 +1141,7 @@ export default function RamenPage() {
               <StatTile
                 label="平均点"
                 value={stats.avgScore != null ? stats.avgScore.toFixed(2) : "—"}
-                sub="食べログ総合"
+                sub="自分の点数"
               />
               <StatTile
                 label="X投稿率"

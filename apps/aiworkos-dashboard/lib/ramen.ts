@@ -28,6 +28,24 @@ export type RamenRow = {
   is_ramen: boolean;
 };
 
+export const RAMEN_BUCKET = "ramen-photos";
+
+export const PHOTO_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+};
+
+// バケット内パスの検証。写真の配信はクエリ文字列で受け取ったパスをそのまま
+// storage API へ渡すので、上位ディレクトリへの脱出や別バケットへの横断を
+// 弾いてから使う（/api/family/photo と同じ考え方）。
+const SAFE_PATH = /^[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+$/;
+
+export function isSafePhotoPath(path: string): boolean {
+  return SAFE_PATH.test(path) && !path.includes("..");
+}
+
 // iPhoneショートカットからの起票は合言葉cookieを持てないため、
 // cronルートと同じ二本立てにする（Bearerトークン or 合言葉cookie）。
 // RAMEN_CAPTURE_SECRET 未設定なら、ショートカット経路は閉じたまま（フェイルクローズ）。
