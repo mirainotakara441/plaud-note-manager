@@ -66,6 +66,10 @@ export default function RetrospectiveForm({
 }: Props) {
   const [draft, setDraft] = useState<RetroDraft>(initialDraft);
   const [paste, setPaste] = useState("");
+  /** 一行日記からのAI下書き。押すと draft を丸ごと差し替える。 */
+  const [drafting, setDrafting] = useState(false);
+  const [draftErr, setDraftErr] = useState<string | null>(null);
+  const [drafted, setDrafted] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<ParseWarning[]>([]);
   const [parsed, setParsed] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -78,6 +82,64 @@ export default function RetrospectiveForm({
       ...d,
       sections: d.sections.map((s, j) => (j === i ? { ...s, ...p } : s)),
     }));
+
+  /**
+   * 一行日記からAIに下書きさせる。
+   * 返した内容はフォームに流し込むだけで、保存は「保存」を押すまで起こらない。
+   * これまでの運用（Claudeで整形したMarkdownを手で貼る）が続かなかったのは、
+   * この一手間が毎週かかっていたため。
+   */
+  async function generate() {
+    setDrafting(true);
+    setDraftErr(null);
+    setDrafted(null);
+    try {
+      const res = await fetch("/api/retrospective/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period_start: draft.period_start,
+          period_end: draft.period_end,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok || d?.error) throw new Error(d?.error ?? "下書きできませんでした");
+      const g = d.draft ?? {};
+      patch({
+        title: String(g.title ?? ""),
+        one_liner: String(g.one_liner ?? ""),
+        insights: Array.isArray(g.insights) ? g.insights.map(String) : [],
+        next_plans: Array.isArray(g.next_plans)
+          ? g.next_plans.map((x: { date?: string; label?: string }) => ({
+              date: String(x?.date ?? ""),
+              label: String(x?.label ?? ""),
+            }))
+          : [],
+        action_guideline: String(g.action_guideline ?? ""),
+        sections: Array.isArray(g.sections)
+          ? g.sections.map((x: Record<string, unknown>) => ({
+              category: String(x.category ?? ""),
+              rating:
+                typeof x.rating === "number" && Number.isFinite(x.rating)
+                  ? Math.round(x.rating)
+                  : null,
+              body: String(x.body ?? ""),
+              assessment: String(x.assessment ?? ""),
+              impact: String(x.impact ?? ""),
+              items: [],
+            }))
+          : [],
+      });
+      const src = d.sources ?? {};
+      setDrafted(
+        `一行日記${src["日記"] ?? 0}件・週報${src["週報"] ?? 0}件・健康${src["健康"] ?? 0}日ぶんから下書きしました。★も含めて直してから保存してください。`
+      );
+    } catch (e) {
+      setDraftErr(e instanceof Error ? e.message : "下書きできませんでした");
+    } finally {
+      setDrafting(false);
+    }
+  }
 
   function applyPaste() {
     setError(null);
@@ -129,6 +191,28 @@ export default function RetrospectiveForm({
 
   return (
     <div className="space-y-5">
+      {/* 0. 一行日記から下書き。貼り付けより前に置く——こちらが主の入り口。 */}
+      <section className="rounded-2xl border-2 border-indigo-200 bg-indigo-50/40 p-4">
+        <h2 className="text-sm font-bold text-gray-900">一行日記から下書きする</h2>
+        <p className="mt-1 text-xs leading-relaxed text-gray-600">
+          上で選んだ期間の一行日記・週報・健康の実測を読んで、カテゴリーごとの本文・★・
+          【評価】【将来への影響】と、示唆・来週の3点・行動指針まで書きます。
+          <strong>保存は「保存」を押すまで起こりません。</strong>★も文章もこの下で直せます。
+          日記に無いことは書かせていないので、材料が無いカテゴリーは「今週は記録なし」になります。
+        </p>
+        <button
+          onClick={generate}
+          disabled={drafting}
+          className="mt-3 rounded-full bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition active:scale-95 disabled:opacity-40"
+        >
+          {drafting ? "書いています…（1〜2分）" : "✨ この期間の一行日記から下書き"}
+        </button>
+        {draftErr && (
+          <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{draftErr}</p>
+        )}
+        {drafted && <p className="mt-2 text-xs text-emerald-700">{drafted}</p>}
+      </section>
+
       {/* 1. 貼り付け */}
       <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <h2 className="text-sm font-bold text-gray-900">
@@ -257,7 +341,7 @@ export default function RetrospectiveForm({
               patch({
                 sections: [
                   ...draft.sections,
-                  { category: "", rating: null, body: "", items: [] },
+                  { category: "", rating: null, body: "", assessment: "", impact: "", items: [] },
                 ],
               })
             }
@@ -309,13 +393,36 @@ export default function RetrospectiveForm({
               </div>
 
               <div className="mt-2">
-                <label className={label}>評価コメント</label>
+                <label className={label}>本文</label>
                 <textarea
                   value={s.body}
                   onChange={(e) => patchSection(i, { body: e.target.value })}
-                  rows={3}
+                  rows={4}
                   className={`${input} resize-y`}
                 />
+              </div>
+
+              {/* 「その週どうだったか」と「先々どう効くか」は粒度が違うので欄を分ける。
+                  1本にすると、評価を直したいだけのときに将来の話まで書き直す羽目になる。 */}
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                <div>
+                  <label className={label}>【評価】</label>
+                  <textarea
+                    value={s.assessment}
+                    onChange={(e) => patchSection(i, { assessment: e.target.value })}
+                    rows={2}
+                    className={`${input} resize-y`}
+                  />
+                </div>
+                <div>
+                  <label className={label}>【将来への影響】</label>
+                  <textarea
+                    value={s.impact}
+                    onChange={(e) => patchSection(i, { impact: e.target.value })}
+                    rows={2}
+                    className={`${input} resize-y`}
+                  />
+                </div>
               </div>
 
               <div className="mt-2">
@@ -517,6 +624,22 @@ export default function RetrospectiveForm({
             <p className="py-2 text-center text-sm text-gray-400">予定はまだありません。</p>
           )}
         </div>
+      </section>
+
+      {/* 7. 行動指針。次期の予定が「何をやるか」の列挙なのに対し、
+          こちらは「どういう週にするか」の構え。粒度が違うので欄を分ける。 */}
+      <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <h2 className="text-sm font-bold text-gray-900">来週の行動指針</h2>
+        <p className="mt-1 text-xs text-gray-500">
+          個別の予定ではなく、どういう週にするかを1〜2文で。
+        </p>
+        <textarea
+          value={draft.action_guideline}
+          onChange={(e) => patch({ action_guideline: e.target.value })}
+          rows={3}
+          placeholder="例：説明を足す週ではなく、材料を作る週にする。"
+          className={`${input} mt-2 resize-y`}
+        />
       </section>
 
       {error && (

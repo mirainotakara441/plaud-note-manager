@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 const TABLE = "retrospectives";
 const SECTIONS = "retrospective_sections";
-const SELECT = `select=id,period_type,period_start,period_end,title,one_liner,insights,next_plans,notion_page_id,created_at,updated_at,${SECTIONS}(id,retrospective_id,category,rating,body,items,position)`;
+const SELECT = `select=id,period_type,period_start,period_end,title,one_liner,insights,next_plans,action_guideline,notion_page_id,created_at,updated_at,${SECTIONS}(id,retrospective_id,category,rating,body,assessment,impact,items,position)`;
 
 function missingEnv() {
   return NextResponse.json(
@@ -196,7 +196,14 @@ function normalizeDraft(raw: unknown): RetroDraft | null {
               })
               .filter((i) => i.name !== "" || i.move !== "" || i.eval !== "")
           : [];
-        return { category: str(s.category), rating, body: str(s.body), items };
+        return {
+          category: str(s.category),
+          rating,
+          body: str(s.body),
+          assessment: str(s.assessment),
+          impact: str(s.impact),
+          items,
+        };
       })
     : [];
 
@@ -208,6 +215,7 @@ function normalizeDraft(raw: unknown): RetroDraft | null {
     one_liner: str(d.one_liner),
     insights,
     next_plans: nextPlans,
+    action_guideline: str(d.action_guideline),
     sections,
   };
 }
@@ -221,6 +229,8 @@ function retroPayload(draft: RetroDraft) {
     one_liner: draft.one_liner === "" ? null : draft.one_liner,
     insights: draft.insights,
     next_plans: draft.next_plans,
+    action_guideline:
+      draft.action_guideline === "" ? null : draft.action_guideline,
   };
 }
 
@@ -230,6 +240,8 @@ function sectionRows(retroId: string, draft: RetroDraft) {
     category: s.category.trim(),
     rating: s.rating,
     body: s.body === "" ? null : s.body,
+    assessment: s.assessment === "" ? null : s.assessment,
+    impact: s.impact === "" ? null : s.impact,
     items: s.items,
     position: i + 1,
   }));
@@ -243,7 +255,7 @@ async function replaceSections(
   // 消す前に現状を控えておく。INSERTが失敗した時にこれで元へ戻す
   // （POSTの新規行では常に空、PATCHの既存行では復元対象になる）。
   const prevRes = await fetch(
-    `${c.url}/rest/v1/${SECTIONS}?retrospective_id=eq.${encodeURIComponent(retroId)}&select=category,rating,body,items,position`,
+    `${c.url}/rest/v1/${SECTIONS}?retrospective_id=eq.${encodeURIComponent(retroId)}&select=category,rating,body,assessment,impact,items,position`,
     { headers: restHeaders(c.key) }
   );
   const prevRows: Record<string, unknown>[] = prevRes.ok ? await prevRes.json().catch(() => []) : [];

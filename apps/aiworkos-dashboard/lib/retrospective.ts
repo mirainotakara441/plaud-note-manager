@@ -23,6 +23,10 @@ export type DraftSection = {
   category: string;
   rating: number | null; // ★の数（1..5）。★が無い節は null
   body: string;
+  /** 【評価】その週をどう見るか。 */
+  assessment: string;
+  /** 【将来への影響】先々どう効くか。 */
+  impact: string;
   items: SectionItem[];
 };
 
@@ -34,6 +38,8 @@ export type RetroDraft = {
   one_liner: string;
   insights: string[];
   next_plans: NextPlan[];
+  /** 【来週の行動指針】どういう週にするかの一文。 */
+  action_guideline: string;
   sections: DraftSection[];
 };
 
@@ -44,6 +50,8 @@ export type RetroSectionRow = {
   category: string;
   rating: number | null;
   body: string | null;
+  assessment: string | null;
+  impact: string | null;
   items: SectionItem[] | null;
   position: number;
 };
@@ -57,6 +65,7 @@ export type RetroRow = {
   one_liner: string | null;
   insights: string[] | null;
   next_plans: NextPlan[] | null;
+  action_guideline: string | null;
   notion_page_id: string | null;
   created_at: string;
   updated_at: string;
@@ -72,12 +81,15 @@ export type ParseResult = { draft: RetroDraft; warnings: ParseWarning[] };
 // カテゴリー
 // ---------------------------------------------------------------------------
 
+// 吉井さんが実際に書いている雛形の並び。この順で画面にも出す。
+// 「新人・メンバー育成」は2026-09に追加（雛形にあるのに欄が無かった）。
 export const CATEGORIES = [
   "仕事（総括）",
   "自治体",
+  "議員",
   "事業者・委託会社",
-  "議員・国",
-  "スキルアップ・生成AI",
+  "新人・メンバー育成",
+  "AIの勉強・スキルアップ",
   "信心",
   "家族",
   "健康",
@@ -87,12 +99,16 @@ export const CATEGORIES = [
 const CATEGORY_ACCENT: Record<string, string> = {
   "仕事（総括）": "bg-slate-100 text-slate-700",
   自治体: "bg-sky-100 text-sky-700",
+  議員: "bg-indigo-100 text-indigo-700",
   "事業者・委託会社": "bg-amber-100 text-amber-700",
-  "議員・国": "bg-indigo-100 text-indigo-700",
-  "スキルアップ・生成AI": "bg-teal-100 text-teal-700",
+  "新人・メンバー育成": "bg-orange-100 text-orange-700",
+  "AIの勉強・スキルアップ": "bg-teal-100 text-teal-700",
   信心: "bg-violet-100 text-violet-700",
   家族: "bg-rose-100 text-rose-700",
   健康: "bg-lime-100 text-lime-700",
+  // 旧名。過去の登録が読めなくならないように残す
+  "議員・国": "bg-indigo-100 text-indigo-700",
+  "スキルアップ・生成AI": "bg-teal-100 text-teal-700",
 };
 
 export function categoryAccent(category: string): string {
@@ -707,7 +723,9 @@ export function parseRetrospectiveMarkdown(text: string): ParseResult {
     for (const n of notes) {
       warnings.push({ label: `「${b.category}」の表`, detail: n });
     }
-    sections.push({ category: b.category, rating: b.rating, body, items });
+    // 貼り付けMarkdownからは【評価】【将来への影響】を切り出していない。
+    // 空で入れておき、画面かAI下書きで埋める（推測で body を分割しない）。
+    sections.push({ category: b.category, rating: b.rating, body, assessment: "", impact: "", items });
   }
 
   // 同じ節が2回出てきたら（UNIQUE制約に触れるので）警告してから後勝ちで畳む。
@@ -742,6 +760,7 @@ export function parseRetrospectiveMarkdown(text: string): ParseResult {
       one_liner: oneLiner,
       insights,
       next_plans: nextPlans,
+      action_guideline: "",
       sections: uniqueSections,
     },
     warnings,
@@ -772,6 +791,7 @@ export function emptyDraft(): RetroDraft {
     one_liner: "",
     insights: [],
     next_plans: [],
+    action_guideline: "",
     sections: [],
   };
 }
@@ -785,12 +805,15 @@ export function draftFromRow(row: RetroRow): RetroDraft {
     one_liner: row.one_liner ?? "",
     insights: Array.isArray(row.insights) ? row.insights : [],
     next_plans: Array.isArray(row.next_plans) ? row.next_plans : [],
+    action_guideline: row.action_guideline ?? "",
     sections: [...(row.sections ?? [])]
       .sort((a, b) => a.position - b.position)
       .map((s) => ({
         category: s.category,
         rating: s.rating,
         body: s.body ?? "",
+        assessment: s.assessment ?? "",
+        impact: s.impact ?? "",
         items: Array.isArray(s.items) ? s.items : [],
       })),
   };
