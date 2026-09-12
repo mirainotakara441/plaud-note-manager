@@ -45,6 +45,8 @@ type Med = {
   note: string | null;
   started_on: string | null;
   ended_on: string | null;
+  /** その薬が一般にどういうものか。クリックで開いたときに出す。未取得なら null。 */
+  efficacy: string | null;
 };
 type Lab = {
   measured_on: string;
@@ -63,7 +65,7 @@ async function loadAll(url: string, key: string) {
     rest<Med[]>(
       url,
       key,
-      "health_medications?select=kind,category,name,dose,purpose,note,started_on,ended_on&order=sort_order.asc",
+      "health_medications?select=kind,category,name,dose,purpose,note,started_on,ended_on,efficacy&order=sort_order.asc",
       "薬剤"
     ),
     rest<Lab[]>(

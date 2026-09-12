@@ -22,6 +22,8 @@ type Med = {
   note: string | null;
   started_on: string | null;
   ended_on: string | null;
+  /** その薬が一般にどういうものか。未取得なら null（開いたときに調べる）。 */
+  efficacy: string | null;
 };
 type Lab = {
   measured_on: string;
@@ -65,6 +67,47 @@ export function HealthBasics() {
     sources: string[];
   } | null>(null);
   const [askErr, setAskErr] = useState<string | null>(null);
+
+  /** 効能を開いている薬の名前。1つずつ開く（並べると長くなりすぎる）。 */
+  const [openMed, setOpenMed] = useState<string | null>(null);
+  /** 調べ終えた効能。DBにも保存するが、画面でも持って再取得を避ける。 */
+  const [efficacy, setEfficacy] = useState<Record<string, string>>({});
+  const [efficacyBusy, setEfficacyBusy] = useState<string | null>(null);
+  const [efficacyErr, setEfficacyErr] = useState<Record<string, string>>({});
+
+  /**
+   * 薬の行を押したときの動き。
+   * 既に台帳へ保存されていれば即座に開く。無ければその場で調べて保存する。
+   * 「クリックすれば分かる」ようにしたいので、別のボタンを押させない。
+   */
+  async function toggleMed(m: Med) {
+    if (openMed === m.name) {
+      setOpenMed(null);
+      return;
+    }
+    setOpenMed(m.name);
+    if (m.efficacy || efficacy[m.name] || efficacyBusy === m.name) return;
+
+    setEfficacyBusy(m.name);
+    setEfficacyErr((p) => ({ ...p, [m.name]: "" }));
+    try {
+      const res = await fetch("/api/health/profile/efficacy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: m.name, dose: m.dose, category: m.category }),
+      });
+      const d = await res.json();
+      if (!res.ok || d?.error) throw new Error(d?.error ?? "調べられませんでした");
+      setEfficacy((p) => ({ ...p, [m.name]: d.efficacy }));
+    } catch (e) {
+      setEfficacyErr((p) => ({
+        ...p,
+        [m.name]: e instanceof Error ? e.message : "調べられませんでした",
+      }));
+    } finally {
+      setEfficacyBusy(null);
+    }
+  }
 
   // 開くまで取りに行かない。基礎データは毎回見るものではない。
   useEffect(() => {
@@ -245,34 +288,66 @@ export function HealthBasics() {
                     {kind}（{list.length}）
                   </h4>
                   <div className="overflow-hidden rounded-lg border border-gray-200">
-                    {list.map((m, i) => (
-                      <div
-                        key={m.name + i}
-                        className={`px-2.5 py-1.5 text-[0.78rem] ${
-                          i > 0 ? "border-t border-gray-100" : ""
-                        } ${kind === "完了" ? "text-gray-400" : "text-gray-800"}`}
-                      >
-                        <div className="flex flex-wrap items-baseline gap-x-2">
-                          {m.category && (
-                            <span className="text-[0.68rem] text-gray-400">{m.category}</span>
-                          )}
-                          <span className="font-bold">{m.name}</span>
-                          {m.dose && <span className="text-gray-600">{m.dose}</span>}
-                        </div>
-                        {(m.purpose || m.note || m.ended_on) && (
-                          <p className="mt-0.5 text-[0.7rem] leading-relaxed text-gray-500">
-                            {m.purpose}
-                            {m.ended_on && `（${m.started_on ?? ""}〜${m.ended_on}で終了）`}
-                            {m.note && (
-                              <span className={m.note.startsWith("★") ? "text-amber-700" : ""}>
-                                {m.purpose ? " / " : ""}
-                                {m.note}
+                    {list.map((m, i) => {
+                      const shown = openMed === m.name;
+                      const text = m.efficacy ?? efficacy[m.name] ?? null;
+                      return (
+                        <div
+                          key={m.name + i}
+                          className={i > 0 ? "border-t border-gray-100" : ""}
+                        >
+                          {/* 行そのものを押せるようにする。別のボタンを探させない */}
+                          <button
+                            type="button"
+                            onClick={() => toggleMed(m)}
+                            className={`w-full px-2.5 py-1.5 text-left text-[0.78rem] transition active:bg-gray-50 ${
+                              kind === "完了" ? "text-gray-400" : "text-gray-800"
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-baseline gap-x-2">
+                              {m.category && (
+                                <span className="text-[0.68rem] text-gray-400">{m.category}</span>
+                              )}
+                              <span className="font-bold">{m.name}</span>
+                              {m.dose && <span className="text-gray-600">{m.dose}</span>}
+                              <span className="ml-auto text-[0.66rem] text-gray-400">
+                                {efficacyBusy === m.name ? "調べています…" : shown ? "閉じる" : "効能"}
                               </span>
+                            </div>
+                            {(m.purpose || m.note || m.ended_on) && (
+                              <p className="mt-0.5 text-[0.7rem] leading-relaxed text-gray-500">
+                                {m.purpose}
+                                {m.ended_on && `（${m.started_on ?? ""}〜${m.ended_on}で終了）`}
+                                {m.note && (
+                                  <span className={m.note.startsWith("★") ? "text-amber-700" : ""}>
+                                    {m.purpose ? " / " : ""}
+                                    {m.note}
+                                  </span>
+                                )}
+                              </p>
                             )}
-                          </p>
-                        )}
-                      </div>
-                    ))}
+                          </button>
+
+                          {shown && (
+                            <div className="border-t border-gray-100 bg-cyan-50/40 px-2.5 py-2">
+                              {efficacyBusy === m.name && (
+                                <p className="text-[0.72rem] text-gray-500">調べています…</p>
+                              )}
+                              {efficacyErr[m.name] && (
+                                <p className="text-[0.72rem] text-rose-700">
+                                  {efficacyErr[m.name]}
+                                </p>
+                              )}
+                              {text && (
+                                <p className="whitespace-pre-wrap text-[0.74rem] leading-relaxed text-gray-700">
+                                  {text}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))}
