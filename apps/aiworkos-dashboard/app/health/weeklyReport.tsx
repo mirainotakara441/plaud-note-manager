@@ -80,6 +80,11 @@ export function WeeklyReport() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  /** 食事の訂正モード。開いている間だけ、日ごとの数値を直接打てる。 */
+  const [editMeal, setEditMeal] = useState(false);
+  const [draft, setDraft] = useState<Record<string, Record<string, string>>>({});
+  const [mealSaving, setMealSaving] = useState(false);
+  const [mealMsg, setMealMsg] = useState<string | null>(null);
 
   // 保存済みの週の一覧。過去分を辿る手がかりにする。
   useEffect(() => {
@@ -161,9 +166,66 @@ export function WeeklyReport() {
   const setRating = (metric: string, patch: Rating) =>
     setRatings((prev) => ({ ...prev, [metric]: { ...prev[metric], ...patch } }));
 
+  /**
+   * 食事の訂正を書く。source='manual' で入れると health_range_summary が
+   * カロミルより優先して採るので、自動連携が直らなくても正しい数字が残る。
+   * 登録先は写メ取り込みと同じ PUT——書き込み経路を増やさない。
+   */
+  const saveMeal = useCallback(async () => {
+    const targets = Object.entries(draft)
+      .map(([day, v]) => {
+        const values: Record<string, number> = {};
+        for (const [k, raw] of Object.entries(v)) {
+          if (raw.trim() === "") continue;
+          const n = Number(raw);
+          if (Number.isFinite(n)) values[k] = n;
+        }
+        return { day, values };
+      })
+      .filter((r) => Object.keys(r.values).length > 0);
+
+    if (targets.length === 0) {
+      setMealMsg("直した数値がありません");
+      return;
+    }
+    setMealSaving(true);
+    setMealMsg(null);
+    try {
+      const res = await fetch("/api/health/photo", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "meal", source: "manual", today: todayJst(), rows: targets }),
+      });
+      const d = await res.json();
+      if (!res.ok || d?.error) throw new Error(d?.error ?? "登録に失敗しました");
+      setMealMsg(`${d?.days ?? targets.length}日ぶんを直しました`);
+      setDraft({});
+      setEditMeal(false);
+      // 直した値で表を引き直す
+      const fresh = await fetch(`/api/health?from=${range.start}&to=${range.end}`, {
+        cache: "no-store",
+      }).then((r) => r.json());
+      setRows((fresh.days ?? fresh.rows ?? []) as DayRow[]);
+    } catch (e) {
+      setMealMsg(e instanceof Error ? e.message : "登録に失敗しました");
+    } finally {
+      setMealSaving(false);
+    }
+  }, [draft, range.start, range.end]);
+
   const thisWeekStart = weekRange(todayJst()).start;
   const isFuture = weekStart >= thisWeekStart;
   const noMeal = (rows ?? []).filter((r) => r.kcal == null).map((r) => fmtMd(r.day));
+
+  // ★1日500kcal未満は入力漏れとみなす。
+  //   吉井さんは毎日プロテイン（222kcal）を定例で記録しており、カロミルから
+  //   その1件しか届かない日がある。実際には9/10はカロミル側で2,396kcalあった。
+  //   つまり「少ない日」ではなく「届いていない日」。生きている人間の1日は
+  //   500kcalでは終わらないので、この線より下は数字としてまず信じない。
+  const MIN_DAILY_KCAL = 500;
+  const lowMeal = (rows ?? [])
+    .filter((r) => r.kcal != null && r.kcal < MIN_DAILY_KCAL)
+    .map((r) => fmtMd(r.day));
 
   // ★同じ値が複数日に並んでいたら疑う。
   //   カロミルは1日の合計を1件だけ書き出す（health_metrics の extra は
@@ -272,17 +334,67 @@ export function WeeklyReport() {
 
           {/* ② 食事 */}
           <Block n="②" title="食事">
-            <Table
-              head={["日付", "カロリー", "たんぱく質", "脂質", "炭水化物", "塩分"]}
-              rows={rows.map((r) => [
-                fmtMd(r.day),
-                r.kcal == null ? "記録なし" : `${i(r.kcal)}kcal`,
-                r.protein_g == null ? "—" : `${f(r.protein_g)}g`,
-                r.fat_g == null ? "—" : `${f(r.fat_g)}g`,
-                r.carbs_g == null ? "—" : `${f(r.carbs_g)}g`,
-                r.salt_g == null ? "—" : `${f(r.salt_g, 2)}g`,
-              ])}
-            />
+            {editMeal ? (
+              <MealEditor
+                rows={rows}
+                draft={draft}
+                setDraft={setDraft}
+                minKcal={MIN_DAILY_KCAL}
+              />
+            ) : (
+              <Table
+                head={["日付", "カロリー", "たんぱく質", "脂質", "炭水化物", "塩分"]}
+                rows={rows.map((r) => [
+                  fmtMd(r.day),
+                  r.kcal == null
+                    ? "記録なし"
+                    : `${i(r.kcal)}kcal${r.kcal < MIN_DAILY_KCAL ? " ⚠️" : ""}`,
+                  r.protein_g == null ? "—" : `${f(r.protein_g)}g`,
+                  r.fat_g == null ? "—" : `${f(r.fat_g)}g`,
+                  r.carbs_g == null ? "—" : `${f(r.carbs_g)}g`,
+                  r.salt_g == null ? "—" : `${f(r.salt_g, 2)}g`,
+                ])}
+              />
+            )}
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {editMeal ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={saveMeal}
+                    disabled={mealSaving}
+                    className="rounded-lg px-3 py-1.5 text-xs font-bold text-white transition active:opacity-70 disabled:opacity-40"
+                    style={{ background: C }}
+                  >
+                    {mealSaving ? "登録中…" : "直した値を登録"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditMeal(false);
+                      setDraft({});
+                      setMealMsg(null);
+                    }}
+                    className="text-xs text-gray-500 underline active:opacity-70"
+                  >
+                    やめる
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditMeal(true);
+                    setMealMsg(null);
+                  }}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 transition active:opacity-70"
+                >
+                  ✎ 手入力で直す
+                </button>
+              )}
+              {mealMsg && <span className="text-[0.72rem] text-teal-700">{mealMsg}</span>}
+            </div>
             <Foot>
               記録があったのは {s.kcal.days}日。平均 {i(s.kcal.avg)}kcal ／ たんぱく質{" "}
               {f(s.protein.avg)}g ／ 脂質 {f(s.fat.avg)}g ／ 炭水化物 {f(s.carbs.avg)}g ／ 塩分{" "}
@@ -293,11 +405,18 @@ export function WeeklyReport() {
                 </>
               )}
             </Foot>
-            {suspectMeal.length > 0 && (
+            {lowMeal.length > 0 && (
+              <p className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[0.72rem] leading-relaxed text-amber-900">
+                ⚠️ <strong>{lowMeal.join("・")}</strong> が{MIN_DAILY_KCAL}kcal未満です。
+                <strong>入力漏れとみて、この数字は使わないでください。</strong>
+                定例のプロテイン（222kcal）だけが届いている状態です。「手入力で直す」から正しい値を入れると、
+                カロミルより優先して残ります。
+              </p>
+            )}
+            {suspectMeal.length > 0 && lowMeal.length === 0 && (
               <p className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[0.72rem] leading-relaxed text-amber-900">
                 ⚠️ <strong>{suspectMeal.join("・")}</strong> が1gの狂いもなく同じ値で並んでいます。
-                カロミルへの記録がその日1品で止まっていると、その値がそのまま1日の合計として入ります。
-                この週の食事の数字はそのまま使えません。写メかテキストで入れ直すと上書きされます。
+                同じ内容を続けて食べたのでなければ、届いていない日です。
               </p>
             )}
           </Block>
@@ -403,6 +522,87 @@ export function WeeklyReport() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * 食事の訂正フォーム。
+ * 既に入っている値を初期表示にせず、placeholder に出す。初期値として入れると
+ * 「触っていない日」と「同じ値で直した日」が区別できず、直していない日まで
+ * 手入力として上書きされる。空欄のままの項目は送らない。
+ */
+function MealEditor({
+  rows,
+  draft,
+  setDraft,
+  minKcal,
+}: {
+  rows: DayRow[];
+  draft: Record<string, Record<string, string>>;
+  setDraft: (f: (p: Record<string, Record<string, string>>) => Record<string, Record<string, string>>) => void;
+  minKcal: number;
+}) {
+  const cols: { key: string; label: string; get: (r: DayRow) => number | null }[] = [
+    { key: "energy", label: "kcal", get: (r) => r.kcal },
+    { key: "protein", label: "P", get: (r) => r.protein_g },
+    { key: "fat", label: "F", get: (r) => r.fat_g },
+    { key: "carbs", label: "C", get: (r) => r.carbs_g },
+    { key: "salt", label: "塩", get: (r) => r.salt_g },
+  ];
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-gray-200">
+      <table className="w-full text-[0.76rem]" style={{ minWidth: "28rem" }}>
+        <thead>
+          <tr className="bg-gray-50">
+            <th className="px-2 py-1.5 text-left font-bold text-gray-500">日付</th>
+            {cols.map((c) => (
+              <th key={c.key} className="px-1.5 py-1.5 text-left font-bold text-gray-500">
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const low = r.kcal != null && r.kcal < minKcal;
+            return (
+              <tr key={r.day} className="border-t border-gray-100">
+                <td
+                  className={`whitespace-nowrap px-2 py-1 ${low ? "font-bold text-amber-700" : "text-gray-700"}`}
+                >
+                  {fmtMd(r.day)}
+                  {low && " ⚠️"}
+                </td>
+                {cols.map((c) => {
+                  const cur = c.get(r);
+                  return (
+                    <td key={c.key} className="px-1 py-1">
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        value={draft[r.day]?.[c.key] ?? ""}
+                        placeholder={cur == null ? "—" : String(cur)}
+                        onChange={(e) =>
+                          setDraft((p) => ({
+                            ...p,
+                            [r.day]: { ...p[r.day], [c.key]: e.target.value },
+                          }))
+                        }
+                        className="w-[4.5rem] rounded border border-gray-200 px-1.5 py-1 text-[0.75rem] tabular-nums outline-none focus:border-teal-400"
+                      />
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="px-2 py-1.5 text-[0.68rem] leading-relaxed text-gray-400">
+        打ち直した欄だけが登録されます。空欄のままの日は触りません。灰色の数字は今入っている値です。
+      </p>
     </div>
   );
 }

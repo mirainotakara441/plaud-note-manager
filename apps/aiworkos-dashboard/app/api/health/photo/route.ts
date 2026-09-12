@@ -573,6 +573,11 @@ export async function PUT(req: NextRequest) {
   const kind = kindOf(body?.kind);
   if (!kind) return NextResponse.json({ error: "読み取る種類の指定が不正です" }, { status: 400 });
 
+  // 写メ/テキスト読み取りぶんは photo、画面で直接打ち直したぶんは manual。
+  // health_range_summary は manual > photo > 自動連携 の順に採る。
+  // どこから来た数字かを残さないと、あとで「なぜこの値なのか」を辿れない。
+  const writeSource = body?.source === "manual" ? "manual" : PHOTO_SOURCE;
+
   const raw = Array.isArray(body?.rows) ? body.rows : [];
   if (raw.length === 0) {
     return NextResponse.json({ error: "登録する行がありません" }, { status: 400 });
@@ -618,8 +623,11 @@ export async function PUT(req: NextRequest) {
         metric: f.metric,
         value: round(n, f.decimals),
         unit: f.unit,
-        source: PHOTO_SOURCE,
-        extra: { entered_via: "health-page-photo" },
+        source: writeSource,
+        extra: {
+          entered_via:
+            writeSource === "manual" ? "health-page-weekly-edit" : "health-page-photo",
+        },
         updated_at: now,
       });
     }
