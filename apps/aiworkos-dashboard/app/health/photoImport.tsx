@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { fmtDay } from "./charts";
+import { fmtDay } from "@/app/components/charts";
 
 // 健康アプリのスクショから数字を入れるカード。歩数と体重で同じ部品を使う。
 //

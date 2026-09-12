@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { fmtDay } from "./charts";
+import { fmtDay } from "@/app/components/charts";
 
 // 取り込み状況の表示。
 //

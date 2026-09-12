@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { fmtDay } from "./charts";
+import { fmtDay } from "@/app/components/charts";
 
 // 手入力カード（睡眠・朝の散歩・出張）。
 //
