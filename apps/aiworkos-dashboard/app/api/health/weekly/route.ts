@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TABLE = "health_weekly_reports";
-const COLUMNS = "id,week_start,week_end,ratings,notes,body,created_at,updated_at";
+const COLUMNS = "id,week_start,week_end,ratings,notes,advice,body,created_at,updated_at";
 /** 本文と備考の上限。画面のテキストエリアと合わせた常識的な上限。 */
 const MAX_TEXT = 20000;
 
@@ -108,6 +108,7 @@ export async function PUT(req: NextRequest) {
   }
 
   const notes = typeof b.notes === "string" ? b.notes.slice(0, MAX_TEXT) : null;
+  const advice = typeof b.advice === "string" ? b.advice.slice(0, MAX_TEXT) : null;
   const body = typeof b.body === "string" ? b.body.slice(0, MAX_TEXT) : null;
 
   try {
@@ -124,6 +125,7 @@ export async function PUT(req: NextRequest) {
             week_end: weekEnd,
             ratings,
             notes,
+            advice,
             body,
             updated_at: new Date().toISOString(),
           },

@@ -15,9 +15,12 @@ import { fmtMd, summarize, weekRange } from "@/lib/healthWeekly.mjs";
 //   同じことをレポート側で繰り返さないため。記録が無い日は「記録なし」と書き、
 //   平均には必ず「何日ぶんか」を添える。
 //
-// ■ ★は自動で付けない
-//   記録が2日しかない週にも★が付いてしまい、評価が数字の見た目に引きずられる。
-//   事実の並びまでがこの画面の仕事で、意味づけは吉井さんが入れる。
+// ■ ★はAIが下書きし、人が確定する
+//   数字を見て★を付けるのは手間なのでAIにやらせるが、**書き込むのは人**。
+//   返ってきた値はフォームに流し込むだけで、保存は「この週を保存」を押すまで
+//   起こらない。機械が付けた★がそのまま記録に残ると、評価が数字の見た目に
+//   引きずられたまま確定してしまう。
+//   判断材料が足りない指標には★を付けさせず、理由をコメントに書かせている。
 
 type DayRow = {
   day: string;
@@ -39,6 +42,7 @@ type SavedReport = {
   week_end: string;
   ratings: Record<string, Rating>;
   notes: string | null;
+  advice: string | null;
   updated_at: string;
 };
 
@@ -76,6 +80,12 @@ export function WeeklyReport() {
   const [savedWeeks, setSavedWeeks] = useState<string[]>([]);
   const [ratings, setRatings] = useState<Record<string, Rating>>({});
   const [notes, setNotes] = useState("");
+  /** 来週への助言。AIが下書きし、人が直してから保存する。 */
+  const [advice, setAdvice] = useState("");
+  const [advising, setAdvising] = useState(false);
+  const [adviceErr, setAdviceErr] = useState<string | null>(null);
+  /** AIが評価から外した日。外した根拠を画面にも出す。 */
+  const [excluded, setExcluded] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -128,6 +138,9 @@ export function WeeklyReport() {
         setSaved(rep);
         setRatings(rep?.ratings ?? {});
         setNotes(rep?.notes ?? "");
+        setAdvice(rep?.advice ?? "");
+        setExcluded([]);
+        setAdviceErr(null);
       })
       .catch((e) => alive && setError(e instanceof Error ? e.message : "取得に失敗しました"))
       .finally(() => alive && setLoading(false));
@@ -150,6 +163,7 @@ export function WeeklyReport() {
           week_end: range.end,
           ratings,
           notes,
+          advice,
         }),
       });
       const d = await res.json();
@@ -161,7 +175,46 @@ export function WeeklyReport() {
     } finally {
       setSaving(false);
     }
-  }, [range.start, range.end, ratings, notes]);
+  }, [range.start, range.end, ratings, notes, advice]);
+
+  /**
+   * 評価と来週への助言をAIに下書きさせる。
+   * 返ってきた値はフォームに流し込むだけで、保存はしない。
+   * 人が直してから「この週を保存」で確定する——機械が付けた★がそのまま
+   * 記録に残ると、評価が数字の見た目に引きずられる。
+   */
+  const advise = useCallback(async () => {
+    setAdvising(true);
+    setAdviceErr(null);
+    try {
+      const res = await fetch("/api/health/weekly/advise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ week_start: range.start, week_end: range.end }),
+      });
+      const d = await res.json();
+      if (!res.ok || d?.error) throw new Error(d?.error ?? "評価を書けませんでした");
+
+      const next: Record<string, Rating> = {};
+      for (const r of d.ratings ?? []) {
+        const entry: Rating = {};
+        if (Number.isInteger(r?.stars) && r.stars >= 1 && r.stars <= 5) entry.stars = r.stars;
+        if (typeof r?.comment === "string" && r.comment.trim() !== "") entry.comment = r.comment;
+        if (entry.stars || entry.comment) next[String(r.metric)] = entry;
+      }
+      setRatings(next);
+      setAdvice(
+        (d.advice ?? [])
+          .map((a: { title: string; detail: string }) => `■ ${a.title}\n${a.detail}`)
+          .join("\n\n")
+      );
+      setExcluded([...(d.excluded?.low ?? []), ...(d.excluded?.none ?? [])]);
+    } catch (e) {
+      setAdviceErr(e instanceof Error ? e.message : "評価を書けませんでした");
+    } finally {
+      setAdvising(false);
+    }
+  }, [range.start, range.end]);
 
   const setRating = (metric: string, patch: Rating) =>
     setRatings((prev) => ({ ...prev, [metric]: { ...prev[metric], ...patch } }));
@@ -454,10 +507,35 @@ export function WeeklyReport() {
 
           {/* ⑤ 総合評価。ここだけ人が入れる */}
           <div className="mt-5 border-t border-gray-100 pt-4">
-            <h4 className="text-[0.8rem] font-bold text-gray-700">総合評価</h4>
-            <p className="mt-0.5 text-[0.7rem] text-gray-400">
-              ★とコメントは自動で付けない。記録が2日しかない週にも★が付くと、評価が数字の見た目に引きずられる。
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-[0.8rem] font-bold text-gray-700">総合評価</h4>
+              <button
+                type="button"
+                onClick={advise}
+                disabled={advising}
+                className="rounded-lg border px-3 py-1.5 text-xs font-bold transition active:opacity-70 disabled:opacity-40"
+                style={{ borderColor: C, color: C }}
+              >
+                {advising ? "書いています…" : "✨ AIに評価と来週の助言を書かせる"}
+              </button>
+            </div>
+            <p className="mt-0.5 text-[0.7rem] leading-relaxed text-gray-400">
+              AIが下書きするだけで、保存は「この週を保存」を押すまで起こらない。直してから確定する。
+              判断材料が足りない指標には★を付けず、理由だけ書く。
             </p>
+
+            {adviceErr && (
+              <p className="mt-2 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[0.75rem] text-rose-700">
+                {adviceErr}
+              </p>
+            )}
+            {excluded.length > 0 && (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[0.72rem] leading-relaxed text-amber-900">
+                評価から外した日：<strong>{excluded.map(fmtMd).join("・")}</strong>
+                （{MIN_DAILY_KCAL}kcal未満か記録なし）。これらを含めて平均を出すと、
+                食べていないのに節制できている評価になってしまう。
+              </p>
+            )}
 
             <div className="mt-3 space-y-2.5">
               {METRICS.map((m) => (
@@ -499,12 +577,24 @@ export function WeeklyReport() {
               ))}
             </div>
 
+            {/* 来週への助言。評価（今週どうだったか）と分けて持つ。
+                同じ欄にすると、評価を直したいだけのときに助言まで書き直す羽目になる。 */}
+            <h4 className="mt-4 text-[0.8rem] font-bold text-gray-700">来週どうするか</h4>
+            <textarea
+              value={advice}
+              onChange={(e) => setAdvice(e.target.value)}
+              rows={advice ? Math.min(14, advice.split("\n").length + 1) : 3}
+              placeholder="来週の打ち手。上のボタンでAIに下書きさせて、直してから保存する"
+              className="mt-1.5 w-full rounded-xl border border-gray-200 px-3 py-2 text-[0.8rem] leading-relaxed outline-none placeholder:text-gray-300 focus:border-teal-400"
+            />
+
+            <h4 className="mt-4 text-[0.8rem] font-bold text-gray-700">備考</h4>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
-              placeholder="備考（受診結果、その週の出来事など）"
-              className="mt-3 w-full rounded-xl border border-gray-200 px-3 py-2 text-[0.8rem] outline-none placeholder:text-gray-300 focus:border-teal-400"
+              placeholder="受診結果、その週の出来事など。AIには渡していないので、医療の評価はここを見て自分で入れる"
+              className="mt-1.5 w-full rounded-xl border border-gray-200 px-3 py-2 text-[0.8rem] outline-none placeholder:text-gray-300 focus:border-teal-400"
             />
 
             <div className="mt-3 flex items-center gap-2">
