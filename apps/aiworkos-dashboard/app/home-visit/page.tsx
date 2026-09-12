@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartTitle } from "@/app/health/charts";
+import { ChartTitle } from "@/app/components/charts";
 import {
   DISTRICTS,
   DIVISIONS,

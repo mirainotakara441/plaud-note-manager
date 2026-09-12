@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ChartTitle } from "@/app/health/charts";
+import { ChartTitle } from "@/app/components/charts";
 import {
   EMPTY_FILTERS,
   Facet,

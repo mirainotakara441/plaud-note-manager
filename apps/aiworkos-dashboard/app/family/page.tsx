@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChartTitle, StatTile } from "@/app/health/charts";
+import { ChartTitle, StatTile } from "@/app/components/charts";
 import { FAMILY_MEMBERS, PLACE_KINDS, PLACE_KIND_ICON } from "@/lib/family";
 
 // ファミリー（ライフOS側の第2ブロック）。1行＝1つのお出かけ。

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChartTitle, StatTile } from "@/app/health/charts";
+import { ChartTitle, StatTile } from "@/app/components/charts";
 import { withShopHashtag } from "@/lib/ramen";
 
 // ラーメン（ライフOS側の第1ブロック）。1行＝1杯（1訪問）。
