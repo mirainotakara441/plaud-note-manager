@@ -70,6 +70,8 @@ export default function RetrospectiveForm({
   const [drafting, setDrafting] = useState(false);
   const [draftErr, setDraftErr] = useState<string | null>(null);
   const [drafted, setDrafted] = useState<string | null>(null);
+  /** AIが材料から確認できず、本人に聞き返してきたこと。 */
+  const [questions, setQuestions] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<ParseWarning[]>([]);
   const [parsed, setParsed] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -93,6 +95,7 @@ export default function RetrospectiveForm({
     setDrafting(true);
     setDraftErr(null);
     setDrafted(null);
+    setQuestions([]);
     try {
       const res = await fetch("/api/retrospective/draft", {
         method: "POST",
@@ -130,9 +133,14 @@ export default function RetrospectiveForm({
             }))
           : [],
       });
+      setQuestions(
+        Array.isArray(g.questions) ? g.questions.map(String).filter((q: string) => q.trim() !== "") : []
+      );
       const src = d.sources ?? {};
       setDrafted(
-        `一行日記${src["日記"] ?? 0}件・週報${src["週報"] ?? 0}件・健康${src["健康"] ?? 0}日ぶんから下書きしました。★も含めて直してから保存してください。`
+        `一行日記${src["日記"] ?? 0}件・会議録${src["会議録"] ?? 0}件・週報${src["週報"] ?? 0}件・` +
+          `前週の振り返り${src["前週の振り返り"] ?? 0}件・健康${src["健康"] ?? 0}日ぶんから下書きしました。` +
+          `★も含めて直してから保存してください。`
       );
     } catch (e) {
       setDraftErr(e instanceof Error ? e.message : "下書きできませんでした");
@@ -211,6 +219,23 @@ export default function RetrospectiveForm({
           <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{draftErr}</p>
         )}
         {drafted && <p className="mt-2 text-xs text-emerald-700">{drafted}</p>}
+        {/* 材料に無くて書けなかったことは、埋めるのでも落とすのでもなく聞き返させている。
+            ここに出たものは、本人が答えないと振り返りが埋まらない箇所。 */}
+        {questions.length > 0 && (
+          <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="text-xs font-bold text-amber-900">確認したいこと</p>
+            <ul className="mt-1 space-y-1">
+              {questions.map((q, i) => (
+                <li key={i} className="text-xs leading-relaxed text-amber-900">
+                  {q}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1.5 text-[0.68rem] text-amber-700">
+              材料から確認できなかった点です。答えを下の本文に足してから保存してください。
+            </p>
+          </div>
+        )}
       </section>
 
       {/* 1. 貼り付け */}

@@ -258,7 +258,15 @@ export async function structured<T>(
   opts: CallOptions & { schema: Record<string, unknown> }
 ): Promise<T> {
   const client = llmClient();
-  const message = await client.messages.create(
+
+  // ★必ずストリーミングで受ける。
+  //   非ストリーミングだと、生成が長引いた呼び出しで接続そのものが切れる
+  //   （UND_ERR_SOCKET / other side closed）。2026-09-12、週次振り返りの下書きで
+  //   3.1分かかる呼び出しが2回続けて落ちた。入力を減らしても直らず、
+  //   原因は出力が長いこと自体だった。リトライでも直らない種類の失敗で、
+  //   途中まで生成したぶんが丸ごと無駄になる。
+  //   finalMessage() が返すのは create() と同じ形なので、呼び出し側は変わらない。
+  const stream = client.messages.stream(
     buildParams(opts, {
       output_config: {
         format: { type: "json_schema", schema: opts.schema },
@@ -266,6 +274,7 @@ export async function structured<T>(
       },
     })
   );
+  const message = await stream.finalMessage();
 
   assertUsable(message, opts.label);
 
