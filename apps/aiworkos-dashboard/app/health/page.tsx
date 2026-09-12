@@ -22,6 +22,7 @@ import {
 import { IngestAlertBanner, IngestStatusSection, type StatusResponse } from "./ingestStatus";
 import { PhotoImportCard } from "./photoImport";
 import { ConditionsCard, type Condition } from "./conditions";
+import { WeeklyReport } from "./weeklyReport";
 
 // 健康ダッシュボード（体重・体脂肪率・歩数・摂取カロリー・歩行の質の推移）。
 // データは /api/health（Supabase Edge Function `health-dashboard-data` 経由・読み取り専用）。
@@ -611,6 +612,19 @@ export default function HealthPage() {
 
           {/* 手入力（睡眠・朝の散歩・出張）。毎日いちばん触るのでいちばん上。 */}
           <ManualEntryCard entries={manual} onSave={saveManual} error={manualError} />
+
+          {/* 週次レポート。日々の推移より先に置く——週の頭に読むもので、
+              個別のグラフを見に来るのとは目的が違う。既定は先週ぶん。 */}
+          <Section>
+            <ChartTitle
+              color={HEALTH_COLORS.bodyFat}
+              title="週次レポート"
+              hint="週を選ぶと自動で埋まる。★とコメントだけ手で入れる"
+            />
+            <div className="mt-3">
+              <WeeklyReport />
+            </div>
+          </Section>
 
           {/* 歩数。医師から1日6,000歩を求められているので、体重より前に置く。 */}
           <Section>
