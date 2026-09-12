@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { structured, isLlmConfigured, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { anonCreds, serviceCreds, restHeaders } from "@/lib/supabase";
 import { correctTranscription, summarizeCorrections } from "@/lib/transcriptionDictionary";
+import { verifyRawSpan, splitForNotionBlocks } from "@/lib/diaryRaw.mjs";
 import { toJstDateString } from "@/lib/date";
 
 // 一行日記の断絶解消（本命）：
@@ -47,6 +48,8 @@ type DiaryEntry = {
   insight: string;
   actions: string[];
   points: string[];
+  /** その日の原文。検証を通らなければ null（要約だけ保存し、原文は残さない）。 */
+  raw: string | null;
 };
 
 type EntryResult = {
@@ -92,6 +95,13 @@ const DIARY_SCHEMA = {
             description: "「本日の要点3つ」。必ず3つ。",
             items: { type: "string" },
           },
+          raw: {
+            type: "string",
+            description:
+              "その日のエントリに対応する元テキストを、**一字一句そのまま**書き写したもの。"
+              + "要約・整形・誤字修正をしない。前後の日のぶんは含めない。"
+              + "貼り付け原文の部分文字列であることをコード側で検証するため、変えると保存されない。",
+          },
         },
         required: ["date", "title", "tags", "impression", "insight", "actions", "points"],
         additionalProperties: false,
@@ -121,6 +131,9 @@ const DIARY_SYSTEM_PROMPT = `あなたは、富士フイルムシステムサー
 - points（本日の要点3つ）は必ず3つの配列にする。元テキストに「本日の要点」の記載があればそれを3つに割って使い、無ければ impression/insight/actions の内容から要点を3つ抽出・要約して作る。1項目1文、文末に句点は付けない。
 - tags は 自治体・事業者・振り返り・アイデア・ツール活用・家族・健康・その他 の8種類から、内容に合うものを1〜3個選ぶ。
 - 吉井さん本人の一人称の言葉遣い・文体をそのまま活かすこと（書き換えたり関西弁化したりしない）。
+- raw には、その日のエントリに対応する元テキストを**一字一句そのまま**書き写すこと。要約・整形・誤字修正をしてはならない。
+  前後の日のぶんを混ぜない。ここだけは「まとめる」対象外で、貼り付けられた文字列をそのまま返す。
+  コード側で「貼り付け原文の部分文字列か」を検証しており、1文字でも変えると原文は保存されない。
 - 出力は必ず指定されたJSONスキーマに従うこと。`;
 
 function today(): string {
@@ -171,6 +184,8 @@ function normalizeEntry(raw: unknown): DiaryEntry | null {
     insight,
     actions,
     points,
+    // 検証前の候補。parseDiaryEntries が貼り付け全文と突き合わせて確定する。
+    raw: typeof r.raw === "string" ? r.raw : null,
   };
 }
 
@@ -185,9 +200,22 @@ async function parseDiaryEntries(text: string): Promise<DiaryEntry[]> {
   });
 
   const rawEntries = Array.isArray(parsed.entries) ? parsed.entries : [];
-  return rawEntries
+  const entries = rawEntries
     .map((r) => normalizeEntry(r))
     .filter((e): e is DiaryEntry => e !== null);
+
+  // ★原文はここで検証する。Claudeが返した「その日の原文」が、貼り付け原文の
+  //   部分文字列でなければ null にして保存しない。要約は従来どおり残るので
+  //   失うものは無い。「原文」と名乗る別物が残るほうが悪い。
+  for (const e of entries) {
+    const v = verifyRawSpan(text, e.raw);
+    if (!v.ok) {
+      console.warn(`日記の原文を保存しません（${e.date}）: ${v.reason}`);
+    }
+    e.raw = v.raw;
+  }
+
+  return entries;
 }
 
 // ============ Notion REST API 連携 ============
@@ -253,6 +281,24 @@ function buildDiaryBlocks(e: DiaryEntry): Record<string, unknown>[] {
     blocks.push(paragraphBlock(""));
   } else {
     for (const p of e.points) blocks.push(bulletedBlock(p));
+  }
+
+  // ★原文（検証を通ったときだけ）。折りたたんで末尾に置く。
+  //   上の4項目は要約なので、後から「実際に何を書いたか」を追えるようにする。
+  //   1ブロック2000字・1ページ100ブロックの上限があるので分割する。
+  if (e.raw) {
+    blocks.push({
+      object: "block",
+      type: "toggle",
+      toggle: {
+        rich_text: [rtBold("原文（貼り付けたそのまま）")],
+        children: splitForNotionBlocks(e.raw).map((part) => ({
+          object: "block",
+          type: "paragraph",
+          paragraph: { rich_text: [rt(part)] },
+        })),
+      },
+    });
   }
   return blocks;
 }
@@ -333,6 +379,38 @@ function buildDiaryContent(e: DiaryEntry): string {
     content += `。本日の要点3つ：${pointsText}`;
   }
   return content;
+}
+
+// 原文を diary_raw へ残す。memory_chunks には入れない——フィルタ無しのRAG検索が
+// 原文と要約を二重に拾うため（scripts/diary_raw.sql に理由を書いてある）。
+// 失敗しても日記の登録自体は止めない（原文は補助であって本体ではない）。
+async function storeDiaryRaw(
+  svc: { url: string; key: string },
+  e: DiaryEntry,
+  notionUrl: string
+): Promise<boolean> {
+  if (!e.raw) return false;
+  try {
+    const res = await fetch(`${svc.url}/rest/v1/diary_raw?on_conflict=notion_url`, {
+      method: "POST",
+      headers: {
+        ...restHeaders(svc.key),
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({ event_date: e.date, notion_url: notionUrl, raw: e.raw }),
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.error("storeDiaryRaw: 保存失敗", res.status, text.slice(0, 300));
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("storeDiaryRaw: 呼び出し失敗", err);
+    return false;
+  }
 }
 
 async function storeDiaryMemory(
@@ -538,6 +616,9 @@ export async function POST(req: NextRequest) {
     }
 
     const stored = await storeDiaryMemory(anon, e, notionUrl);
+    // 原文は補助。失敗しても created の判定には混ぜない（本体は要約の登録）。
+    const rawSvc = serviceCreds();
+    if (rawSvc) await storeDiaryRaw(rawSvc, e, notionUrl);
     results.push({
       date: e.date,
       title: e.title,
