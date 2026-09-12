@@ -40,6 +40,7 @@ const COLUMNS = [
   "is_ramen",
   "note",
   "stars",
+  "stars_label",
   "status",
   "memo",
   "draft_tabelog",

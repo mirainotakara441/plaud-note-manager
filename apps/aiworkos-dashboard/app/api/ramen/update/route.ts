@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
-import { captureAuthorized, isSafePhotoPath, RAMEN_BUCKET } from "@/lib/ramen";
+import { captureAuthorized, isSafePhotoPath, RAMEN_BUCKET, starsLabel } from "@/lib/ramen";
 
 // 既に記録した一杯を、後から手で直す口。
 //
-// 引き受けるのは3つだけ:
-//   score        … 自分の点数（0.0〜5.0）。食べログに付けた点と同じ列を使う。
+// 引き受けるのはこれだけ:
+//   stars        … 自分の★（0.0〜5.0・半分刻み）。stars_label も一緒に書く。
+//   score        … 食べログに付けた点数（0.0〜5.0）。★とは別物。
 //   memo         … その場の一言（写真から思い出して足す場面がある）。
 //   add_photos   … 写真の後付け。/api/ramen/photo で上げたパスを追記する。
 //   remove_photo … 1枚だけ外す。Storageの実体も消す。
@@ -23,11 +24,22 @@ const MAX_PHOTOS_PER_LOG = 12;
 
 type Body = {
   id?: number | string;
+  stars?: number | string | null;
   score?: number | string | null;
   memo?: string | null;
   add_photos?: string[];
   remove_photo?: string;
 };
+
+// 0.0〜5.0 に収めて返す。空文字・null は「消す」の意味で null を返す。
+function parseRating(raw: unknown, step: number): number | null | "invalid" {
+  if (raw === null || raw === "" || raw === undefined) return null;
+  const n = typeof raw === "number" ? raw : parseFloat(String(raw));
+  if (!Number.isFinite(n) || n < 0 || n > 5) return "invalid";
+  // 刻みに丸める。★は0.5刻み、食べログの点数は0.1刻み。
+  // 丸めずに通すと 3.47 のような値が入り、平均点の桁が揺れて読めなくなる。
+  return Math.round(n / step) * step;
+}
 
 export async function POST(req: NextRequest) {
   if (!(await captureAuthorized(req))) {
@@ -55,22 +67,31 @@ export async function POST(req: NextRequest) {
 
   const patch: Record<string, unknown> = {};
 
-  // 点数。空文字・null は「点数を消す」。数値は 0.0〜5.0 に収め、小数1桁へ丸める
-  // （0.1刻みで入れる前提。0.05 のような値が入ると平均点の桁が揺れて読めなくなる）。
-  if ("score" in body) {
-    const raw = body.score;
-    if (raw === null || raw === "" || raw === undefined) {
-      patch.score = null;
-    } else {
-      const n = typeof raw === "number" ? raw : parseFloat(String(raw));
-      if (!Number.isFinite(n) || n < 0 || n > 5) {
-        return NextResponse.json(
-          { error: "点数は0.0〜5.0で入れてください" },
-          { status: 400 }
-        );
-      }
-      patch.score = Math.round(n * 10) / 10;
+  // 自分の★。数値と記号列を必ず一緒に書く。片方だけ更新すると
+  // 「★★★★ なのに 3.0」のような食い違いが残る。
+  if ("stars" in body) {
+    const stars = parseRating(body.stars, 0.5);
+    if (stars === "invalid") {
+      return NextResponse.json(
+        { error: "★は0.0〜5.0で入れてください" },
+        { status: 400 }
+      );
     }
+    patch.stars = stars;
+    patch.stars_label = stars == null ? null : starsLabel(stars);
+  }
+
+  // 食べログに付けた点数。★とは別の列。
+  if ("score" in body) {
+    const score = parseRating(body.score, 0.1);
+    if (score === "invalid") {
+      return NextResponse.json(
+        { error: "点数は0.0〜5.0で入れてください" },
+        { status: 400 }
+      );
+    }
+    // 0.1刻みの掛け戻しで 3.8000000000000003 が出るので、小数1桁へ寄せる
+    patch.score = score == null ? null : Math.round(score * 10) / 10;
   }
 
   if ("memo" in body) {
@@ -173,6 +194,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     id: saved.id,
+    stars: saved.stars ?? null,
     score: saved.score ?? null,
     photos: Array.isArray(saved.photo_urls) ? saved.photo_urls.length : 0,
   });

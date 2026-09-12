@@ -28,7 +28,9 @@ type Log = {
   price: number | null;
   score: number | null;
   score_time: string | null;
+  // stars は自分の★（半分刻み）。score は食べログに付けた点数で、別物。
   stars: number | null;
+  stars_label: string | null;
   title: string | null;
   excerpt: string | null;
   memo: string | null;
@@ -65,6 +67,9 @@ const MONTHLY_KINDS = [
 ] as const;
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
+
+// 自分の★は半分刻み。1杯ずつ押して保存するので、選択肢を並べる方が速い。
+const STAR_CHOICES = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
 
 function fmtDate(d: string) {
   const [y, m, day] = d.split("-").map(Number);
@@ -284,10 +289,17 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
             {log.status === "captured" ? "文章まち" : "投稿まち"}
           </span>
         )}
-        <span className="ml-auto">
+        <span className="ml-auto flex items-center gap-1">
+          {/* 自分の★（写真のメモ欄に手書きしてあるもの）が主。
+              食べログの点数は別物なので、並べて出して混ぜない。 */}
+          {log.stars != null && (
+            <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-800 ring-1 ring-orange-200">
+              {log.stars_label ?? `★${log.stars.toFixed(1)}`}
+            </span>
+          )}
           {log.score != null && (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-bold text-amber-700 ring-1 ring-amber-200">
-              ★{log.score.toFixed(1)}
+              食べログ{log.score.toFixed(1)}
               {log.score_time && (
                 <span className="ml-1 font-normal text-amber-600">{log.score_time}</span>
               )}
@@ -440,7 +452,47 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
         <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
           <div>
             <label className="block text-xs font-bold text-amber-800">
-              点数（0.0〜5.0）
+              自分の★（半分刻み）
+            </label>
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              {STAR_CHOICES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => patch({ stars: n }, "stars")}
+                  className={`rounded-full px-2 py-1 text-xs font-bold active:scale-95 disabled:opacity-50 ${
+                    log.stars === n
+                      ? "bg-orange-600 text-white"
+                      : "bg-white text-orange-700 ring-1 ring-orange-200"
+                  }`}
+                >
+                  {n.toFixed(1)}
+                </button>
+              ))}
+              {log.stars != null && (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => patch({ stars: null }, "stars")}
+                  className="ml-1 text-xs text-orange-700 underline active:opacity-70 disabled:opacity-40"
+                >
+                  消す
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-[0.625rem] text-amber-700">
+              {busy === "stars"
+                ? "保存中…"
+                : log.stars_label
+                  ? `いま ${log.stars_label}（${log.stars?.toFixed(1)}）`
+                  : "押すとその場で保存されます"}
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-amber-800">
+              食べログに付けた点数（0.0〜5.0）
             </label>
             <div className="mt-1 flex items-center gap-2">
               <input
@@ -477,7 +529,7 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
               )}
             </div>
             <p className="mt-1 text-[0.625rem] text-amber-700">
-              食べログに付けた点と同じ欄。平均点のタイルにも効きます
+              ★とは別の欄。平均点のタイルはこちらを見ています
             </p>
           </div>
 
@@ -1029,7 +1081,7 @@ export default function RamenPage() {
       postRate: ramen.length ? Math.round((posted / ramen.length) * 100) : null,
       // 写真がこの画面で見られる杯数。iPhoneのアルバムから移し終えたかの目印になる。
       withPhoto: all.filter((i) => (i.photo_urls ?? []).length > 0).length,
-      noScore: all.filter((i) => i.score == null).length,
+      noStars: all.filter((i) => i.stars == null).length,
     };
   }, [items]);
 
@@ -1123,7 +1175,7 @@ export default function RamenPage() {
               hint={
                 refreshing
                   ? "更新中…"
-                  : `記録 ${stats.total}件・写真つき ${stats.withPhoto}杯・点数なし ${stats.noScore}杯`
+                  : `記録 ${stats.total}件・写真つき ${stats.withPhoto}杯・★なし ${stats.noStars}杯`
               }
             />
             <div className="flex gap-2">

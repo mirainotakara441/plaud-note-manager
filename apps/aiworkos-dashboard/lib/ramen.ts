@@ -46,6 +46,14 @@ export function isSafePhotoPath(path: string): boolean {
   return SAFE_PATH.test(path) && !path.includes("..");
 }
 
+// 自分の★は半分刻み（★★★☆＝3.5）。食べログに付けた点数（score）とは別物で、
+// 数値を stars、原文の記号列を stars_label の2列に分けて持つ。
+// 写真のメモ欄に手書きしてある★がこの列の一次情報。
+export function starsLabel(n: number): string {
+  const full = Math.floor(n);
+  return "★".repeat(full) + (n - full >= 0.5 ? "☆" : "");
+}
+
 // iPhoneショートカットからの起票は合言葉cookieを持てないため、
 // cronルートと同じ二本立てにする（Bearerトークン or 合言葉cookie）。
 // RAMEN_CAPTURE_SECRET 未設定なら、ショートカット経路は閉じたまま（フェイルクローズ）。
