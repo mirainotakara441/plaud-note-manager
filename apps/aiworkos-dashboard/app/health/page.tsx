@@ -12,7 +12,7 @@ import {
   StatTile,
   type DayMarks,
   type Point,
-} from "./charts";
+} from "@/app/components/charts";
 import {
   ManualEntryCard,
   todayLocal,
@@ -23,6 +23,7 @@ import { IngestAlertBanner, IngestStatusSection, type StatusResponse } from "./i
 import { PhotoImportCard } from "./photoImport";
 import { ConditionsCard, type Condition } from "./conditions";
 import { WeeklyReport } from "./weeklyReport";
+import { HealthBasics } from "./basics";
 
 // 健康ダッシュボード（体重・体脂肪率・歩数・摂取カロリー・歩行の質の推移）。
 // データは /api/health（Supabase Edge Function `health-dashboard-data` 経由・読み取り専用）。
@@ -612,6 +613,12 @@ export default function HealthPage() {
 
           {/* 手入力（睡眠・朝の散歩・出張）。毎日いちばん触るのでいちばん上。 */}
           <ManualEntryCard entries={manual} onSave={saveManual} error={manualError} />
+
+          {/* 基礎データ。薬・検査値・受診予定。日々の推移とは別物で、
+              変わったときだけ見るものなので畳んで置く。 */}
+          <Section>
+            <HealthBasics />
+          </Section>
 
           {/* 週次レポート。日々の推移より先に置く——週の頭に読むもので、
               個別のグラフを見に来るのとは目的が違う。既定は先週ぶん。 */}
