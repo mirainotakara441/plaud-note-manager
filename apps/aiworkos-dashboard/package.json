@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3020",
+    "dev": "NODE_OPTIONS='--dns-result-order=ipv4first' next dev -p 3020",
     "build": "next build",
-    "start": "next start -p 3020",
+    "start": "NODE_OPTIONS='--dns-result-order=ipv4first' next start -p 3020",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:smoke",
     "test:smoke": "node tests/smoke.mjs",
@@ -19,6 +19,7 @@
     "pdfjs-dist": "^6.1.200",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "sharp": "^0.34.5",
     "web-push": "^3.6.7"
   },
   "devDependencies": {

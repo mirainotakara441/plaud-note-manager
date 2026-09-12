@@ -82,8 +82,12 @@ function fmtMonth(ym: string) {
 
 // 写真は非公開バケットに置いてあり、公開URLを持たない。
 // 表示はこのプロキシ経由（合言葉認証の内側の端末からしか見えない）。
-function photoUrl(path: string) {
-  return `/api/ramen/photo?path=${encodeURIComponent(path)}`;
+//
+// w を付けるとサーバー側で縮めて返す。原寸は1枚0.7〜1MBあり、一覧に並べると
+// 1か月ぶんで10MBを超える。拡大表示だけ原寸を使う。
+function photoUrl(path: string, width?: 480 | 1280) {
+  const w = width ? `&w=${width}` : "";
+  return `/api/ramen/photo?path=${encodeURIComponent(path)}${w}`;
 }
 
 function Section({ children }: { children: React.ReactNode }) {
@@ -340,9 +344,10 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={photoUrl(p)}
+                src={photoUrl(p, photos.length === 1 ? 1280 : 480)}
                 alt={`${log.shop} の写真 ${i + 1}`}
                 loading="lazy"
+                decoding="async"
                 className={`w-full object-cover ${
                   photos.length === 1 ? "max-h-72" : "aspect-square"
                 }`}
@@ -563,8 +568,9 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
                 <span key={p} className="relative">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={photoUrl(p)}
+                    src={photoUrl(p, 480)}
                     alt={`写真 ${i + 1}`}
+                    loading="lazy"
                     className="h-16 w-16 rounded-lg object-cover"
                   />
                   <button

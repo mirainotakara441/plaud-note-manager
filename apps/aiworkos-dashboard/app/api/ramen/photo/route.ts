@@ -18,6 +18,9 @@ export const maxDuration = 60;
 const BUCKET = RAMEN_BUCKET;
 const EXT = PHOTO_EXT;
 
+// 縮小して返す幅。一覧のサムネイル（3列）と、1枚だけのカード用。
+const ALLOWED_WIDTHS = new Set([480, 1280]);
+
 export async function POST(req: NextRequest) {
   if (!(await captureAuthorized(req))) {
     return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
@@ -108,10 +111,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
 
-  const path = new URL(req.url).searchParams.get("path") ?? "";
+  const sp = new URL(req.url).searchParams;
+  const path = sp.get("path") ?? "";
   if (!isSafePhotoPath(path)) {
     return NextResponse.json({ error: "パスが不正です" }, { status: 400 });
   }
+
+  // 一覧のサムネイル用に縮めて返す。原寸は1枚0.7〜1MBあり、1か月ぶん（10〜20杯）
+  // 並べるだけで10MB超をiPhoneに落とすことになる。幅は許す値だけに絞る
+  // （任意の数を許すと、同じ写真が無数の別URLになってキャッシュが効かない）。
+  const wantedWidth = ALLOWED_WIDTHS.has(Number(sp.get("w"))) ? Number(sp.get("w")) : null;
 
   const res = await fetch(`${c.url}/storage/v1/object/${BUCKET}/${path}`, {
     headers: { apikey: c.key, Authorization: `Bearer ${c.key}` },
@@ -129,9 +138,32 @@ export async function GET(req: NextRequest) {
   }
 
   const buf = await res.arrayBuffer();
-  return new NextResponse(buf, {
+  let body: ArrayBuffer = buf;
+  let type = res.headers.get("content-type") ?? "image/jpeg";
+
+  if (wantedWidth) {
+    try {
+      const sharp = (await import("sharp")).default;
+      const out = await sharp(Buffer.from(buf))
+        // 元より大きくはしない（拡大してもデータが増えるだけで綺麗にならない）
+        .resize({ width: wantedWidth, withoutEnlargement: true })
+        .jpeg({ quality: 78 })
+        .toBuffer();
+      // Buffer のままだと NextResponse の型（BodyInit）に合わないので ArrayBuffer へ写す
+      body = out.buffer.slice(
+        out.byteOffset,
+        out.byteOffset + out.byteLength
+      ) as ArrayBuffer;
+      type = "image/jpeg";
+    } catch (err) {
+      // 縮小に失敗したら原寸を返す。重いだけで、写真が出ないより良い
+      console.error("ramen photo: 縮小に失敗", err);
+    }
+  }
+
+  return new NextResponse(body, {
     headers: {
-      "Content-Type": res.headers.get("content-type") ?? "image/jpeg",
+      "Content-Type": type,
       // パスは毎回ユニーク（上書きしない）ので端末側に長く置いてよい。
       // private を付けて共有キャッシュには残さない。
       "Cache-Control": "private, max-age=31536000, immutable",
