@@ -4,6 +4,9 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { isLlmConfigured, structured, text as llmText, llmErrorMessage, llmErrorStatus } from "@/lib/llm";
 import { anonCreds, serviceCreds } from "@/lib/supabase";
+// 埋め込みモデル gte-small は 512token 上限で、超過分は黙って切り捨てられる。
+// /refine と同じ理由で400字チャンク化する（詳細はそちらのコメント参照）。
+import { windowChunks } from "@/lib/chunks";
 import { findTemplate, sectionNames, type SlideTemplate } from "@/lib/slideTemplates";
 import { toJstDateString } from "@/lib/date";
 
@@ -250,22 +253,6 @@ const SYNTHESIS_SCHEMA = {
   required: ["title", "content"],
   additionalProperties: false,
 };
-
-// 埋め込みモデル gte-small は 512token 上限で、超過分は黙って切り捨てられる。
-// /refine と同じ理由でチャンク化する（詳細はそちらのコメント参照）。
-const CHUNK_SIZE = 400;
-const CHUNK_OVERLAP = 60;
-
-function windowChunks(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP): string[] {
-  const body = text.trim();
-  if (!body) return [];
-  if (body.length <= size) return [body];
-  const chunks: string[] = [];
-  for (let i = 0; i < body.length; i += size - overlap) {
-    chunks.push(body.slice(i, i + size));
-  }
-  return chunks;
-}
 
 // ⑤ 既存スライドの登録。専用の列は増やさず、登録内容をこのマーカー付きの最初のuser
 // メッセージとして slide_refine_messages（既存テーブル）に保存する。メッセージは
