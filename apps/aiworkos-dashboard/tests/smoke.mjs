@@ -83,10 +83,12 @@ const QUERY = {
   "/retrospective/month": "month=2026-07",
   // 写真はバケット内のパスを渡す。実在しないパスだと400が正しい挙動。
   "/family/photo": "path=" + encodeURIComponent("unassigned/20260806035946-e5nv32.jpg"),
+  // ラーメン写真も同じ方式（2026-09-12 のGET新設に追随。ramen_logs.photo_urls に実在する行）。
+  "/ramen/photo": "path=" + encodeURIComponent("unassigned/20260804063403-nr7ha3.jpg"),
 };
 
 // JSONを返さないのが正しいAPI（画像プロキシなど）。
-const NOT_JSON_OK = new Set(["/family/photo"]);
+const NOT_JSON_OK = new Set(["/family/photo", "/ramen/photo"]);
 
 // ローカルでは環境変数が無くて当然のもの。落ちても点検の失敗とはみなさない。
 const LOCAL_SKIP = new Set(["/cron/daily-todo", "/cron/notion-sync"]);
