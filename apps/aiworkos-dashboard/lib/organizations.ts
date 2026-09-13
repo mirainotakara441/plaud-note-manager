@@ -696,3 +696,74 @@ export function extractSection(content: string, label: SectionLabel): string | n
 export function extractActionSection(content: string): string | null {
   return extractSection(content, "アクション") ?? extractSection(content, "次のアクション");
 }
+
+// ---------------------------------------------------------------------------
+// 「詰まり」（案件が止まっている理由の5分類）
+// ---------------------------------------------------------------------------
+//
+// 2026-09-13 に法人請求の課題一覧を organization_notes(section=課題) へ登録した際、
+// 本文の1行目に `【詰まり】委託構造 ／ 費用対効果` の形で分類を書き込んだ。
+// スキーマは増やさず（本番テーブルの変更は production-change-protocol の関門が要る）、
+// この行を読んで機械可読にする。/status の一覧にチップとして出す用。
+//
+// 5分類は課題一覧の優先順位1〜5にそのまま対応する:
+//   委託構造   … 委託利用のため効果が職員に見えない・端末問題
+//   費用対効果 … 職員削減に届くかの判断材料が無い
+//   縦割り     … 区民課／DX推進課などでたらい回し
+//   多忙       … 議会・予算・標準化で時間が取れない
+//   様子見     … 他団体の動向待ち・体制刷新待ち
+
+export const ORG_BLOCKERS = [
+  "委託構造",
+  "費用対効果",
+  "縦割り",
+  "多忙",
+  "様子見",
+] as const;
+
+export type OrgBlocker = (typeof ORG_BLOCKERS)[number];
+
+/** `【詰まり】` で始まる行から5分類を取り出す。無ければ空配列。順序は本文どおり。 */
+export function parseBlockers(content: string): OrgBlocker[] {
+  const line = content
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.startsWith("【詰まり】"));
+  if (!line) return [];
+  const body = line.slice("【詰まり】".length);
+  const out: OrgBlocker[] = [];
+  for (const raw of body.split(/[／/、,・]/)) {
+    const v = raw.trim();
+    if ((ORG_BLOCKERS as readonly string[]).includes(v) && !out.includes(v as OrgBlocker)) {
+      out.push(v as OrgBlocker);
+    }
+  }
+  return out;
+}
+
+/** 全団体ぶんの「詰まり」を一度に取る（課題セクションだけ読む）。団体名 → 分類の配列。 */
+export async function fetchAllBlockers(
+  url: string,
+  key: string
+): Promise<Record<string, OrgBlocker[]>> {
+  const res = await fetch(
+    `${url}/rest/v1/organization_notes?select=organization,content&section=eq.${encodeURIComponent(
+      "課題"
+    )}&limit=1000`,
+    { headers: restHeaders(key), cache: "no-store" }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`詰まり取得エラー ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const rows: unknown = await res.json();
+  const map: Record<string, OrgBlocker[]> = {};
+  if (Array.isArray(rows)) {
+    for (const r of rows as { organization?: unknown; content?: unknown }[]) {
+      if (typeof r.organization !== "string" || typeof r.content !== "string") continue;
+      const b = parseBlockers(r.content);
+      if (b.length > 0) map[r.organization] = b;
+    }
+  }
+  return map;
+}

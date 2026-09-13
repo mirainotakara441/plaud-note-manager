@@ -86,6 +86,10 @@ type OrgStatus = {
 // 順位を決めるのはこの画面（全団体が見える）で、ホームはその結果を上位だけ映す。
 type StarMap = Record<string, number>;
 
+// 「詰まり」（案件が止まっている理由の5分類）。organization_notes(課題) の
+// `【詰まり】` 行から /api/organizations/blockers が読む。団体名 → 分類の配列。
+type BlockerMap = Record<string, string[]>;
+
 // 対象外にした団体（GET /api/status/exclude）。
 type ExcludedOrg = { notion_page_id: string; name: string; category: string | null };
 type NewsRecent = {
@@ -865,6 +869,16 @@ function JobsPanel({
 // ※表示側のカテゴリー分けは lib/categories.ts の正準8分類（ORG_CATEGORIES）を使う。
 const ADD_CATEGORIES = ["自治体", "事業者", "銀行", "議員"] as const;
 
+// 「詰まり」チップの色。5分類は lib/organizations.ts の ORG_BLOCKERS と揃える。
+// 提案済／提案なし（緑／赤）と混ざらないよう、その2色は避ける。
+const BLOCKER_STYLE: Record<string, string> = {
+  委託構造: "bg-orange-100 text-orange-800",
+  費用対効果: "bg-purple-100 text-purple-800",
+  縦割り: "bg-sky-100 text-sky-800",
+  多忙: "bg-yellow-100 text-yellow-800",
+  様子見: "bg-slate-200 text-slate-700",
+};
+
 // 1団体ぶんの行。名前・状態・会議数・最終接点・次の一手を1行に畳む（縦を詰めるため）。
 //
 // 「対象外にする」は削除ではない。押すとNotion「顧客CRM」のステータスが「対象外」に
@@ -878,6 +892,7 @@ function OrgRow({
   stars,
   starBusy,
   onStar,
+  blockers,
 }: {
   o: OrgStatus;
   onExclude: (o: OrgStatus) => void;
@@ -885,6 +900,8 @@ function OrgRow({
   stars: number;
   starBusy: boolean;
   onStar: (n: number) => void;
+  /** 詰まりの5分類。無ければ空配列（＝課題が未記入か、詰まり行が無い）。 */
+  blockers: string[];
 }) {
   const [confirming, setConfirming] = useState(false);
   const [whyDisabled, setWhyDisabled] = useState(false);
@@ -944,6 +961,19 @@ function OrgRow({
           壁打ち済
         </span>
       )}
+      {/* 詰まり。押すと団体別攻略の「課題」タブへ飛び、中身と打ち手を読める。 */}
+      {blockers.map((b) => (
+        <Link
+          key={b}
+          href={`/organizations?org=${encodeURIComponent(o.name)}&tab=issues`}
+          title={`詰まり: ${b}（押すと課題・施策を開く）`}
+          className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[0.6875rem] font-medium active:opacity-70 ${
+            BLOCKER_STYLE[b] ?? "bg-gray-100 text-gray-600"
+          }`}
+        >
+          {b}
+        </Link>
+      ))}
       <span className="shrink-0 text-[0.6875rem] text-gray-400">会議{o.meetings}</span>
       <span
         className={`shrink-0 text-[0.6875rem] ${stale ? "text-amber-600" : "text-gray-400"}`}
@@ -1118,6 +1148,8 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
   const [exErr, setExErr] = useState<string | null>(null);
   const [stars, setStars] = useState<StarMap>({});
   const [starBusy, setStarBusy] = useState<string | null>(null);
+  // 詰まり。★と同じく付随情報。取れなくても一覧は出す（チップが無いだけ）。
+  const [blockers, setBlockers] = useState<BlockerMap>({});
   // ★の読み込み結果。ロード成功前は押させない（既存の順位を空の状態から
   // 上書きしてしまう事故を防ぐ）。失敗は黙らず「読み込めませんでした」を出す。
   const [starsReady, setStarsReady] = useState(false);
@@ -1194,10 +1226,23 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
     }
   }, []);
 
+  const loadBlockers = useCallback(async () => {
+    try {
+      const res = await fetch("/api/organizations/blockers", { cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && json?.blockers && typeof json.blockers === "object") {
+        setBlockers(json.blockers as BlockerMap);
+      }
+    } catch {
+      // 詰まりが取れないのは致命ではない。チップが出ないだけで一覧は続ける。
+    }
+  }, []);
+
   useEffect(() => {
     loadExcluded();
     loadStars();
-  }, [loadExcluded, loadStars]);
+    loadBlockers();
+  }, [loadExcluded, loadStars, loadBlockers]);
 
   // exclude=true で対象外へ、false で戻す。どちらもNotionが正。
   async function setExcludedState(pageId: string, exclude: boolean) {
@@ -1375,6 +1420,7 @@ function OrgPanel({ orgs, onChanged }: { orgs: OrgStatus[]; onChanged: () => voi
                         stars={stars[o.name] ?? 0}
                         starBusy={starBusy === o.name || !starsReady}
                         onStar={(n) => setStarFor(o.name, n)}
+                        blockers={blockers[o.name] ?? []}
                         onExclude={(org) =>
                           org.notion_page_id && setExcludedState(org.notion_page_id, true)
                         }
