@@ -40,3 +40,6 @@ next-env.d.ts
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Claude Code のセッション別設定・ワークツリー（機械ローカル。別セッションの作業コピーを巻き込まない）
+/.claude/
