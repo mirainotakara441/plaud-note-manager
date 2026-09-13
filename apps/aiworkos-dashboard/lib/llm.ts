@@ -106,6 +106,52 @@ export function isTransientError(error: unknown): boolean {
 }
 
 /**
+ * 接続そのものが切れたか。
+ *
+ * isTransientError はHTTPステータスを見るが、接続断にはステータスが付かないので
+ * 拾えない。2026-09-12 の実測で、2分前後かかる生成が「Connection error.」で
+ * 落ちる事象が夜間参謀・提案仕込みの両方で出た（4回成功して5回目に落ちる、の頻度）。
+ */
+export function isConnectionError(err: unknown): boolean {
+  const e = err as { name?: string; message?: string; status?: number };
+  if (typeof e?.status === "number") return false;
+  const s = `${e?.name ?? ""} ${e?.message ?? ""}`.toLowerCase();
+  return (
+    s.includes("connection error") ||
+    s.includes("apiconnection") ||
+    s.includes("socket") ||
+    s.includes("econnreset") ||
+    s.includes("terminated")
+  );
+}
+
+/**
+ * 一時的な失敗（混雑・接続断）に限り、待って1回だけやり直す。
+ *
+ * 無人で走る処理（夜間参謀・提案の夜間仕込み・toolLoop）が使う。
+ * 昼の対話的なAPI（60秒制限内）では使わないこと——待ち時間ぶんだけ
+ * タイムアウトに近づくうえ、画面の前の人は自分でやり直せる。
+ * 2回に増やさないのは、残高切れ・キー無効のような「待っても直らない」失敗を
+ * 引き延ばさないため（それらはこの判定に当たらず即座に投げ返る）。
+ */
+export async function retryOnceOnTransient<T>(
+  run: () => Promise<T>,
+  label?: string,
+  waitMs = 20_000
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isTransientError(err) && !isConnectionError(err)) throw err;
+    if (label) {
+      console.log(`${label}: 一時的な失敗のため${Math.round(waitMs / 1000)}秒後に1回だけやり直します:`, String(err));
+    }
+    await new Promise((r) => setTimeout(r, waitMs));
+    return run();
+  }
+}
+
+/**
  * LLM呼び出しの例外を、画面に出す文言へ変換する。
  *
  * AIを呼ぶAPIは14本あり、どれも catch で自前の文言を返していた。そのため
@@ -281,6 +327,148 @@ export async function structured<T>(
   const body = joinText(message);
   if (!body) throw new Error("AIから本文が返りませんでした");
   return JSON.parse(body) as T;
+}
+
+// ---- tool use（AIが自分で追加取得しながら考える）---------------------
+//
+// 2026-09-12 の総点検まで、tool use はリポジトリ全体で未使用だった。
+// 全ルートが「固定件数を先に引いて渡す」形で、AIは足りない材料を自分で
+// 取りに行けなかった（一発で引けたものが全て）。ここはその欠損を埋める共通部。
+// /api/ask が最初の利用者。/api/agent のツール化（Phase 2）でも使う想定。
+
+/** AIに渡す道具1つぶん。run はサーバー側で実行され、結果の文字列がAIへ返る。 */
+export type ToolDef = {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  run: (input: Record<string, unknown>) => Promise<string>;
+};
+
+/** ツール実行の足あと。画面で「何を調べたか」を見せるために返す。 */
+export type ToolStep = {
+  tool: string;
+  input: Record<string, unknown>;
+  /** 結果の要約（先頭だけ）。全文は返さない——足あとは検証の入口であって転写ではない。 */
+  resultHead: string;
+  resultChars: number;
+  ms: number;
+};
+
+/**
+ * ツールを渡して、AIが「調べる→考える→また調べる」を繰り返しながら
+ * 最終的な文章を作るループ。
+ *
+ * - maxSteps 回まで道具を使える。上限に達したら道具を取り上げて
+ *   「ここまでの材料でまとめよ」と最後の1回を回す（無限ループの保険）。
+ * - 各ステップはストリーミングで受ける（structured() と同じ理由。
+ *   非ストリーミングは長い生成で接続ごと切れる）。
+ * - thinking は adaptive のまま。会話を積むとき、応答の content ブロックを
+ *   丸ごと assistant turn として返すこと（thinking ブロックの署名を壊すと
+ *   次のリクエストが弾かれる）。
+ */
+export async function toolLoop(opts: {
+  system: string;
+  prompt: string;
+  tools: ToolDef[];
+  model?: string;
+  maxSteps?: number;
+  maxTokens?: number;
+  label?: string;
+}): Promise<{ text: string; steps: ToolStep[] }> {
+  const client = llmClient();
+  const maxSteps = opts.maxSteps ?? 6;
+  const steps: ToolStep[] = [];
+
+  const toolParams = opts.tools.map((t) => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.input_schema as Anthropic.Tool.InputSchema,
+  }));
+  const byName = new Map(opts.tools.map((t) => [t.name, t]));
+
+  const messages: Anthropic.MessageParam[] = [
+    { role: "user", content: opts.prompt },
+  ];
+
+  for (let round = 0; ; round++) {
+    const exhausted = round >= maxSteps;
+    // 各ラウンドを一時失敗1回まで再試行付きで回す。toolLoop は夜間の無人実行
+    // （提案仕込み・将来の夜間参謀ツール化）が主な使い口で、接続断1回で
+    // 数分ぶんの往復が丸ごと無駄になるため。それまでの会話（messages）は
+    // 手元にあるので、落ちたラウンドだけやり直せば続きから進める。
+    const message = await retryOnceOnTransient(
+      async () => {
+        const stream = client.messages.stream({
+          model: opts.model ?? DEFAULT_MODEL,
+          max_tokens: opts.maxTokens ?? 12000,
+          thinking: { type: "adaptive" },
+          system: [
+            {
+              type: "text" as const,
+              text: opts.system,
+              cache_control: { type: "ephemeral" as const },
+            },
+          ],
+          // 上限に達したら道具ごと外す。tool_choice:none だけだと「道具がある前提」の
+          // 思考を続けてしまうので、無い状態で締めさせる。
+          ...(exhausted ? {} : { tools: toolParams }),
+          messages,
+        });
+        return stream.finalMessage();
+      },
+      opts.label
+    );
+    assertUsable(message, opts.label);
+
+    const toolUses = message.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+    );
+
+    if (toolUses.length === 0 || exhausted) {
+      const body = joinText(message);
+      if (!body) throw new Error("AIから本文が返りませんでした");
+      return { text: body, steps };
+    }
+
+    // 応答ブロックを丸ごと積む（thinking 署名を保つため加工しない）。
+    messages.push({ role: "assistant", content: message.content });
+
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const use of toolUses) {
+      const t0 = Date.now();
+      const tool = byName.get(use.name);
+      let result: string;
+      try {
+        result = tool
+          ? await tool.run((use.input ?? {}) as Record<string, unknown>)
+          : `不明な道具です: ${use.name}`;
+      } catch (err) {
+        // 道具の失敗はループを止めない。失敗したことをAIに伝えて考えさせる
+        // （別の道具・別の引数で取り直すか、無いなりに答えるかはAIの判断）。
+        result = `道具の実行に失敗しました: ${String(err)}`;
+      }
+      steps.push({
+        tool: use.name,
+        input: (use.input ?? {}) as Record<string, unknown>,
+        resultHead: result.slice(0, 200),
+        resultChars: result.length,
+        ms: Date.now() - t0,
+      });
+      results.push({
+        type: "tool_result",
+        tool_use_id: use.id,
+        content: result,
+      });
+    }
+    messages.push({ role: "user", content: results });
+
+    if (opts.label) {
+      console.log(
+        `${opts.label}: round=${round + 1}`,
+        toolUses.map((u) => u.name).join(",")
+      );
+    }
+  }
 }
 
 /**

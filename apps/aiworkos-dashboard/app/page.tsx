@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import IntegrationPanel from "@/app/components/IntegrationPanel";
 import AdvisorCard from "@/app/components/AdvisorCard";
+import NightInsightCard from "@/app/components/NightInsightCard";
 import CodeSessionBoard from "@/app/components/CodeSessionBoard";
 import NextTargetsCard from "@/app/components/NextTargetsCard";
 import WeeklyFocusCard from "@/app/components/WeeklyFocusCard";
@@ -66,6 +67,15 @@ const RECORD_FEATURES: Feature[] = [
 // 並びは「探す・相手を知る」→「作る」。前半が攻める相手を決める道具、
 // 後半がその相手に出すものを作る道具。
 const PROPOSE_FEATURES: Feature[] = [
+  {
+    // 横断検索が「原文を見る」なのに対し、こちらは「答えを作る」。
+    // AIが記憶を自分で何度も引きながら統合回答する（AIワークOS初のtool use）。
+    href: "/ask",
+    icon: "🧠",
+    title: "相談窓口",
+    desc: "難しい問いを投げると、AIが記憶を自分で調べて根拠つきで答える",
+    accent: "bg-fuchsia-100 text-fuchsia-700",
+  },
   {
     href: "/search",
     icon: "🔍",
@@ -691,6 +701,9 @@ export default function Home() {
           分からない。溜まったデータ側から声をかける役。
           要対応の件数だけは上の赤帯にも上げる（カード自体は2画面下で見えないため）。 */}
       <AdvisorCard onAlertCount={setAlertCount} />
+      {/* 夜間参謀の示唆。事実（上）→仮説（下）の順に置く。
+          insights 表が無い間・示唆が0件の朝は、カードごと出ない。 */}
+      <NightInsightCard />
 
       {/* 次に攻める相手。★の順（★3が最優先）。/status の抜粋。 */}
       <NextTargetsCard />
