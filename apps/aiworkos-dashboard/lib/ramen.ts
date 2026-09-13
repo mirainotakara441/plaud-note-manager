@@ -46,12 +46,27 @@ export function isSafePhotoPath(path: string): boolean {
   return SAFE_PATH.test(path) && !path.includes("..");
 }
 
-// 自分の★は半分刻み（★★★☆＝3.5）。食べログに付けた点数（score）とは別物で、
-// 数値を stars、原文の記号列を stars_label の2列に分けて持つ。
+// 自分の★は基本が半分刻み（★★★☆＝3.5）。食べログに付けた点数（score）とは別物で、
+// 数値を stars、記号列を stars_label の2列に分けて持つ。
 // 写真のメモ欄に手書きしてある★がこの列の一次情報。
-export function starsLabel(n: number): string {
+//
+// ただし 3.75 のように記号で書けない値も付ける（2026-09-12に本人が指定）。
+// その場合は記号を作らず null を返す。無理に ★★★☆ と書くと 3.5 に見えてしまう。
+export function starsLabel(n: number): string | null {
+  if (Math.abs(n * 2 - Math.round(n * 2)) > 1e-9) return null;
   const full = Math.floor(n);
   return "★".repeat(full) + (n - full >= 0.5 ? "☆" : "");
+}
+
+// 画面に出す★の文字。記号があれば記号、無ければ数値（3.75 は 3.75 のまま出す）。
+export function starsText(
+  stars: number | null,
+  label: string | null
+): string | null {
+  if (label) return label;
+  if (stars == null) return null;
+  // toFixed(1) だと 3.75 が 3.8 になる。末尾の0だけ落として桁は保つ
+  return `★${String(Number(stars.toFixed(2)))}`;
 }
 
 // iPhoneショートカットからの起票は合言葉cookieを持てないため、

@@ -69,15 +69,17 @@ export async function POST(req: NextRequest) {
 
   // 自分の★。数値と記号列を必ず一緒に書く。片方だけ更新すると
   // 「★★★★ なのに 3.0」のような食い違いが残る。
+  // 刻みは0.25まで見る（3.75 のように記号で書けない値も付けるため）。
   if ("stars" in body) {
-    const stars = parseRating(body.stars, 0.5);
+    const stars = parseRating(body.stars, 0.25);
     if (stars === "invalid") {
       return NextResponse.json(
         { error: "★は0.0〜5.0で入れてください" },
         { status: 400 }
       );
     }
-    patch.stars = stars;
+    // 0.25刻みの掛け戻しで 3.7500000000000004 が出るので小数2桁へ寄せる
+    patch.stars = stars == null ? null : Math.round(stars * 100) / 100;
     patch.stars_label = stars == null ? null : starsLabel(stars);
   }
 

@@ -72,6 +72,24 @@ test.describe("ラーメンの写真", () => {
     await expect(page.locator("text=/食べログ\\d\\.\\d/").first()).toBeVisible();
   });
 
+  // 3.75 のように記号で書けない★を、丸めずにそのまま出せているか。
+  // stars は numeric(2,1) だったので Postgres が黙って 3.8 にしていた（2026-09-12に修正）。
+  test("記号で書けない★も丸めずに出る", async ({ playwright, baseURL }) => {
+    const ctx = await playwright.request.newContext({
+      baseURL,
+      extraHTTPHeaders: { cookie: `${COOKIE_NAME}=${authCookieValue()}` },
+    });
+    const res = await ctx.get("/api/ramen");
+    const json = await res.json();
+    const row = (json.items ?? []).find(
+      (i: { id: number }) => i.id === 139
+    );
+    expect(row, "id=139 の一杯が取れませんでした").toBeTruthy();
+    expect(Number(row.stars), "★が丸められています").toBe(3.75);
+    expect(row.stars_label, "記号で書けない値に記号が付いています").toBeNull();
+    await ctx.dispose();
+  });
+
   test("写真の配信は合言葉が無いと通らない", async ({ playwright, baseURL }) => {
     const bare = await playwright.request.newContext({ baseURL });
     const res = await bare.get("/api/ramen/photo?path=187%2Fnope.jpg");

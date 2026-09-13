@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChartTitle, StatTile } from "@/app/components/charts";
-import { withShopHashtag } from "@/lib/ramen";
+import { starsText, withShopHashtag } from "@/lib/ramen";
 
 // ラーメン（ライフOS側の第1ブロック）。1行＝1杯（1訪問）。
 // データは /api/ramen（Supabase ramen_logs・読み取り専用）。
@@ -153,6 +153,9 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
   const [scoreInput, setScoreInput] = useState(
     log.score != null ? log.score.toFixed(1) : ""
   );
+  const [starsInput, setStarsInput] = useState(
+    log.stars != null ? String(Number(log.stars)) : ""
+  );
 
   const photos = log.photo_urls ?? [];
 
@@ -296,9 +299,9 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
         <span className="ml-auto flex items-center gap-1">
           {/* 自分の★（写真のメモ欄に手書きしてあるもの）が主。
               食べログの点数は別物なので、並べて出して混ぜない。 */}
-          {log.stars != null && (
+          {starsText(log.stars, log.stars_label) && (
             <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-800 ring-1 ring-orange-200">
-              {log.stars_label ?? `★${log.stars.toFixed(1)}`}
+              {starsText(log.stars, log.stars_label)}
             </span>
           )}
           {log.score != null && (
@@ -486,12 +489,34 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
                 </button>
               )}
             </div>
+            {/* 3.75 のように記号で書けない値も付けるので、細かく入れる口も置く */}
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.25"
+                min="0"
+                max="5"
+                value={starsInput}
+                onChange={(e) => setStarsInput(e.target.value)}
+                placeholder="例：3.75"
+                className="w-24 rounded-lg border border-orange-300 bg-white px-2 py-1 text-sm"
+              />
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => patch({ stars: starsInput.trim() }, "stars")}
+                className="rounded-full bg-orange-600 px-3 py-1 text-xs font-bold text-white active:scale-95 disabled:opacity-50"
+              >
+                細かく入れる
+              </button>
+            </div>
             <p className="mt-1 text-[0.625rem] text-amber-700">
               {busy === "stars"
                 ? "保存中…"
-                : log.stars_label
-                  ? `いま ${log.stars_label}（${log.stars?.toFixed(1)}）`
-                  : "押すとその場で保存されます"}
+                : log.stars != null
+                  ? `いま ${starsText(log.stars, log.stars_label)}（${Number(log.stars)}）`
+                  : "ボタンは押すとその場で保存されます"}
             </p>
           </div>
 
