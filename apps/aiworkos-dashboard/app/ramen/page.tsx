@@ -1210,12 +1210,16 @@ export default function RamenPage() {
               }
             />
             <div className="flex gap-2">
-              <StatTile
-                label="通算杯数"
-                value={stats.latestBowl != null ? `${stats.latestBowl}` : "—"}
-                sub="杯目（最新）"
-                color={C_BOWL}
-              />
+              {/* 通算杯数は「食べたもの全部」への入口。過去を遡るのに
+                  この画面を延々スクロールさせないため（2026-09-13）。 */}
+              <Link href="/ramen/all" className="flex-1 active:opacity-70">
+                <StatTile
+                  label="通算杯数"
+                  value={stats.latestBowl != null ? `${stats.latestBowl}` : "—"}
+                  sub="杯目 ／ 全部見る →"
+                  color={C_BOWL}
+                />
+              </Link>
               <StatTile
                 label="ラーメン"
                 value={`${stats.ramenCount}`}
