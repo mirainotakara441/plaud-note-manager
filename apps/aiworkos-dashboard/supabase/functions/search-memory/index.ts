@@ -1,17 +1,25 @@
 // AIワークOS Phase 3: 自然言語クエリを埋め込み化し、memory_chunks を横断検索するRAGエンドポイント
 //
-// ■ 読む先は match_memory_chunks_v2（第7.8弾・2026-08-29〜）
-// v2 は旧 match_memory_chunks に同一性の4列（canonical_document_id /
-// source_document_id / chunk_index / ingest_scheme）を足しただけの互換版。
-// 本文・ランキング・match_count の意味・dedupの有無はすべて旧と同じで、
-// 本番データの200ベクトル×3200通り（54,437行）で旧9列の完全一致を確認済み。
-// 旧関数は消していない。戻すときは rpc 名を1つ戻すだけでよい。
+// ■ 読む先は match_memory_chunks_v3 ＝ ハイブリッド検索（2026-09-13〜・v6）
+// v3 は v2 のベクトル検索に pgroonga の日本語全文検索を RRF(k=60) で融合したもの。
+// 切り替えの根拠は実測（docs/hybrid-search-shadow-report.md）:
+//   ・固有名詞8クエリすべてで改善（「内本部長」0件→5件等）。新規獲得30行ノイズ0
+//   ・意味検索4問は吉井さんの目視審査を経て承認（2026-09-13）
+//   ・切替前の応答は tests/golden/search-memory-20260913.json に固定済み
+// クエリ本文（query_text）を RPC へ渡すのが v2 との呼び出し上の違い。
+// 【副作用として了解済みのこと】成果物の取得結果が変わるため、提案キャッシュの
+// 署名が変わり、各団体の次回表示で提案が再生成される（1回きりの無効化の波。
+// 手直し版は edited 引き継ぎで保護される）。
 //
-// ■ ただし外へ返すのは旧9列だけ（互換モード）
-// 4列を下流へ公開するのは次のフェーズ。ここで応答の契約まで同時に変えると、
-// 何か起きたときに「読む先を変えたせい」か「列を増やしたせい」かを
-// 切り分けられなくなる。**偶然落ちているのではなく意図して落としている**ことを
-// コードで示すため、V1_COMPAT_COLUMNS で明示的に projection する。
+// ■ 戻し方（rollback）
+// rpc 名を "match_memory_chunks_v2" に戻し query_text を消して再デプロイするだけ
+// （このファイルの git 履歴に v5＝v2版の全文がある）。v2 関数は本番に残してある。
+//
+// ■ 外へ返すのは旧9列だけ（互換モード）
+// v3 が返す同一性4列と診断3列（rrf / vec_rank / text_rank）は、ここに無いので外へ出ない。
+// 応答の契約まで同時に変えると、何か起きたときに「読む先を変えたせい」か
+// 「列を増やしたせい」かを切り分けられなくなる。**偶然落ちているのではなく
+// 意図して落としている**ことをコードで示すため、V1_COMPAT_COLUMNS で明示的に projection する。
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -63,8 +71,11 @@ Deno.serve(async (req: Request) => {
     // フィルタが指定された場合はRPCから広めに取得してからここで絞り込む。
     const fetchCount = hasMetadataFilter ? Math.max(requestedCount * 5, 40) : requestedCount;
 
-    const { data, error } = await supabase.rpc("match_memory_chunks_v2", {
+    const { data, error } = await supabase.rpc("match_memory_chunks_v3", {
       query_embedding: embedding,
+      // ハイブリッドの全文側はクエリ本文そのものを使う（埋め込みでは潰れる
+      // 固有名詞・数字を拾うのが役目なので、加工せずそのまま渡す）。
+      query_text: query,
       match_count: fetchCount,
       filter_source_type: source_type ?? null,
       filter_organization: organization ?? null,
