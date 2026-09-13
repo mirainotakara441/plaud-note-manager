@@ -55,6 +55,20 @@ export function isSafePhotoPath(path: string): boolean {
   return SAFE_PATH.test(path) && !path.includes("..");
 }
 
+// 縮小した絵の置き場。同じバケットの中に、版と幅で分けて作り置きする。
+// 元の写真（"123/2026….jpg"）に対して "_thumb/v2/480/123/2026….jpg"。
+// 版を混ぜてあるので、作り方を変えれば古い作り置きは自然に使われなくなる。
+export function thumbPath(path: string, width: number): string {
+  return `_thumb/v${PHOTO_RENDER_VERSION}/${width}/${path}`;
+}
+
+// 1枚の写真に対して作られうる作り置きの全パス。写真を消すときに一緒に消す。
+export function thumbPathsFor(path: string): string[] {
+  return THUMB_WIDTHS.map((w) => thumbPath(path, w));
+}
+
+export const THUMB_WIDTHS = [480, 1280];
+
 // 自分の★は基本が半分刻み（★★★☆＝3.5）。食べログに付けた点数（score）とは別物で、
 // 数値を stars、記号列を stars_label の2列に分けて持つ。
 // 写真のメモ欄に手書きしてある★がこの列の一次情報。

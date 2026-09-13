@@ -127,6 +127,34 @@ test.describe("ラーメンの写真", () => {
     await ctx.dispose();
   });
 
+  // 縮小はその場でやると本番で1枚0.7〜1.3秒かかる（実測）。200件の一覧では
+  // スクロールのたびにこれが効いて重いので、作り置きを置いて2度目以降は
+  // ただ取り出すだけにしてある。その作り置きが本当に効いているかを見る。
+  test("縮小した写真は2度目が速い", async ({ playwright, baseURL }) => {
+    const ctx = await playwright.request.newContext({
+      baseURL,
+      extraHTTPHeaders: { cookie: `${COOKIE_NAME}=${authCookieValue()}` },
+    });
+    const list = await ctx.get("/api/ramen");
+    const json = await list.json();
+    const row = (json.items ?? []).find(
+      (i: { photo_urls?: string[] }) => (i.photo_urls ?? []).length > 0
+    );
+    expect(row, "写真つきの一杯がありません").toBeTruthy();
+    const url = `/api/ramen/photo?path=${encodeURIComponent(row.photo_urls[0])}&w=480`;
+
+    // 1度目で作り置きができる（既にあればそのまま）
+    expect((await ctx.get(url)).status()).toBe(200);
+
+    const t0 = Date.now();
+    const again = await ctx.get(url);
+    const ms = Date.now() - t0;
+    expect(again.status()).toBe(200);
+    // その場で変換していれば軽く1秒を超える。作り置きが効いていれば桁が違う
+    expect(ms, `2度目に ${ms}ms かかっています。作り置きが効いていません`).toBeLessThan(1500);
+    await ctx.dispose();
+  });
+
   test("写真の配信は合言葉が無いと通らない", async ({ playwright, baseURL }) => {
     const bare = await playwright.request.newContext({ baseURL });
     const res = await bare.get("/api/ramen/photo?path=187%2Fnope.jpg");

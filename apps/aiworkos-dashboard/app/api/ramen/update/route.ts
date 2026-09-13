@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, restHeaders } from "@/lib/supabase";
-import { captureAuthorized, isSafePhotoPath, RAMEN_BUCKET, starsLabel } from "@/lib/ramen";
+import {
+  captureAuthorized,
+  isSafePhotoPath,
+  RAMEN_BUCKET,
+  starsLabel,
+  thumbPathsFor,
+} from "@/lib/ramen";
 
 // 既に記録した一杯を、後から手で直す口。
 //
@@ -185,7 +191,8 @@ export async function POST(req: NextRequest) {
       await fetch(`${c.url}/storage/v1/object/${RAMEN_BUCKET}`, {
         method: "DELETE",
         headers: restHeaders(c.key),
-        body: JSON.stringify({ prefixes: [removing] }),
+        // 縮小した作り置きも一緒に消す（原本だけ消すと辿れない絵が残る）
+        body: JSON.stringify({ prefixes: [removing, ...thumbPathsFor(removing)] }),
       });
     } catch (err) {
       // 実体が残っても行からは外れている。ここで止めると外せなくなる。

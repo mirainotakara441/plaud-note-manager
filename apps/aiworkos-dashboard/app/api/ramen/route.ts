@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds } from "@/lib/supabase";
-import { captureAuthorized } from "@/lib/ramen";
+import { captureAuthorized, thumbPathsFor } from "@/lib/ramen";
 
 // ラーメン（ライフOS側）：1行＝1杯（1訪問）の記録 ramen_logs を読む。
 // 食べログ（mirainotakara）の口コミと X（@0kara1_man）の投稿を同じ行に束ねてあり、
@@ -127,6 +127,8 @@ export async function DELETE(req: NextRequest) {
   const paths: string[] = Array.isArray(row.photo_urls) ? row.photo_urls : [];
   if (paths.length > 0) {
     try {
+      // 縮小した作り置きも一緒に消す。原本だけ消すと、誰も辿れない絵が残り続ける。
+      const all = [...paths, ...paths.flatMap((p) => thumbPathsFor(p))];
       await fetch(`${svc.url}/storage/v1/object/ramen-photos`, {
         method: "DELETE",
         headers: {
@@ -134,7 +136,7 @@ export async function DELETE(req: NextRequest) {
           Authorization: `Bearer ${svc.key}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ prefixes: paths }),
+        body: JSON.stringify({ prefixes: all }),
       });
     } catch (err) {
       // 写真が消せなくても行は消す。ここで止めると半端な行が消せなくなる

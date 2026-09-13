@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds } from "@/lib/supabase";
-import { captureAuthorized, isSafePhotoPath, PHOTO_EXT, RAMEN_BUCKET } from "@/lib/ramen";
+import {
+  captureAuthorized,
+  isSafePhotoPath,
+  PHOTO_EXT,
+  RAMEN_BUCKET,
+  THUMB_WIDTHS,
+  thumbPath,
+} from "@/lib/ramen";
 import { uprightJpeg } from "@/lib/photoImage";
 
 // 写真の出し入れ。
@@ -20,7 +27,18 @@ const BUCKET = RAMEN_BUCKET;
 const EXT = PHOTO_EXT;
 
 // 縮小して返す幅。一覧のサムネイル（3列）と、1枚だけのカード用。
-const ALLOWED_WIDTHS = new Set([480, 1280]);
+const ALLOWED_WIDTHS = new Set(THUMB_WIDTHS);
+
+function imageResponse(body: ArrayBuffer, type: string) {
+  return new NextResponse(body, {
+    headers: {
+      "Content-Type": type,
+      // パスは毎回ユニーク（上書きしない）ので端末側に長く置いてよい。
+      // private を付けて共有キャッシュには残さない。
+      "Cache-Control": "private, max-age=31536000, immutable",
+    },
+  });
+}
 
 export async function POST(req: NextRequest) {
   if (!(await captureAuthorized(req))) {
@@ -123,6 +141,21 @@ export async function GET(req: NextRequest) {
   // （任意の数を許すと、同じ写真が無数の別URLになってキャッシュが効かない）。
   const wantedWidth = ALLOWED_WIDTHS.has(Number(sp.get("w"))) ? Number(sp.get("w")) : null;
 
+  // 縮小した絵は作り置きを使う。
+  //
+  // 毎回その場で変換すると、本番で1枚あたり0.7〜1.3秒かかる（実測）。
+  // 200件を並べる一覧では、スクロールするたびにこれが効いて重い。
+  // 一度作ったらバケットへ置いておき、次からはただ取り出すだけにする。
+  if (wantedWidth) {
+    const cached = await fetch(
+      `${c.url}/storage/v1/object/${BUCKET}/${thumbPath(path, wantedWidth)}`,
+      { headers: { apikey: c.key, Authorization: `Bearer ${c.key}` }, cache: "no-store" }
+    );
+    if (cached.ok) {
+      return imageResponse(await cached.arrayBuffer(), "image/jpeg");
+    }
+  }
+
   const res = await fetch(`${c.url}/storage/v1/object/${BUCKET}/${path}`, {
     headers: { apikey: c.key, Authorization: `Bearer ${c.key}` },
     cache: "no-store",
@@ -153,18 +186,23 @@ export async function GET(req: NextRequest) {
         out.byteOffset + out.byteLength
       ) as ArrayBuffer;
       type = "image/jpeg";
+      // 作り置きとして残す。失敗しても今回の応答は返すので待たずに投げっぱなしにする
+      // （次に開いた誰かが作り直すだけ）。
+      void fetch(`${c.url}/storage/v1/object/${BUCKET}/${thumbPath(path, wantedWidth)}`, {
+        method: "POST",
+        headers: {
+          apikey: c.key,
+          Authorization: `Bearer ${c.key}`,
+          "Content-Type": "image/jpeg",
+          "x-upsert": "true",
+        },
+        body: new Uint8Array(out),
+      }).catch((err) => console.error("ramen photo: 作り置きの保存に失敗", err));
     } catch (err) {
       // 縮小に失敗したら原寸を返す。重いだけで、写真が出ないより良い
       console.error("ramen photo: 縮小に失敗", err);
     }
   }
 
-  return new NextResponse(body, {
-    headers: {
-      "Content-Type": type,
-      // パスは毎回ユニーク（上書きしない）ので端末側に長く置いてよい。
-      // private を付けて共有キャッシュには残さない。
-      "Cache-Control": "private, max-age=31536000, immutable",
-    },
-  });
+  return imageResponse(body, type);
 }
