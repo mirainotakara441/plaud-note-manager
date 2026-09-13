@@ -69,7 +69,7 @@
       linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 26px 26px, var(--panel);
     padding: clamp(22px, 3.6vw, 40px); overflow: hidden; box-shadow: var(--shadow);
   }
-  .head::after { content: "v1.1"; position: absolute; top: 18px; right: 22px; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; color: var(--brand); opacity: .7; }
+  .head::after { content: "2026-09-12"; position: absolute; top: 18px; right: 22px; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; color: var(--brand); opacity: .7; }
   .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--brand); margin: 0 0 14px; display: flex; align-items: center; gap: 9px; }
   .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand-bright); box-shadow: 0 0 0 4px var(--brand-ghost); }
   h1 { font-size: clamp(26px, 4.6vw, 42px); line-height: 1.14; letter-spacing: -.02em; margin: 0 0 10px; text-wrap: balance; font-weight: 800; }
@@ -116,7 +116,7 @@
   .meter.anim > span { animation: fill 1.1s cubic-bezier(.2,.7,.2,1) both; }
   @keyframes fill { from { width: 0; } to { width: var(--w); } }
 
-  .cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .cards3 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .card { border: 1px solid var(--hair); border-radius: 13px; background: var(--panel); padding: 18px; box-shadow: var(--shadow); position: relative; }
   .card .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--brand); }
   .card h3 { font-size: 15.5px; margin: 8px 0 7px; font-weight: 800; letter-spacing: -.01em; }
@@ -128,6 +128,11 @@
   .todo .box { width: 17px; height: 17px; border-radius: 5px; border: 2px solid var(--hair-strong); margin-top: 2px; flex: none; }
   .todo.next .box { border-color: var(--wip); background: var(--wip-ghost); position: relative; }
   .todo.next .box::after { content: ""; position: absolute; inset: 2px; border-radius: 2px; background: var(--wip); opacity: .55; }
+  .todo.done .box { border-color: var(--done); background: var(--done); position: relative; }
+  .todo.done .box::after { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--panel); font-size: 11px; font-weight: 900; line-height: 1; }
+  .todo.done .body .t { color: var(--ink-soft); }
+  .w-done { color: var(--done); background: var(--done-ghost); }
+  .w-open { color: var(--wip); background: var(--wip-ghost); }
   .todo .body .t { font-weight: 700; font-size: 14.5px; }
   .todo .body .d { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; }
   .todo .when { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 7px; white-space: nowrap; letter-spacing: .02em; }
@@ -169,29 +174,29 @@
 
   <header class="head">
     <p class="eyebrow"><span class="dot"></span>AI WORK OS &nbsp;/&nbsp; 設計図 × 現在地</p>
-    <h1>骨格は生きてる。<br>そして予定より2〜3ヶ月、前に出てる。</h1>
-    <p class="lede">2026-07-07に描いた<b>設計書 v1.1（全15章・2DB構成）</b>と、<b>12日後の実装</b>を突き合わせた進捗スコアカード。9月予定のRAG、10月予定のエージェントが、もう本番で動いている。</p>
+    <h1>骨格は生きてる。<br>この2ヶ月は、土台を作り直すのに使った。</h1>
+    <p class="lede">2026-07-07に描いた<b>設計書 v1.1（全15章・2DB構成）</b>と、<b>67日後の実装</b>を突き合わせた進捗スコアカード。7月の前倒しで先に建った機能に対して、8月末の<b>Memory 2.0</b>で記憶層の土台を入れ替え、運用・セキュリティ層を閉じた。</p>
     <div class="timeline">
       <span class="chip">設計書 <b>2026-07-07</b></span>
       <span class="arrow">→</span>
-      <span class="chip">現在地 <b>2026-07-19</b></span>
+      <span class="chip">現在地 <b>2026-09-12</b></span>
       <span class="arrow">＝</span>
-      <span class="chip">わずか <b>12日</b></span>
+      <span class="chip">経過 <b>67日</b></span>
     </div>
   </header>
 
   <div class="kpis">
     <div class="kpi">
-      <div class="n">425<small>件</small></div>
-      <div class="l">Supabase 長期記憶（memory_chunks）<br>日記127 / 会議53 / 学び9 / 成果物ほか</div>
+      <div class="n">1,604<small>件</small></div>
+      <div class="l">Supabase 長期記憶（memory_chunks）<br>成果物810 / 会議339 / 日記279 / 週報117 / 振り返り32 / 学び17 / 学会10</div>
     </div>
     <div class="kpi">
-      <div class="n">7<small>ページ</small></div>
-      <div class="l">本番稼働の独自ダッシュボード<br>検索・提案・壁打ち・武器・成果物・監視・ホーム</div>
+      <div class="n">0<small>件</small></div>
+      <div class="l">ingest_scheme が null の行<br>＝書き込みの関所（store-memory）が一度も破られていない</div>
     </div>
     <div class="kpi">
-      <div class="n">2〜3<small>ヶ月</small></div>
-      <div class="l">ロードマップ前倒し幅<br>P3=9月予定 / P4=10月予定を先取り</div>
+      <div class="n">10<small>段</small></div>
+      <div class="l">npm run test:all<br>型 / Shadow / 同一性 / 監視 / 接尾辞 / 署名 / v1・v2互換 / ビルド / スモーク / E2E</div>
     </div>
   </div>
 
@@ -228,10 +233,19 @@
     <div class="phase is-wip">
       <div class="top">
         <span class="code">P3</span><span class="name">長期記憶RAG</span><span class="when">当初：9月 → 前倒し稼働</span>
-        <span class="badge pill wip">稼働・精度改善中</span>
+        <span class="badge pill wip">稼働・精度改善は道半ば</span>
       </div>
-      <div class="desc">Supabase pgvector＋横断検索が本番稼働。残りは検索精度（ハイブリッド化・チャンク再投入）。</div>
-      <div class="meter anim"><span style="--w:88%"></span></div>
+      <div class="desc">Supabase pgvector＋横断検索が本番稼働。W3「検索精度の底上げ」は<b>3宿題すべて完了（2026-09-13）</b> ── 400字チャンク再投入（AGENTSで全経路厳守）、<b>ハイブリッド検索（pgroonga＋RRF）を関門経由で本番昇格</b>、生成ログ（search_log）実装。</div>
+      <div class="meter anim"><span style="--w:75%"></span></div>
+    </div>
+
+    <div class="phase is-done">
+      <div class="top">
+        <span class="code">M2</span><span class="name">記憶層の同一性基盤（Memory 2.0）</span><span class="when">2026-08-28〜29</span>
+        <span class="badge pill done">済み</span>
+      </div>
+      <div class="desc">同一性4列（canonical / source_document / chunk_index / ingest_scheme）を導入し、<b>store-memory を書き込みの唯一の関所</b>に。HNSWの取りこぼしを iterative_scan=strict_order で解消し、成果物0件で作られていた横浜市の提案が40件で再生成された。</div>
+      <div class="meter anim"><span style="--w:100%"></span></div>
     </div>
 
     <div class="phase is-wip">
@@ -239,17 +253,26 @@
         <span class="code">P4</span><span class="name">エージェント化</span><span class="when">当初：10月〜 → 一部先取り</span>
         <span class="badge pill wip">進行中</span>
       </div>
-      <div class="desc">提案・壁打ち・武器生成・会議分析は本番。残る専門エージェント3種とManus統合が宿題。</div>
-      <div class="meter anim"><span style="--w:42%"></span></div>
+      <div class="desc">提案エージェント・壁打ち・武器生成・月報ドラフトは本番稼働。残る専門エージェント3種（日記分析／健康管理／官民連携）とManus統合は未着手。</div>
+      <div class="meter anim"><span style="--w:50%"></span></div>
     </div>
 
-    <div class="phase is-wip">
+    <div class="phase is-done">
       <div class="top">
         <span class="code">+α</span><span class="name">運用・セキュリティ層</span><span class="when">設計書に無し・後付け</span>
-        <span class="badge pill wip">W2進行中</span>
+        <span class="badge pill done">済み</span>
       </div>
-      <div class="desc">CTOレビュー起点。認証・監視ダッシュボード（済）＋定期バックアップ堅牢化（W2＝あと少し）。</div>
-      <div class="meter anim"><span style="--w:70%"></span></div>
+      <div class="desc">CTOレビュー起点。合言葉ゲート／job_heartbeats／service_health／OS Guardian／毎朝の参謀（advisor・ルールベース検知器6本）／npm run test:all（10段）／E2E（Playwright）まで揃った。</div>
+      <div class="meter anim"><span style="--w:100%"></span></div>
+    </div>
+
+    <div class="phase is-todo">
+      <div class="top">
+        <span class="code">V3</span><span class="name">受注／失注の自己改善ループ</span><span class="when">構想のまま</span>
+        <span class="badge pill todo">未着手</span>
+      </div>
+      <div class="desc">提案の結果を記憶へ戻して次の提案の精度を上げる循環。<b>コード上に経路が存在しない。</b></div>
+      <div class="meter anim"><span style="--w:0%"></span></div>
     </div>
   </section>
 
@@ -257,7 +280,7 @@
     <div class="sec-head">
       <span class="num">02</span>
       <h2>設計図に無かったが、育ったもの</h2>
-      <span class="note">想定を超えて実装が先行した3領域</span>
+      <span class="note">想定を超えて実装が先行した4領域</span>
     </div>
     <div class="cards3">
       <div class="card">
@@ -270,13 +293,19 @@
         <span class="plus">+</span>
         <span class="tag">RAG拡張</span>
         <h3>成果物RAG</h3>
-        <p>設計のSupabaseは日記・会議・PDF中心。過去の提案書・実習書を記憶に取り込み、提案のベースにする層を追加。</p>
+        <p>設計のSupabaseは日記・会議・PDF中心。過去の提案書・実習書を記憶に取り込み、提案のベースにする層を追加。現在は成果物810件で記憶層の最大勢力。</p>
+      </div>
+      <div class="card">
+        <span class="plus">+</span>
+        <span class="tag">Foundation</span>
+        <h3>Memory 2.0 ── 同一性の土台</h3>
+        <p>設計書には「記憶を貯める」しか書いていなかった。実際には<b>chunk と document を区別する手段</b>が要り、同一性4列と store-memory 一本の関所を作り直した（2026-08-28〜29）。実測で ingest_scheme が null の行はゼロ。HNSWの filter starvation 修正では、成果物0件で生成されていた横浜市の提案が40件で再生成され、実害が消えた。</p>
       </div>
       <div class="card">
         <span class="plus">+</span>
         <span class="tag">Ops / Sec</span>
-        <h3>運用・セキュリティ層</h3>
-        <p>「無料枠・個人利用」前提だった設計に、認証・監視・週次バックアップという堅牢性の層を追加中。</p>
+        <h3>運用・セキュリティ層（完了）</h3>
+        <p>「無料枠・個人利用」前提だった設計に、堅牢性の層を後付けして閉じた。合言葉ゲート／job_heartbeats／service_health／OS Guardian／毎朝の参謀（advisor・ルールベース検知器6本）／npm run test:all（10段）／E2E（Playwright）。</p>
       </div>
     </div>
   </section>
@@ -284,65 +313,132 @@
   <section>
     <div class="sec-head">
       <span class="num">03</span>
+      <h2>2026-09-12 の総点検で出たもの</h2>
+      <span class="note">機能ではなく「版管理されていなかった／配線されていなかった」類</span>
+    </div>
+    <div class="todos">
+      <div class="todo done">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">Edge Function 14本中10本が Git 管理外だった</div>
+          <div class="d">本番でだけ動いていて、リポジトリに無い関数が10本。2026-09-12 に全14本をリポジトリへ収容して解消。</div>
+        </div>
+        <span class="when w-done">同日 解消</span>
+      </div>
+      <div class="todo done">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">本番78テーブルの定義が版管理されていなかった</div>
+          <div class="d">supabase/migrations が存在せず、スキーマの正がどこにも無い状態だった。同日ベースライン化して解消。</div>
+        </div>
+        <span class="when w-done">同日 解消</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">チャンカーと documents テーブルが両方とも死蔵</div>
+          <div class="d">見出し・文境界で切る後継チャンカー <b>lib/chunker.ts</b> と、原文の保管庫 <b>documents テーブル（357行）</b>が、どちらも実際の経路に配線されていない。このため「<b>切り方を変えて再生成する</b>」という設計上の切り札が、現状は使えない。</div>
+        </div>
+        <span class="when w-open">未解決</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">手動運用の機能がいくつか止まっている</div>
+          <div class="d">weekly_focus、org_priority、誤変換辞書の追加などが、8月上旬〜中旬で更新が止まったまま。仕組みは生きているが、人が入れる前提の部分が動いていない。</div>
+        </div>
+        <span class="when w-open">未解決</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="num">04</span>
       <h2>これから作るもの（吉井さんの宿題）</h2>
       <span class="note">上から着手順</span>
     </div>
 
-    <div class="grouplbl">最優先 — 今の主戦場</div>
+    <div class="card" style="margin-bottom:6px;">
+      <span class="tag">Direction</span>
+      <h3>目標は「エージェントが自ら考えるOS」</h3>
+      <p>足りていないのは機能ではなく、3つの構造的欠損。<br>
+      <b>(a) AIが能動的に起動される場所がゼロ</b> ── 定期実行のcron 2本は、どちらもLLMを呼んでいない。<br>
+      <b>(b) AIが自分で追加調査する手がゼロ</b> ── tool use はリポジトリ全体で未使用。資料の取得件数は固定の決め打ち。<br>
+      <b>(c) 出した示唆の採否・成否が記録されない</b> ── AIは自分の提案がどうなったかを、永久に知ることができない。</p>
+    </div>
+
+    <div class="grouplbl">次の一手 — 能動起動と、結果の記録をまとめて埋める</div>
     <div class="todos">
+      <div class="todo done">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">夜間参謀（2026-09-12 稼働開始）</div>
+          <div class="d">毎晩23時、<b>日記・週報・会議・健康を領域横断で読んで翌朝の示唆を生成し、採用／見送り／的外れの判断を記録する</b>。AIが自分から起動する最初の場所。評価は2週間運用後（9/26頃）、採用が1件も出なければ畳む約束。</div>
+        </div>
+        <span class="when w-done">済</span>
+      </div>
+      <div class="todo done">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">相談窓口 /ask（2026-09-12 稼働開始）</div>
+          <div class="d">難しい問いを投げると、AIが<b>記憶層を自分で何度も検索しながら</b>根拠つきで統合回答する。<b>AIワークOS初のtool use</b>＝欠損(b)「自分で探す手」の最初の実装。問い・答え・調べ方・評価は ask_log に残る。</div>
+        </div>
+        <span class="when w-done">済</span>
+      </div>
+      <div class="todo done">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">提案エージェントのツール化＋夜間仕込み（2026-09-12 稼働開始）</div>
+          <div class="d">提案に deep モードを新設：AIが<b>週報・会議履歴・記憶を自分で調べて調査メモを作ってから</b>提案を組む。毎晩23時、会議が動いた団体（1晩2件まで・45日TTL・<b>手直し版は自動では触らない</b>）を夜のうちに考え直してキャッシュへ。昼の /agent は即返しのまま、中身だけ深くなる。初回実証：熊本市（追加調査9回・111秒）。</div>
+        </div>
+        <span class="when w-done">済</span>
+      </div>
       <div class="todo next">
         <div class="box"></div>
         <div class="body">
-          <div class="t">W2 バックアップ仕上げ</div>
-          <div class="d">GitHubシークレット2つ（URL・anonキー）をコマンドで登録 → テスト実行で「暗号化→復号」が緑になるのを確認。ローカル側は復旧・実証済み。</div>
+          <div class="t">打ち手の結果を学ぶループ（Phase 3 / V3）</div>
+          <div class="d">採用した打ち手→実行→効いたか、を結び付けて記録し、受注/失注を記憶へ戻す。insights の verdict・ask_log の rating・proposal の採否が溜まってから設計する（データが先、仕組みが後）。</div>
         </div>
-        <span class="when w-now">明日</span>
-      </div>
-      <div class="todo">
-        <div class="box"></div>
-        <div class="body">
-          <div class="t">取込ワーカーの定期実行 本格化</div>
-          <div class="d">今は30分ごと「通知だけ」。PLAUD等の無人実行をクラウドルーティン化する（Eightはブラウザ必須で無人化不可＝手動のまま）。</div>
-        </div>
-        <span class="when w-now">W2続き</span>
+        <span class="when w-now">次</span>
       </div>
     </div>
 
-    <div class="grouplbl">近々 — 土台を強くする</div>
+    <div class="grouplbl">近々 — 土台の穴を塞ぐ</div>
     <div class="todos">
       <div class="todo">
         <div class="box"></div>
         <div class="body">
-          <div class="t">W3 検索精度の底上げ</div>
-          <div class="d">ハイブリッド検索（ベクトル＋全文）／ingestを800→400字で再投入（空白地帯対策）／生成ログの記録。</div>
+          <div class="t">W3：3宿題すべて完了（2026-09-13）</div>
+          <div class="d">①400字チャンク再投入＝完了済み。②ハイブリッド検索（pgroonga＋RRF融合）＝<b>実測全勝（固有名詞8/8・新規獲得30行ノイズ0）→目視審査→Golden突合の関門を通って search-memory v6 として本番昇格</b>。「内本部長」0件→週報1位、person絞り0件→2件に改善。戻すのはrpc名1つ。③<b>生成ログ＝search_log として実装</b>——/search と /ask の実クエリ・件数・上位を記録。次の検索改善のGoldenは発明したクエリでなく実クエリから作れる。</div>
         </div>
-        <span class="when w-soon">W3</span>
+        <span class="when w-soon">W3残</span>
       </div>
       <div class="todo">
         <div class="box"></div>
         <div class="body">
-          <div class="t">実データ拡充</div>
-          <div class="d">Journey 2年分の過去日記を取込／札幌市・議員向けストーリー原案など未投入分をSupabaseへ。</div>
+          <div class="t">チャンカーと documents テーブルの配線</div>
+          <div class="d">lib/chunker.ts と documents テーブル（357行）を実際の経路に繋ぐ。繋がるまで「切り方を変えて再生成する」という切り札が使えない（総点検の未解決分）。</div>
+        </div>
+        <span class="when w-soon">近々</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">止まっている手動運用の再開</div>
+          <div class="d">weekly_focus・org_priority・誤変換辞書の追加が、8月上旬〜中旬で止まったまま。続けるか自動化するかを決める。</div>
         </div>
         <span class="when w-soon">近々</span>
       </div>
     </div>
 
-    <div class="grouplbl">中期 — 「毎日見たくなる」へ</div>
+    <div class="grouplbl">中期 — エージェントを増やす</div>
     <div class="todos">
       <div class="todo">
         <div class="box"></div>
         <div class="body">
-          <div class="t">W4 朝ブリーフ連動・商談準備パック</div>
-          <div class="d">CTOレビューが挙げた"毎日見たくなる"の答え。dx_newsのテーマ再設計＋月曜の週次ダイジェストと合流。</div>
-        </div>
-        <span class="when w-mid">W4</span>
-      </div>
-      <div class="todo">
-        <div class="box"></div>
-        <div class="body">
           <div class="t">Phase 4 残エージェント 3種</div>
-          <div class="d">日記分析／健康管理／官民連携・新規事業。蓄積データの上に、必要度の高い順でプラグイン化。</div>
+          <div class="d">日記分析／健康管理／官民連携・新規事業。蓄積データの上に、必要度の高い順でプラグイン化（未着手）。</div>
         </div>
         <span class="when w-mid">P4</span>
       </div>
@@ -350,9 +446,25 @@
         <div class="box"></div>
         <div class="body">
           <div class="t">Manus成果物の統合</div>
-          <div class="d">法人請求サービスのManus成果物をDrive/Notion経由で記憶層へ取り込み、検索可能にする（設計書 P4）。</div>
+          <div class="d">法人請求サービスのManus成果物をDrive/Notion経由で記憶層へ取り込み、検索可能にする（設計書 P4・未着手）。</div>
         </div>
         <span class="when w-mid">P4</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">W4 朝ブリーフ連動・商談準備パック</div>
+          <div class="d">CTOレビューが挙げた"毎日見たくなる"の答え。dx_newsのテーマ再設計＋月曜の週次ダイジェストと合流。夜間参謀の出口としても効く。</div>
+        </div>
+        <span class="when w-mid">W4</span>
+      </div>
+      <div class="todo">
+        <div class="box"></div>
+        <div class="body">
+          <div class="t">V3 受注／失注の自己改善ループ</div>
+          <div class="d">提案の結果を記憶へ戻し、次の提案の精度を上げる循環。<b>コード上に経路が存在しない＝完全に未着手。</b>(c)の本丸で、夜間参謀で作る記録の型をそのまま提案業務へ広げる形になる。</div>
+        </div>
+        <span class="when w-mid">V3</span>
       </div>
     </div>
 
@@ -361,7 +473,7 @@
       <div class="todo">
         <div class="box"></div>
         <div class="body">
-          <div class="t">画像PDFのOCR ／ 月報生成 ／ Typeless・ScanSnap連携</div>
+          <div class="t">画像PDFのOCR ／ Typeless・ScanSnap連携</div>
           <div class="d">設計書でも優先度を下げた領域。画像PDFの日本語抽出は現状も未対応。必要が出た時点で着手。</div>
         </div>
         <span class="when w-hold">保留</span>
@@ -372,13 +484,13 @@
   <div class="foot">
     <span class="mk">🧭</span>
     <div class="txt">
-      <div class="k">明日の一手</div>
-      <div class="v">W2バックアップの続きへ戻る</div>
-      <div class="s">あとは吉井さんがコマンドを1ブロック貼るだけの状態で止めてある。貼れば当方がテスト実行まで見届ける。</div>
+      <div class="k">次の一手</div>
+      <div class="v">判断を押す。そして提案エージェントをツール化する</div>
+      <div class="s">夜間参謀と相談窓口は動き出した。ここからの燃料は吉井さんの判断（採用/見送り/的外れ・役に立った/ずれてる）。機械側の次は、相談窓口で実証したtool useを提案エージェントへ持ち込むこと。</div>
     </div>
   </div>
 
-  <p class="stamp">AIワークOS 設計図 vs 現在地 ／ 基準：設計書 v1.1（2026-07-07）× 実装（2026-07-19）</p>
+  <p class="stamp">AIワークOS 設計図 vs 現在地 ／ 基準：設計書 v1.1（2026-07-07）× 実装・総点検（2026-09-12）</p>
 
 </div>
 </div>

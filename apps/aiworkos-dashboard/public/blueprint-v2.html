@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AIワークOS 設計図 v2.0（改訂版）</title>
+<title>AIワークOS 設計図 v2.1（改訂版）</title>
 <style>
   :root {
     --ground: #F5F7F2; --panel: #FFFFFF; --panel-2: #FBFCFA;
@@ -52,7 +52,7 @@
     background: linear-gradient(var(--grid) 1px, transparent 1px) 0 0/26px 26px,
                 linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0/26px 26px, var(--panel);
     padding: clamp(22px,3.6vw,40px); overflow: hidden; box-shadow: var(--shadow); }
-  .head::after { content: "v2.0"; position: absolute; top: 18px; right: 22px; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; color: var(--brand); opacity: .75; font-weight: 600; }
+  .head::after { content: "v2.1"; position: absolute; top: 18px; right: 22px; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; color: var(--brand); opacity: .75; font-weight: 600; }
   .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--brand); margin: 0 0 14px; display: flex; align-items: center; gap: 9px; }
   .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--brand-bright); box-shadow: 0 0 0 4px var(--brand-ghost); }
   h1 { font-size: clamp(25px,4.4vw,40px); line-height: 1.15; letter-spacing: -.02em; margin: 0 0 10px; text-wrap: balance; font-weight: 800; }
@@ -148,12 +148,12 @@
 
   <header class="head">
     <p class="eyebrow"><span class="dot"></span>AI WORK OS &nbsp;/&nbsp; 設計図 改訂版</p>
-    <h1>AIワークOS 設計図 v2.0<br>— 現実を織り込んだ更新版</h1>
-    <p class="lede"><b>2DB構成の骨格（Claude＝思考／Notion＝業務ハブ／Supabase＝長期記憶）は不変。</b>そのうえで、実装の中で新しく生まれた3つの層と、前倒しで変わった今後のスケジュールを描き直した。</p>
-    <div class="keepnote">📐 原本 <b>v1.1（2026-07-07・全15章）</b> は <b>~/Desktop/AI/AIワークOS/</b> にそのまま保存。これはその上に重ねる改訂版です。</div>
+    <h1>AIワークOS 設計図 v2.1<br>— 現実を織り込んだ更新版</h1>
+    <p class="lede"><b>2DB構成の骨格（Claude＝思考／Notion＝業務ハブ／Supabase＝長期記憶）は不変。</b>5段パイプラインもそのまま。v2.1では、<b>Memory 2.0（2026-08-28〜29）</b>で作り直した記憶層の現在形と、そこから見えた次の順序を描き直した。</p>
+    <div class="keepnote">📐 原本 <b>v1.1（2026-07-07・全15章）</b> は <b>~/Desktop/AI/AIワークOS/</b> にそのまま保存。これはその上に重ねる改訂版です（v2.0＝2026-07-19 → v2.1＝2026-09-12）。</div>
     <div class="legend">
       <span class="tag keep">■ 不変（v1.1の骨格）</span>
-      <span class="tag new">● v2.0で追加／改訂</span>
+      <span class="tag new">● v2.1で追加／改訂</span>
     </div>
   </header>
 
@@ -204,12 +204,13 @@
         </div>
         <div class="stage db">
           <span class="snum">④ SUPABASE</span>
-          <span class="sname">長期記憶<small>AIが検索する</small></span>
+          <span class="sname">長期記憶<small>AIが検索する／1,604件</small></span>
           <span class="db-badge">DB 2</span>
           <div class="chips">
-            <span class="c">pgvector＋HNSW RAG</span>
-            <span class="c">日記・会議・学び</span>
-            <span class="c hot">成果物RAG（提案ベース）</span>
+            <span class="c">pgvector＋HNSW（strict_order）</span>
+            <span class="c">成果物RAG（提案ベース）</span>
+            <span class="c hot">書き込み＝store-memory 1本</span>
+            <span class="c hot">読み込み＝search-memory 1本</span>
           </div>
         </div>
         <div class="stage">
@@ -218,7 +219,8 @@
           <div class="chips">
             <span class="c">提案書・スライド・武器生成</span>
             <span class="c">週報配信 / SNS発信</span>
-            <span class="c hot">A2 取込ワーカー（Eight/PLAUD）</span>
+            <span class="c">A2 取込ワーカー（Eight/PLAUD）</span>
+            <span class="c hot">月報ドラフト生成</span>
           </div>
         </div>
       </div>
@@ -226,8 +228,10 @@
       <div class="band ops">
         <span class="blabel"><span class="newbadge">NEW</span>運用・セキュリティ層</span>
         <span class="barrow">↕</span>
-        <span class="bitems">全体を下支え ── <b>合言葉認証・監視ダッシュボード・週次バックアップ</b>（設計書v1.1では範囲外だった堅牢性の層）</span>
+        <span class="bitems">全体を下支え ── <b>合言葉ゲート・job_heartbeats・service_health・OS Guardian・毎朝の参謀・npm run test:all（10段）＋E2E</b>（設計書v1.1では範囲外だった堅牢性の層）</span>
       </div>
+
+      <div class="keepnote" style="margin-top:14px;">🔐 <b>Memory 2.0（2026-08-28〜29）</b> ── 記憶層に同一性4列（canonical_document_id / source_document_id / chunk_index / ingest_scheme）を導入。<b>書き込みは store-memory ただ1つの関所</b>（memory_chunks へ直接書く経路は存在しない。RLS有効・ポリシー0／実測で ingest_scheme が null の行はゼロ）、<b>読み込みは search-memory ただ1つの口</b>。あわせてHNSWの取りこぼし（filter starvation）を <b>iterative_scan=strict_order</b> で解消し、成果物0件で作られていた横浜市の提案が40件で再生成された。</div>
     </div>
   </section>
 
@@ -249,35 +253,41 @@
     </div>
 
     <div class="tl">
+      <div class="stop">
+        <span class="node"></span>
+        <div class="when">済 — 7〜9月</div>
+        <div class="h">記憶層の作り直しと、運用・セキュリティ層の完成</div>
+        <div class="d">Memory 2.0（8/28〜29）で同一性の土台を作り直し、書き込み・読み込みをそれぞれ1本の口に絞った。運用層は<b>合言葉ゲート・job_heartbeats・service_health・OS Guardian・毎朝の参謀・test:all（10段）・E2E</b>まで揃って完了。</div>
+      </div>
       <div class="stop soon">
         <span class="node"></span>
-        <div class="when">いま — 7月内</div>
-        <div class="h">運用・セキュリティ層の完成<span class="flag">最優先</span></div>
-        <div class="d"><b>W2バックアップ堅牢化（明日：シークレット登録→テスト実行）</b>→ 取込ワーカーの定期実行を「通知だけ」から本格化。認証・監視は済み。</div>
+        <div class="when">いま — 次の一手</div>
+        <div class="h">夜間参謀<span class="flag">最優先</span></div>
+        <div class="d">毎晩、<b>日記・週報・会議・健康を領域横断で読んで翌朝の示唆を生成し、採用／見送りの判断を記録する</b>。目標は「エージェントが自ら考えるOS」で、足りていないのは機能ではなく構造 ──（a）AIが能動的に起動される場所がゼロ（cron 2本はどちらもLLMを呼ばない）（b）AIが自分で追加調査する手がゼロ（tool use はリポジトリ全体で未使用、資料取得は固定件数の決め打ち）（c）出した示唆の採否・成否が記録されない。夜間参謀は（a）と（c）を同時に埋める。</div>
       </div>
       <div class="stop">
         <span class="node"></span>
-        <div class="when">次 — 8月めど</div>
-        <div class="h">W3 検索精度の底上げ ＋ 実データ拡充</div>
-        <div class="d">ハイブリッド検索（ベクトル＋全文）／ingestを400字で再投入／生成ログ。あわせて<b>Journey 2年分の過去日記</b>や札幌市・議員向け原案を記憶へ投入。</div>
+        <div class="when">次 — W3の残り</div>
+        <div class="h">検索精度の底上げ（残りの半分）</div>
+        <div class="d">400字チャンクでの再投入は<b>完了</b>（AGENTS.mdで全登録経路の厳守を明文化）。残るのは<b>ハイブリッド検索（ベクトル＋全文）と生成ログの記録</b>で、どちらも未着手（tsvectorはリポジトリに0ヒット）。あわせて<b>lib/chunker.ts と documents テーブル</b>の配線 ── どちらも死蔵で、今は「切り方を変えて再生成する」という切り札が使えない。</div>
       </div>
       <div class="stop">
         <span class="node"></span>
-        <div class="when">その次 — 8〜9月めど</div>
+        <div class="when">その次</div>
         <div class="h">W4 朝ブリーフ連動・商談準備パック</div>
-        <div class="d">CTOレビューが挙げた「毎日見たくなる」の答え。<b>dx_newsのテーマ再設計</b>＋月曜の週次ダイジェストと合流させ、朝いちで開く画面にする。</div>
+        <div class="d">CTOレビューが挙げた「毎日見たくなる」の答え。<b>dx_newsのテーマ再設計</b>＋月曜の週次ダイジェストと合流させ、朝いちで開く画面にする。夜間参謀の出口としても効く。</div>
       </div>
       <div class="stop">
         <span class="node"></span>
-        <div class="when">中期 — 秋めど</div>
+        <div class="when">中期</div>
         <div class="h">Phase 4 残エージェント ＋ Manus統合</div>
-        <div class="d">日記分析／健康管理／官民連携・新規事業を必要度の高い順にプラグイン化。<b>Manus成果物（法人請求）</b>をDrive/Notion経由で記憶層へ取り込み検索可能に。</div>
+        <div class="d">提案・壁打ち・武器生成・月報ドラフトは本番稼働。残る<b>日記分析／健康管理／官民連携・新規事業</b>の3種を必要度の高い順にプラグイン化。<b>Manus成果物（法人請求）</b>をDrive/Notion経由で記憶層へ取り込み検索可能に（いずれも未着手）。</div>
       </div>
       <div class="stop idea">
         <span class="node"></span>
         <div class="when">構想 — V3</div>
         <div class="h">受注／失注を記憶に戻す自己改善ループ</div>
-        <div class="d">提案の結果（受注・失注とその理由）を記憶へ戻し、次の提案の精度を上げる循環。設計書の「⑦振り返りが①収集の質を高める」を提案業務で回す姿。<span style="color:var(--ink-faint)">※画像PDFのOCR・月報生成・Typeless連携は必要になった時点で着手（据え置き）。</span></div>
+        <div class="d">提案の結果（受注・失注とその理由）を記憶へ戻し、次の提案の精度を上げる循環。設計書の「⑦振り返りが①収集の質を高める」を提案業務で回す姿。<b>現在コード上に経路は存在しない（未着手）。</b><span style="color:var(--ink-faint)">※画像PDFのOCR・Typeless連携は必要になった時点で着手（据え置き）。</span></div>
       </div>
     </div>
   </section>
@@ -285,13 +295,13 @@
   <div class="foot">
     <span class="mk">🧭</span>
     <div class="txt">
-      <div class="k">原本は歴史として保存 ／ 明日の一手</div>
-      <div class="v">v1.1はそのまま、v2.0で前へ</div>
-      <div class="s">最初の構想（v1.1）は残したまま、この改訂版が現在地からの地図。明日はまず運用層のW2バックアップを仕上げる。</div>
+      <div class="k">原本は歴史として保存 ／ 次の一手</div>
+      <div class="v">v1.1はそのまま、v2.1で前へ</div>
+      <div class="s">最初の構想（v1.1）は残したまま、この改訂版が現在地からの地図。土台（記憶層・運用層）は固まった。次は夜間参謀で、AIが自分から動く場所をひとつ作る。</div>
     </div>
   </div>
 
-  <p class="stamp">AIワークOS 設計図 v2.0（改訂版）／ 原本 v1.1（2026-07-07）を基に 2026-07-19 改訂</p>
+  <p class="stamp">AIワークOS 設計図 v2.1（改訂版）／ 原本 v1.1（2026-07-07）を基に 2026-09-12 改訂（v2.0＝2026-07-19）</p>
 
 </div>
 </div>
