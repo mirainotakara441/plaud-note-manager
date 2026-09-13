@@ -218,11 +218,20 @@ check(
   }
 }
 
-// ── search-memory が v2 を読み、外へは旧9列だけ返すこと（第7.8弾）──────
+// ── search-memory が v3（ハイブリッド）を読み、外へは旧9列だけ返すこと ──────
 // 応答の契約を変えずに読む先だけ替えた、という意図をコードの形で固定する。
+// 2026-09-13: 読む先を v2 → v3（pgroonga全文とのRRF融合）へ更新。
+// 実測全勝→目視審査→Golden突合の関門を通した昇格（docs/hybrid-search-shadow-report.md）。
+// v3 はクエリ本文（query_text）も受け取るので、その受け渡しも固定する。
 {
   const src = fs.readFileSync(path.join(ROOT, "supabase/functions/search-memory/index.ts"), "utf8");
-  check("search-memory: v2 を呼ぶ", src.includes('rpc("match_memory_chunks_v2"'));
+  check("search-memory: v3 を呼ぶ", src.includes('rpc("match_memory_chunks_v3"'));
+  check("search-memory: 全文側へクエリ本文を渡す", src.includes("query_text: query"));
+  check(
+    "search-memory: v2 はもう呼ばない",
+    !/rpc\("match_memory_chunks_v2"/.test(src),
+    "v2 と v3 の両方を呼んでいる"
+  );
   check(
     "search-memory: 旧関数はもう呼ばない",
     !/rpc\("match_memory_chunks"/.test(src),

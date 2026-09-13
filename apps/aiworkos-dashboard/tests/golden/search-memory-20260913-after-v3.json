@@ -1,0 +1,1113 @@
+[
+ {
+  "case": "素-固有名詞",
+  "payload": {
+   "query": "アイフル",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "a7793f78-5ca3-49c9-bc1b-e98a918f457d",
+   "030434be-05b9-44e4-9817-cfbe0a9c15a0",
+   "0dd4bb8d-c19c-49b3-a8a4-d81b90d3b0d5",
+   "18922213-c517-4693-8970-2167c63a2095",
+   "8d690cfb-9e8e-412a-904e-6ba5a5ed4099",
+   "89bd0922-2aaf-4c49-800b-60af76d02c4b",
+   "76e4f265-6043-4d40-be61-f5eccdef81d1",
+   "3e6f2c1a-a8c6-4438-9085-c7179a241e2f"
+  ],
+  "rows": [
+   {
+    "id": "a7793f78-5ca3-49c9-bc1b-e98a918f457d",
+    "source_id": "plaud:0e52a3f01340204998ec222a553d620d#2",
+    "title": "大口顧客（アイフル）進捗とリカバリー計画レビュー｜2",
+    "similarity": 0.868631,
+    "content_md5": "1a393e36df0dd41c49db3532be4ae731"
+   },
+   {
+    "id": "030434be-05b9-44e4-9817-cfbe0a9c15a0",
+    "source_id": "plaud:f3822dd2534c9f993a5e6278aab6c229#2",
+    "title": "【社内】事業者営業推進ミーティング：アコム・ソフトバンク・アイフル・BPOベンダー案件進捗報告｜2",
+    "similarity": 0.857466,
+    "content_md5": "8c94ab73dc6c064f1b1cf2b717e9036f"
+   },
+   {
+    "id": "0dd4bb8d-c19c-49b3-a8a4-d81b90d3b0d5",
+    "source_id": "meeting:社内月報会2026-07-16#3",
+    "title": "【社内 月報会】法人請求オンラインサービス事業・上期活動報告および方針策定会議（2026-07-16）｜3",
+    "similarity": 0.856723,
+    "content_md5": "962844624388f4680c2625fed885df27"
+   },
+   {
+    "id": "18922213-c517-4693-8970-2167c63a2095",
+    "source_id": "https://app.notion.com/39a9363cfff881d89cbce580262b3ed6",
+    "title": "技術トラブルによる会議遅延と提案準備",
+    "similarity": 0.875654,
+    "content_md5": "e3bd90b8f136162c66acaf475f82d728"
+   },
+   {
+    "id": "8d690cfb-9e8e-412a-904e-6ba5a5ed4099",
+    "source_id": "plaud:186d290d8df21d8f15a5e8ad7398323d",
+    "title": "大口顧客および自治体営業の進捗と今後の戦略会議",
+    "similarity": 0.837482,
+    "content_md5": "f38471d90d9943d2d6f3944e74564d55"
+   },
+   {
+    "id": "89bd0922-2aaf-4c49-800b-60af76d02c4b",
+    "source_id": "deliverable:共通:法人請求オンラインサービス_統合セミナー資料.pptx#30",
+    "title": "法人請求オンラインサービス 統合セミナー資料｜スライド｜slide1｜30",
+    "similarity": 0.873215,
+    "content_md5": "0e40a87e56650539aa800405e602e1bd"
+   },
+   {
+    "id": "76e4f265-6043-4d40-be61-f5eccdef81d1",
+    "source_id": "https://app.notion.com/p/39c9363cfff8819092f0e5419798a39a",
+    "title": "会議ファシリテーション術——目的を件名に、アイデア出しと決定を分離する｜1",
+    "similarity": 0.869762,
+    "content_md5": "b90a36e8225243c0b00f14f3b5bd3ff2"
+   },
+   {
+    "id": "3e6f2c1a-a8c6-4438-9085-c7179a241e2f",
+    "source_id": "plaud:f3822dd2534c9f993a5e6278aab6c229",
+    "title": "【社内】事業者営業推進ミーティング：アコム・ソフトバンク・アイフル・BPOベンダー案件進捗報告｜1",
+    "similarity": 0.849511,
+    "content_md5": "e159b568250644627df1f77272ddd401"
+   }
+  ],
+  "ms": 3559
+ },
+ {
+  "case": "素-固有名詞2",
+  "payload": {
+   "query": "内本部長",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "e21d79f3-0da7-49ec-ac57-3521503c5eab",
+   "891909ad-abb7-4daa-a941-c7149fabc204",
+   "67efea46-1da9-4927-826d-2c49bc5a92c6",
+   "c927c7d7-54c1-4da7-b641-8f87e40e0511",
+   "a8ae710b-df06-4d57-8404-c08a9b4ee218",
+   "286f5303-0bac-4d70-ac87-a14601105ef0",
+   "4dd19859-b32a-4f3f-8803-6027fcf51e5a",
+   "add00724-7b86-40c2-b870-fb3fae84f718"
+  ],
+  "rows": [
+   {
+    "id": "e21d79f3-0da7-49ec-ac57-3521503c5eab",
+    "source_id": "weekly_report:6f87bc87-e25e-4791-9b76-9fa74b00c58c:1",
+    "title": "2026-08-31週｜事業者｜東洋紙業",
+    "similarity": 0.891993,
+    "content_md5": "4a49533c16775ca33bfe7b1daf1575ff"
+   },
+   {
+    "id": "891909ad-abb7-4daa-a941-c7149fabc204",
+    "source_id": "gakkai:男子部9月会合2026-07-18",
+    "title": "【学会】男子部メンバー活動状況把握と9月会合に向けた激励体制の構築（竹内本部長・吉井、2026-07-18）｜1",
+    "similarity": 0.891437,
+    "content_md5": "11b46814c7c3d5b7af936e47c3bd96c8"
+   },
+   {
+    "id": "67efea46-1da9-4927-826d-2c49bc5a92c6",
+    "source_id": "gakkai:男子部9月会合2026-07-18#3",
+    "title": "【学会】男子部メンバー活動状況把握と9月会合に向けた激励体制の構築（竹内本部長・吉井、2026-07-18）｜3",
+    "similarity": 0.890464,
+    "content_md5": "e9e27fd31238ea014463aabfbdbe3417"
+   },
+   {
+    "id": "c927c7d7-54c1-4da7-b641-8f87e40e0511",
+    "source_id": "gakkai:男子部9月会合2026-07-18#2",
+    "title": "【学会】男子部メンバー活動状況把握と9月会合に向けた激励体制の構築（竹内本部長・吉井、2026-07-18）｜2",
+    "similarity": 0.889083,
+    "content_md5": "d73347bb34d7575c09ac06ebb321fdbe"
+   },
+   {
+    "id": "a8ae710b-df06-4d57-8404-c08a9b4ee218",
+    "source_id": "https://app.notion.com/p/9-2-3d09363cfff88101831ee7ede0ffa244",
+    "title": "9/2 野球場での突撃、東洋紙業への圧、小倉のもつ鍋——一日で三度、人に踏み込んだ日",
+    "similarity": 0.883946,
+    "content_md5": "76cdb23c36a9690746befa9c599d52d5"
+   },
+   {
+    "id": "286f5303-0bac-4d70-ac87-a14601105ef0",
+    "source_id": "gakkai:創価池田本部会合2026-07-19",
+    "title": "【学会】創価池田本部の会合 新本部長の自己紹介と青年部の活動目標・新世紀の歌（2026-07-19）｜1",
+    "similarity": 0.913062,
+    "content_md5": "e35d060a037a164d87367d924deeceba"
+   },
+   {
+    "id": "4dd19859-b32a-4f3f-8803-6027fcf51e5a",
+    "source_id": "https://app.notion.com/p/8-12-1on1-3ba9363cfff88100aafdf38b6af29a5a#2",
+    "title": "8/12 広島の一日——部長との1on1で事業化への懸念点に対する提言、広島市への提案（響かず）、そして公明議員控室へ突撃訪問でのご縁｜2",
+    "similarity": 0.902585,
+    "content_md5": "d5773a0bd5fe78223d29b84c25249ef7"
+   },
+   {
+    "id": "add00724-7b86-40c2-b870-fb3fae84f718",
+    "source_id": "https://app.notion.com/p/8-12-1on1-3ba9363cfff88100aafdf38b6af29a5a",
+    "title": "8/12 広島の一日——部長との1on1で事業化への懸念点に対する提言、広島市への提案（響かず）、そして公明議員控室へ突撃訪問でのご縁｜1",
+    "similarity": 0.898778,
+    "content_md5": "4d75dc54d5b271c0b7d365a64fbb51e2"
+   }
+  ],
+  "ms": 682
+ },
+ {
+  "case": "素-複合語",
+  "payload": {
+   "query": "書かない窓口",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "9e8f54cd-835c-457f-828e-a5c57e381375",
+   "a340d77d-89ff-4f0c-988c-f1a0bf8b0621",
+   "afbb64d5-eb61-4409-8f47-82147f6ce70c",
+   "363920df-544b-46ff-b18c-00f191cd0c2f",
+   "32364ea6-c0c6-4ca3-ab63-471740071f41",
+   "737a94b3-9c0a-4f97-8f4e-3cd0f7e5347e",
+   "2d1e8dbd-03c5-4ab2-8d6b-1cb853f5461c",
+   "a6713bac-eae3-465a-b4b9-56307fcd5efe"
+  ],
+  "rows": [
+   {
+    "id": "9e8f54cd-835c-457f-828e-a5c57e381375",
+    "source_id": "deliverable:日本列島地方議員勉強会:text:無題:2026-08-14#24",
+    "title": "無題｜メモ｜text1｜24",
+    "similarity": 0.890155,
+    "content_md5": "d379290e46019d84388e76b172affe6d"
+   },
+   {
+    "id": "a340d77d-89ff-4f0c-988c-f1a0bf8b0621",
+    "source_id": "deliverable:横浜市:横浜市様_法人請求オンラインサービス実施理由書_最新版_20260722.docx",
+    "title": "横浜市_実施理由書｜提案書｜p1｜1",
+    "similarity": 0.904564,
+    "content_md5": "f5ba69d5ae56beb87fa60dbabca925be"
+   },
+   {
+    "id": "afbb64d5-eb61-4409-8f47-82147f6ce70c",
+    "source_id": "deliverable:共通:法人請求オンラインサービス_統合セミナー資料.pptx#36",
+    "title": "法人請求オンラインサービス 統合セミナー資料｜スライド｜slide1｜36",
+    "similarity": 0.864846,
+    "content_md5": "e1e4f59512974dea3eafacc69a6e6342"
+   },
+   {
+    "id": "363920df-544b-46ff-b18c-00f191cd0c2f",
+    "source_id": "deliverable:経済同友会提言:本文.pdf:p1",
+    "title": "本文｜提案書｜p1",
+    "similarity": 0.900961,
+    "content_md5": "ba8eeaf9f264b7f3697cb4fef5e720b5"
+   },
+   {
+    "id": "32364ea6-c0c6-4ca3-ab63-471740071f41",
+    "source_id": "deliverable:共通:20160724_法人請求オンラインサービス実施理由書_最新版_20260722.docx",
+    "title": "実施理由書_汎用最新版｜提案書｜p1｜1",
+    "similarity": 0.900818,
+    "content_md5": "f5ba69d5ae56beb87fa60dbabca925be"
+   },
+   {
+    "id": "737a94b3-9c0a-4f97-8f4e-3cd0f7e5347e",
+    "source_id": "weekly_report:849ed55c-7bb6-4ccc-8350-5a53cd609b1d:1",
+    "title": "2026-08-17週｜自治体｜岸和田市",
+    "similarity": 0.868675,
+    "content_md5": "93f5fbd49b22e7799e1956be89768a9b"
+   },
+   {
+    "id": "2d1e8dbd-03c5-4ab2-8d6b-1cb853f5461c",
+    "source_id": "deliverable:共通:【法人OS：お客様向け】実施理由書（政令指定都市向け汎用版）.txt#21",
+    "title": "実施理由書_政令指定都市向け汎用版｜提案書｜slide1｜21",
+    "similarity": 0.898211,
+    "content_md5": "66591166a9e1e8c814a1c68e5fd6ea83"
+   },
+   {
+    "id": "a6713bac-eae3-465a-b4b9-56307fcd5efe",
+    "source_id": "deliverable:経済同友会提言:本文.pdf:p7-1",
+    "title": "本文｜提案書｜p7-1",
+    "similarity": 0.893711,
+    "content_md5": "8ba84ab425af346cf4e051e22156b54d"
+   }
+  ],
+  "ms": 436
+ },
+ {
+  "case": "素-制度",
+  "payload": {
+   "query": "定額小為替",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "24caa447-c27f-406c-8806-e0a9f8b2f625",
+   "a067cc17-b78f-4cce-b2d9-5c9d260aad78",
+   "ba8c3c54-9b6b-44f7-afbd-015e57a93396",
+   "5b9047fe-cc7c-4c17-b97b-2d20b375127b",
+   "4335d551-f249-4bc4-9b84-2811b2875599",
+   "b123b8f0-8dd4-4c99-b5d9-9235d2f8a6bc",
+   "c4a1a7ae-84ee-4051-bd85-2e14920b713e",
+   "a86bb61f-391f-4702-9fb1-87a670bf7b50"
+  ],
+  "rows": [
+   {
+    "id": "24caa447-c27f-406c-8806-e0a9f8b2f625",
+    "source_id": "deliverable:共通:【法人OS：お客様向け】法人請求オンラインサービス_実施理由書_最終版_課金テーブル反映.txt#38",
+    "title": "実施理由書_最終版_課金テーブル反映｜提案書｜slide1｜38",
+    "similarity": 0.88813,
+    "content_md5": "b0962e6fb2a549b656223b59b8302f75"
+   },
+   {
+    "id": "a067cc17-b78f-4cce-b2d9-5c9d260aad78",
+    "source_id": "deliverable:相模原市:【法人OS：相模原市】実施理由書_郵送請求のDX化に向けた取り組みについて_20260824.docx:p5",
+    "title": "【法人OS：相模原市】実施理由書_郵送請求のDX化に向けた取り組みについて_20260824｜実習書｜p5",
+    "similarity": 0.863001,
+    "content_md5": "4afbe5bb9a9febeaf8cd8014be0fe5bd"
+   },
+   {
+    "id": "ba8c3c54-9b6b-44f7-afbd-015e57a93396",
+    "source_id": "qa:法人請求:D-03:1",
+    "title": "法人請求 営業実戦QA D-03 定額小為替の事務負担と枚数を問う",
+    "similarity": 0.872291,
+    "content_md5": "fa181f97f60c2a5f825ecd6679507555"
+   },
+   {
+    "id": "5b9047fe-cc7c-4c17-b97b-2d20b375127b",
+    "source_id": "deliverable:練馬区:text:無題:2026-08-21:text9",
+    "title": "無題｜メモ｜text9",
+    "similarity": 0.870221,
+    "content_md5": "378cab73ff484e9ce2d01d613d633230"
+   },
+   {
+    "id": "4335d551-f249-4bc4-9b84-2811b2875599",
+    "source_id": "deliverable:共通:定額小為替に依存しない郵送請求業務へ──キャッシュレス化による不正リスクの構造的排除.pdf",
+    "title": "定額小為替に依存しない郵送請求業務へ（キャッシュレス化による不正リスクの構造的排除）｜その他｜chunk1｜1",
+    "similarity": 0.886379,
+    "content_md5": "57b7cdd3026672fccd1df973ac4644e3"
+   },
+   {
+    "id": "b123b8f0-8dd4-4c99-b5d9-9235d2f8a6bc",
+    "source_id": "deliverable:広島市:text:無題:2026-08-12#4",
+    "title": "無題｜メモ｜text1｜4",
+    "similarity": 0.880229,
+    "content_md5": "fcb234c595f4f8e5492bbd89884cd550"
+   },
+   {
+    "id": "c4a1a7ae-84ee-4051-bd85-2e14920b713e",
+    "source_id": "deliverable:日本列島地方議員勉強会:text:無題:2026-08-14#6",
+    "title": "無題｜メモ｜text1｜6",
+    "similarity": 0.855982,
+    "content_md5": "b5a19d61ae7a16832416e27f404eda8b"
+   },
+   {
+    "id": "a86bb61f-391f-4702-9fb1-87a670bf7b50",
+    "source_id": "slide-refine:4a844003-410a-4627-b1e4-0fba0de58586#4",
+    "title": "郵送請求業務を取り巻く環境変化（法人請求オンラインサービス提案スライド）｜スライド壁打ち｜2026-07-27｜1/7｜4",
+    "similarity": 0.863129,
+    "content_md5": "e722da19d7eb21ae2bbcf5d37507ac6d"
+   }
+  ],
+  "ms": 451
+ },
+ {
+  "case": "素-意味1",
+  "payload": {
+   "query": "決裁が通らない理由",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "9445f515-ffd3-4a2c-a61f-e56b1decbb43",
+   "c960e7aa-5493-488d-997f-8d34c954c3fe",
+   "0fba6050-8b01-4339-96b1-5f066ccc503c",
+   "d711d6a7-7f70-477e-9cbe-7eb0fe4b9898",
+   "08e341d9-82f3-4594-b314-91dbc225ec2d",
+   "b016d8cc-cfe7-41b2-8957-345615c8be6f",
+   "2c766a6d-4d04-4ce6-b682-1990f43211c5",
+   "afa8396a-7354-426f-b2b4-ec3896ede4d8"
+  ],
+  "rows": [
+   {
+    "id": "9445f515-ffd3-4a2c-a61f-e56b1decbb43",
+    "source_id": "https://app.notion.com/p/9-1-3ce9363cfff88115a63ee43f37e18a33",
+    "title": "9/1 尾崎議員から多くの示唆をいただく。政令市攻略のヒント",
+    "similarity": 0.874159,
+    "content_md5": "54c2d7eef2e2c91cb30b610815587711"
+   },
+   {
+    "id": "c960e7aa-5493-488d-997f-8d34c954c3fe",
+    "source_id": "qa:法人請求:B-12:3",
+    "title": "法人請求 営業実戦QA B-12 現場から要望が上がっていない",
+    "similarity": 0.873545,
+    "content_md5": "9ccdbe45c37afe02ffea9987d42128a3"
+   },
+   {
+    "id": "0fba6050-8b01-4339-96b1-5f066ccc503c",
+    "source_id": "qa:法人請求:B-12:1",
+    "title": "法人請求 営業実戦QA B-12 現場から要望が上がっていない",
+    "similarity": 0.867338,
+    "content_md5": "9c69ff1e73e92476460596bed9e7148f"
+   },
+   {
+    "id": "d711d6a7-7f70-477e-9cbe-7eb0fe4b9898",
+    "source_id": "meeting:熊本市:text:キャリアリンク同行:2026-09-03:6",
+    "title": "キャリアリンク同行",
+    "similarity": 0.88812,
+    "content_md5": "f5894889326707a74c3bfc0f7fd2d02c"
+   },
+   {
+    "id": "08e341d9-82f3-4594-b314-91dbc225ec2d",
+    "source_id": "https://app.notion.com/p/3a39363cfff88129ac3bd7fe82243a3d",
+    "title": "2/2 走り抜いた月曜日、組織のブレーキと向き合う",
+    "similarity": 0.887193,
+    "content_md5": "1fbd1a839ee6df0427a4a80b5777fc5c"
+   },
+   {
+    "id": "b016d8cc-cfe7-41b2-8957-345615c8be6f",
+    "source_id": "qa:法人請求:B-29:1",
+    "title": "法人請求 営業実戦QA B-29 委託しているので、職員の負担は特にない",
+    "similarity": 0.866066,
+    "content_md5": "5aa363c24afd2fefc71e785722556a8c"
+   },
+   {
+    "id": "2c766a6d-4d04-4ce6-b682-1990f43211c5",
+    "source_id": "deliverable:練馬区:text:無題:2026-08-21:text6",
+    "title": "無題｜メモ｜text6",
+    "similarity": 0.886872,
+    "content_md5": "a565b0fad2da67dbec6584c0e2b9ee32"
+   },
+   {
+    "id": "afa8396a-7354-426f-b2b4-ec3896ede4d8",
+    "source_id": "qa:法人請求:B-04:1",
+    "title": "法人請求 営業実戦QA B-04 件数を把握していない",
+    "similarity": 0.853603,
+    "content_md5": "19bd1283a2b2ad96ae19cb05d7ddc2a2"
+   }
+  ],
+  "ms": 424
+ },
+ {
+  "case": "素-意味2",
+  "payload": {
+   "query": "自治体への提案がうまくいった要因",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "98be352a-620f-4d5b-89a0-cde7efe6c76e",
+   "b617ef79-d544-4a11-b151-929b4a87df82",
+   "47d657d7-4f72-4a85-9acc-51ede6e0808e",
+   "692b1d1a-e143-4013-a7b1-9477fff494b6",
+   "9445f515-ffd3-4a2c-a61f-e56b1decbb43",
+   "9e31137d-f0fc-40cc-b8b3-90dce890f8be",
+   "d80c3117-c4e5-4c01-9c05-cfb15d737641",
+   "d8a51a61-58ca-4f6a-80e6-65fddb9b74bc"
+  ],
+  "rows": [
+   {
+    "id": "98be352a-620f-4d5b-89a0-cde7efe6c76e",
+    "source_id": "deliverable:ソフトバンク:text:無題:2026-08-26:text17",
+    "title": "無題｜メモ｜text17",
+    "similarity": 0.910786,
+    "content_md5": "ef9efdca1646b2405982e168cf09d890"
+   },
+   {
+    "id": "b617ef79-d544-4a11-b151-929b4a87df82",
+    "source_id": "weapon:横浜市:市民サービス向上訴求資料の統合・再送|定量試算エクセルの共有|課長・部長・局長級への接触ルート確保|外部圧力・追い風の活用|8月訪問に向けた日程・体制準備:story",
+    "title": "横浜市 市民サービス向上訴求資料の統合・再送 ほか4件｜武器｜想定ストーリー｜2026-07-18｜1/6｜1",
+    "similarity": 0.841817,
+    "content_md5": "d1a387c086850517a701819a1dc05b74"
+   },
+   {
+    "id": "47d657d7-4f72-4a85-9acc-51ede6e0808e",
+    "source_id": "deliverable:ソフトバンク:text:無題:2026-08-26:text12",
+    "title": "無題｜メモ｜text12",
+    "similarity": 0.909284,
+    "content_md5": "199d3ff688ad7191729d33945f388bbc"
+   },
+   {
+    "id": "692b1d1a-e143-4013-a7b1-9477fff494b6",
+    "source_id": "weapon:横浜市:次回面談する際に、個人向けオンラインサービスについて、市民側のメリットについても記載したい。:story",
+    "title": "横浜市 次回面談する際に、個人向けオンラインサービスについて、市民側のメリットについても記載したい。｜武器｜想定ストーリー｜2026-07-19｜1/4｜1",
+    "similarity": 0.840049,
+    "content_md5": "b706a2eea282749bdc77a2226f41187f"
+   },
+   {
+    "id": "9445f515-ffd3-4a2c-a61f-e56b1decbb43",
+    "source_id": "https://app.notion.com/p/9-1-3ce9363cfff88115a63ee43f37e18a33",
+    "title": "9/1 尾崎議員から多くの示唆をいただく。政令市攻略のヒント",
+    "similarity": 0.854381,
+    "content_md5": "54c2d7eef2e2c91cb30b610815587711"
+   },
+   {
+    "id": "9e31137d-f0fc-40cc-b8b3-90dce890f8be",
+    "source_id": "https://app.notion.com/p/3939363cfff881ddb789f327f3b4b938",
+    "title": "4/14 頭を使い切った一日——自治体獲得の差分を埋めていく",
+    "similarity": 0.907405,
+    "content_md5": "495011bf78f6484d9ee0a7082ee43a40"
+   },
+   {
+    "id": "d80c3117-c4e5-4c01-9c05-cfb15d737641",
+    "source_id": "weapon:横浜市:次回面談する際に、個人向けオンラインサービスについて、市民側のメリットについても記載したい。:story#4",
+    "title": "横浜市 次回面談する際に、個人向けオンラインサービスについて、市民側のメリットについても記載したい。｜武器｜想定ストーリー｜2026-07-19｜1/4｜4",
+    "similarity": 0.84764,
+    "content_md5": "e5d948e55b7149c4ff6c1329d63f42c1"
+   },
+   {
+    "id": "d8a51a61-58ca-4f6a-80e6-65fddb9b74bc",
+    "source_id": "deliverable:墨田区:text:無題:2026-08-24:text13",
+    "title": "無題｜メモ｜text13",
+    "similarity": 0.907349,
+    "content_md5": "1944db906432087c9dc387af567d01fb"
+   }
+  ],
+  "ms": 457
+ },
+ {
+  "case": "素-意味3",
+  "payload": {
+   "query": "議員への訴求の仕方",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "97adb9b3-ef0e-4ad3-ad6c-37a9a2789265",
+   "3b8e2369-06a1-4c0c-817f-943a1a785296",
+   "a40e9d2f-9dcf-4083-84b9-6c73b8b6bc61",
+   "34880002-7bf9-4213-8ef9-ffb8dfe5e422",
+   "7160d1cd-ab29-4711-91b8-820b838151cf",
+   "112a614c-aec0-45aa-afff-0e093cc6778e",
+   "4167ffeb-b90a-4a3a-8106-c395b15422ee",
+   "0757479d-3c80-4068-83e4-365d546f4671"
+  ],
+  "rows": [
+   {
+    "id": "97adb9b3-ef0e-4ad3-ad6c-37a9a2789265",
+    "source_id": "plaud:d2fc9dd697fd9244c9b1350c43d10681",
+    "title": "08-18 【社内 大阪市への無償提供戦略】市本さん",
+    "similarity": 0.874495,
+    "content_md5": "cdc22e3d3f58f75efb29bb216bd578bc"
+   },
+   {
+    "id": "3b8e2369-06a1-4c0c-817f-943a1a785296",
+    "source_id": "deliverable:日本列島地方議員勉強会:20260814_日本列島地方議員勉強会.pptx#34",
+    "title": "20260814_日本列島地方議員勉強会｜スライド｜slide1｜34",
+    "similarity": 0.884707,
+    "content_md5": "1d6ec7c6fd561bf74bc7488182ebf7c9"
+   },
+   {
+    "id": "a40e9d2f-9dcf-4083-84b9-6c73b8b6bc61",
+    "source_id": "deliverable:墨田区:text:無題:2026-08-24:text9",
+    "title": "無題｜メモ｜text9",
+    "similarity": 0.860571,
+    "content_md5": "280086f8a6dcac71fc61cf902f9eed2f"
+   },
+   {
+    "id": "34880002-7bf9-4213-8ef9-ffb8dfe5e422",
+    "source_id": "deliverable:経済同友会提言:本文.pdf:p8-1",
+    "title": "本文｜提案書｜p8-1",
+    "similarity": 0.882093,
+    "content_md5": "952d4f99a61b2a419a1bfec085200274"
+   },
+   {
+    "id": "7160d1cd-ab29-4711-91b8-820b838151cf",
+    "source_id": "meeting:墨田区:text:墨田区 福谷局長 面談議事メモ:2026-08-24:9",
+    "title": "墨田区 福谷局長 面談議事メモ",
+    "similarity": 0.858611,
+    "content_md5": "280086f8a6dcac71fc61cf902f9eed2f"
+   },
+   {
+    "id": "112a614c-aec0-45aa-afff-0e093cc6778e",
+    "source_id": "meeting:ソフトバンク:text:統括部長挨拶：トライアル申込書のお礼:2026-08-24:4",
+    "title": "統括部長挨拶：トライアル申込書のお礼",
+    "similarity": 0.850361,
+    "content_md5": "7e859b36c19d417909e36a0ceb557fec"
+   },
+   {
+    "id": "4167ffeb-b90a-4a3a-8106-c395b15422ee",
+    "source_id": "deliverable:経済同友会提言:本文.pdf:p16-1",
+    "title": "本文｜提案書｜p16-1",
+    "similarity": 0.881142,
+    "content_md5": "bf5d38fc87986bf7058103df6834eac5"
+   },
+   {
+    "id": "0757479d-3c80-4068-83e4-365d546f4671",
+    "source_id": "deliverable:豊島区:標準フォーマット_法人請求オンラインサービスご案内資料.pptx#3",
+    "title": "標準フォーマット_法人請求オンラインサービスご案内資料｜提案書｜slide1｜3",
+    "similarity": 0.879546,
+    "content_md5": "f1db6954bfd83f6b60de6e5cb93c3f81"
+   }
+  ],
+  "ms": 428
+ },
+ {
+  "case": "type-会議",
+  "payload": {
+   "query": "東洋紙業 懸念",
+   "source_type": "会議",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "f1115179-cc35-4309-871d-edb749b976c4",
+   "2e80b35f-4849-484d-b0ef-79cf2e00eae8",
+   "8de1da35-4d50-4906-83a3-8fa9d3cf0afa",
+   "9fe8723a-6048-46a2-ada4-b46911dfddaa",
+   "9ad8566b-019c-432b-acaf-e9efe543c73b",
+   "e6070e91-7bb3-4b5f-937f-88311d4fab0a",
+   "0885cdcf-01c7-4c8e-9275-303e98ae8eda",
+   "2a3ebac8-4734-4d6f-aac4-4e1577a83dbf"
+  ],
+  "rows": [
+   {
+    "id": "f1115179-cc35-4309-871d-edb749b976c4",
+    "source_id": "meeting:事業者対策:text:東洋紙業、アフラック:2026-08-27:1",
+    "title": "東洋紙業、アフラック",
+    "similarity": 0.899211,
+    "content_md5": "9514dfeeebbff9f341c33bc63b595526"
+   },
+   {
+    "id": "2e80b35f-4849-484d-b0ef-79cf2e00eae8",
+    "source_id": "plaud:fd67431c144b0dde12b9f4bbb7e56033",
+    "title": "東洋紙業｜法人請求オンラインサービス導入状況共有と運用課題整理",
+    "similarity": 0.881872,
+    "content_md5": "487230d8a086edd0037d61640a4b24ad"
+   },
+   {
+    "id": "8de1da35-4d50-4906-83a3-8fa9d3cf0afa",
+    "source_id": "meeting:事業者対策:text:東洋紙業、アフラック:2026-08-27:5",
+    "title": "東洋紙業、アフラック",
+    "similarity": 0.880834,
+    "content_md5": "b54bf2e02426a8507b3a3a4a696b4f14"
+   },
+   {
+    "id": "9fe8723a-6048-46a2-ada4-b46911dfddaa",
+    "source_id": "meeting:事業者対策:text:東洋紙業、アフラック:2026-08-27:7",
+    "title": "東洋紙業、アフラック",
+    "similarity": 0.869198,
+    "content_md5": "81a45039a0ef587fa0e00737bca6fef9"
+   },
+   {
+    "id": "9ad8566b-019c-432b-acaf-e9efe543c73b",
+    "source_id": "plaud:7bfd2b77ccfdec862a1b099b341fdbcd#2",
+    "title": "法人向けオンライン請求サービス導入推進に関する協議サマリー｜2",
+    "similarity": 0.892036,
+    "content_md5": "3e17b17537c42ddc6e757224354270ea"
+   },
+   {
+    "id": "e6070e91-7bb3-4b5f-937f-88311d4fab0a",
+    "source_id": "meeting:戦略合宿:text:価格について:2026-08-21:3",
+    "title": "価格について",
+    "similarity": 0.890099,
+    "content_md5": "489950922c9e7b2a2f662957898642dd"
+   },
+   {
+    "id": "0885cdcf-01c7-4c8e-9275-303e98ae8eda",
+    "source_id": "plaud:4b2a1841d4a60436c2f5aa8032e0a032",
+    "title": "【社外　相模原市】法人請求オンラインサービス導入検討に関する協議",
+    "similarity": 0.840968,
+    "content_md5": "04cf1ccaf4279d3105b3f31d285207d8"
+   },
+   {
+    "id": "2a3ebac8-4734-4d6f-aac4-4e1577a83dbf",
+    "source_id": "meeting:社内月報会2026-07-16#4",
+    "title": "【社内 月報会】法人請求オンラインサービス事業・上期活動報告および方針策定会議（2026-07-16）｜4",
+    "similarity": 0.856207,
+    "content_md5": "2276f4eefac9229fbf8676c5c32a0785"
+   }
+  ],
+  "ms": 398
+ },
+ {
+  "case": "type-成果物",
+  "payload": {
+   "query": "横浜市 提案 骨子",
+   "source_type": "成果物",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "00679042-54de-4bfa-b36b-49ff5e359c8f",
+   "42ac9cbd-573f-4905-82c1-935daf5e4c82",
+   "83cfa68f-ea74-4311-a2cd-fdc438ac18f2",
+   "12b6c040-3073-4695-bedb-9b2100a04755",
+   "34fcd274-6c24-4a6e-af44-5faf6003a73c",
+   "34880002-7bf9-4213-8ef9-ffb8dfe5e422",
+   "e6ed48ac-aab2-4896-a3d4-e699229cb564",
+   "4167ffeb-b90a-4a3a-8106-c395b15422ee"
+  ],
+  "rows": [
+   {
+    "id": "00679042-54de-4bfa-b36b-49ff5e359c8f",
+    "source_id": "deliverable:横浜市:横浜市様_法人請求オンラインサービス実施理由書_最新版_20260722.docx#10",
+    "title": "横浜市_実施理由書｜提案書｜p1｜10",
+    "similarity": 0.86765,
+    "content_md5": "b671654d453360807ba42c5ccfb29767"
+   },
+   {
+    "id": "42ac9cbd-573f-4905-82c1-935daf5e4c82",
+    "source_id": "deliverable:豊島区:標準フォーマット_法人請求オンラインサービスご案内資料.pptx#9",
+    "title": "標準フォーマット_法人請求オンラインサービスご案内資料｜提案書｜slide1｜9",
+    "similarity": 0.86611,
+    "content_md5": "93deeaa415ce396c3b8e5c1cfa3b5bb5"
+   },
+   {
+    "id": "83cfa68f-ea74-4311-a2cd-fdc438ac18f2",
+    "source_id": "deliverable:横浜市:横浜市様_法人請求オンラインサービス実施理由書_最新版_20260722.docx#14",
+    "title": "横浜市_実施理由書｜提案書｜p1｜14",
+    "similarity": 0.864456,
+    "content_md5": "b2154dc35ff751a64427b01056b69ea3"
+   },
+   {
+    "id": "12b6c040-3073-4695-bedb-9b2100a04755",
+    "source_id": "deliverable:日本列島地方議員勉強会:text:無題:2026-08-14#16",
+    "title": "無題｜メモ｜text1｜16",
+    "similarity": 0.86442,
+    "content_md5": "90d9b0cc6fa1f3c6e42380f849ab6c56"
+   },
+   {
+    "id": "34fcd274-6c24-4a6e-af44-5faf6003a73c",
+    "source_id": "deliverable:共通:法人請求オンラインサービス_2025年度振り返り・2026年度戦略.md#9",
+    "title": "法人請求オンラインサービス 2025年度振り返り・2026年度戦略｜報告書｜slide1｜9",
+    "similarity": 0.86425,
+    "content_md5": "1782db354b55f65e4d8a4f2f46618916"
+   },
+   {
+    "id": "34880002-7bf9-4213-8ef9-ffb8dfe5e422",
+    "source_id": "deliverable:経済同友会提言:本文.pdf:p8-1",
+    "title": "本文｜提案書｜p8-1",
+    "similarity": 0.862869,
+    "content_md5": "952d4f99a61b2a419a1bfec085200274"
+   },
+   {
+    "id": "e6ed48ac-aab2-4896-a3d4-e699229cb564",
+    "source_id": "deliverable:豊島区:標準フォーマット_法人請求オンラインサービスご案内資料.pptx#8",
+    "title": "標準フォーマット_法人請求オンラインサービスご案内資料｜提案書｜slide1｜8",
+    "similarity": 0.8619,
+    "content_md5": "3bc5cbbcfff23ed8622fa7b5751484d0"
+   },
+   {
+    "id": "4167ffeb-b90a-4a3a-8106-c395b15422ee",
+    "source_id": "deliverable:経済同友会提言:本文.pdf:p16-1",
+    "title": "本文｜提案書｜p16-1",
+    "similarity": 0.861301,
+    "content_md5": "bf5d38fc87986bf7058103df6834eac5"
+   }
+  ],
+  "ms": 392
+ },
+ {
+  "case": "type-日記",
+  "payload": {
+   "query": "睡眠 回復",
+   "source_type": "日記",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "43f05b1a-eb0f-491c-aacf-b1befa7402e8",
+   "dafd3655-eb1d-415c-a1f1-90c5981d72d9",
+   "344d2009-7d3a-4ea8-8ccd-bfcff5c85e2b",
+   "38999ab3-dff0-4adc-8be1-570854b98757",
+   "dc13a7a8-708b-457b-81b3-41de3bd2c05c",
+   "e3b31e62-7333-4efb-a756-e5f6e4419834",
+   "9ec87cda-19d0-4ec6-ba37-b409896e2e1c",
+   "fbb6bfb1-122a-4bf9-866e-98b577b00dc8"
+  ],
+  "rows": [
+   {
+    "id": "43f05b1a-eb0f-491c-aacf-b1befa7402e8",
+    "source_id": "https://app.notion.com/p/8-30-3cc9363cfff88139abc3fdfd67c6529d",
+    "title": "8/30 母への誕生日メッセージと、ゆっくりの一日",
+    "similarity": 0.831828,
+    "content_md5": "4f6590cebf909656ddc45bd2516d636f"
+   },
+   {
+    "id": "dafd3655-eb1d-415c-a1f1-90c5981d72d9",
+    "source_id": "https://app.notion.com/p/3939363cfff881dcb995dbae39cd8096",
+    "title": "5/16 【転】体調不良1週間——でも子どもたちと公園へ、明日への準備",
+    "similarity": 0.869406,
+    "content_md5": "b8c2049e6b07a7a0728f66bcc24bda80"
+   },
+   {
+    "id": "344d2009-7d3a-4ea8-8ccd-bfcff5c85e2b",
+    "source_id": "https://app.notion.com/p/8-3-Spearhead-AI-3b19363cfff88136b3aac14b24ee9397",
+    "title": "8/3 夏休み初日——Spearhead始動、家庭訪問、生成AIブートキャンプ・キックオフ｜1",
+    "similarity": 0.864575,
+    "content_md5": "75f91a2dcb7ba6153755399f62b04277"
+   },
+   {
+    "id": "38999ab3-dff0-4adc-8be1-570854b98757",
+    "source_id": "https://app.notion.com/p/9-4-4-3d39363cfff881d1ba5bf3e96426e83b",
+    "title": "9/4 有休のゆっくりタイム　エイジェック、ベスト4進出",
+    "similarity": 0.841842,
+    "content_md5": "6096327ab5d90b78bd3ce0cd55abf427"
+   },
+   {
+    "id": "dc13a7a8-708b-457b-81b3-41de3bd2c05c",
+    "source_id": "https://app.notion.com/p/3939363cfff8814b86a7c8da2352e700",
+    "title": "5/17 【転】座談会・Claude Code・家庭訪問——全部やり切った日",
+    "similarity": 0.862746,
+    "content_md5": "f3adf728475c5d117aa12d938b1e4f1a"
+   },
+   {
+    "id": "e3b31e62-7333-4efb-a756-e5f6e4419834",
+    "source_id": "https://app.notion.com/p/3a39363cfff881c6ad01e7c5191aa944",
+    "title": "1/11 体調不良、12時間睡眠、健翔と勤行",
+    "similarity": 0.846417,
+    "content_md5": "d04cf7db88e35cc207ebe0a2445ce6f4"
+   },
+   {
+    "id": "9ec87cda-19d0-4ec6-ba37-b409896e2e1c",
+    "source_id": "https://app.notion.com/p/3939363cfff8817ba7bee5042cc69676",
+    "title": "4/25 Claude Code・保護者会・越川さん——学びが連続した土曜日",
+    "similarity": 0.861627,
+    "content_md5": "e5256534d67e311317df7b33664c66a0"
+   },
+   {
+    "id": "fbb6bfb1-122a-4bf9-866e-98b577b00dc8",
+    "source_id": "https://app.notion.com/p/8-8-6-AI-39-3b89363cfff8818fa11dfbc7e0e881ab",
+    "title": "8/8 夏休み6日目——蓼科湖で生成AI鍛錬、そして39度の発熱で帰路",
+    "similarity": 0.846189,
+    "content_md5": "18fa59d4e0608a730c84ab9e2b1643c7"
+   }
+  ],
+  "ms": 405
+ },
+ {
+  "case": "org-熊本市",
+  "payload": {
+   "query": "熊本市 論点",
+   "organization": "熊本市",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 8,
+  "keys": [
+   "0f7db2fb-c51b-48ab-bc18-9cc7589cb3ac",
+   "4ffe7418-47d1-430c-9688-28bc7faa9eb0",
+   "36ca3108-d67c-4f39-8ec8-e9a207e52677",
+   "48cd833c-cacb-4aee-a5dd-996ea78b2064",
+   "d2463239-be3f-400c-8fc3-fd559cb3624f",
+   "1c084e79-dc67-472e-809b-9b6c8e5eb688",
+   "5c6275d2-28cc-43ee-968b-b24da11cf547",
+   "07bae067-117f-4541-b052-123993c26963"
+  ],
+  "rows": [
+   {
+    "id": "0f7db2fb-c51b-48ab-bc18-9cc7589cb3ac",
+    "source_id": "refine:a03db6af-e3d7-4060-bd47-09d6d20cdb8b#4",
+    "title": "熊本市：法人請求オンラインサービス導入 委託先連携・主管課調整＋7/30訪問（足立統括部長同行）の位置づけ整理｜壁打ち熟成｜2026-07-30｜1/6｜4",
+    "similarity": 0.86875,
+    "content_md5": "2e8110fc9bbe653f9be5e218433d0ceb"
+   },
+   {
+    "id": "4ffe7418-47d1-430c-9688-28bc7faa9eb0",
+    "source_id": "meeting:熊本市:text:キャリアリンク同行:2026-09-03:1",
+    "title": "キャリアリンク同行",
+    "similarity": 0.866402,
+    "content_md5": "d4060ff7906cba4af74a051040b97d45"
+   },
+   {
+    "id": "36ca3108-d67c-4f39-8ec8-e9a207e52677",
+    "source_id": "meeting:熊本市:text:キャリアリンク同行:2026-09-03:2",
+    "title": "キャリアリンク同行",
+    "similarity": 0.853384,
+    "content_md5": "1d750b9033987c1d29aea972c71aaecb"
+   },
+   {
+    "id": "48cd833c-cacb-4aee-a5dd-996ea78b2064",
+    "source_id": "weekly_report:2513356f-2af0-46b7-9778-5a48f2a1be53:1",
+    "title": "2026-09-07週｜自治体｜熊本市",
+    "similarity": 0.882458,
+    "content_md5": "13493259c5c414439157a33eedad389c"
+   },
+   {
+    "id": "d2463239-be3f-400c-8fc3-fd559cb3624f",
+    "source_id": "refine:95e4d1ab-6356-4ee8-90e3-d0578b7ca6a2#2",
+    "title": "熊本市：法人請求オンラインサービス導入に向けた委託先連携・主管課調整（7/30訪問前・最終整理版）｜壁打ち熟成｜2026-07-20｜1/6｜2",
+    "similarity": 0.877259,
+    "content_md5": "2f812ec5753d4e61063962ff15afded0"
+   },
+   {
+    "id": "1c084e79-dc67-472e-809b-9b6c8e5eb688",
+    "source_id": "refine:a03db6af-e3d7-4060-bd47-09d6d20cdb8b",
+    "title": "熊本市：法人請求オンラインサービス導入 委託先連携・主管課調整＋7/30訪問（足立統括部長同行）の位置づけ整理｜壁打ち熟成｜2026-07-30｜1/6｜1",
+    "similarity": 0.877014,
+    "content_md5": "86b8b46ec8dba1ce4bba1011ff1eb67c"
+   },
+   {
+    "id": "5c6275d2-28cc-43ee-968b-b24da11cf547",
+    "source_id": "weekly_report:d6b133eb-54ca-4a28-99ad-85ef86d9ff85:1",
+    "title": "2026-08-31週｜自治体｜熊本市",
+    "similarity": 0.876314,
+    "content_md5": "87a75731015d287611a8912a1e26fba4"
+   },
+   {
+    "id": "07bae067-117f-4541-b052-123993c26963",
+    "source_id": "https://app.notion.com/39a9363cfff881c0abddf17092992f45",
+    "title": "二層戦術の策定と熊本市の重点再始動",
+    "similarity": 0.876122,
+    "content_md5": "91bbe13cd8b3405efcd8789378d154a1"
+   }
+  ],
+  "ms": 405
+ },
+ {
+  "case": "org-堺市",
+  "payload": {
+   "query": "堺市 申込",
+   "organization": "堺市",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 2,
+  "keys": [
+   "530f1c56-4895-478b-b478-6e9b5a359820",
+   "d788b5d7-993a-4c49-81f6-14fa6c30db5e"
+  ],
+  "rows": [
+   {
+    "id": "530f1c56-4895-478b-b478-6e9b5a359820",
+    "source_id": "weekly_report:9c191642-9b33-4451-900a-fd603cc212ed:1",
+    "title": "2026-08-17週｜自治体｜堺市",
+    "similarity": 0.873486,
+    "content_md5": "0a9db68a8dc1f2d1ba37fccb14e8242a"
+   },
+   {
+    "id": "d788b5d7-993a-4c49-81f6-14fa6c30db5e",
+    "source_id": "weekly_report:3eea06d3-2078-4ad3-9984-454ff66f2ec4:1",
+    "title": "2026-07-06週｜自治体｜堺市",
+    "similarity": 0.859267,
+    "content_md5": "f7ebf465daba881b32ff3f6bdf0dab6c"
+   }
+  ],
+  "ms": 351
+ },
+ {
+  "case": "count-20",
+  "payload": {
+   "query": "郵便料金 値上げ",
+   "match_count": 20
+  },
+  "status": 200,
+  "count": 20,
+  "keys": [
+   "8ecf87cb-7d3e-4bc2-857a-eb34006c427a",
+   "c4a1a7ae-84ee-4051-bd85-2e14920b713e",
+   "43fd4f76-e943-4659-9dd3-44b43b663416",
+   "b0c064a4-3eae-49d2-b287-03e53218ea2e",
+   "314d4ac2-dff3-4e8b-bd6c-7a6ec56b2c30",
+   "9ad8566b-019c-432b-acaf-e9efe543c73b",
+   "8d95feee-63c9-4e77-b6ed-28781e2bed4b",
+   "7ffb996e-5a6c-44ca-9e82-9ffe7c10531d",
+   "12b6c040-3073-4695-bedb-9b2100a04755",
+   "25ba48c1-3f6b-466e-8ff1-050ac99a4654",
+   "30c0b36b-47d1-4d4b-a03c-152b1280da0f",
+   "dde9f089-8f6a-47e7-822a-3dae4dda01c7",
+   "0e732f8b-1d92-40de-9cd3-698c5617838c",
+   "4c278a51-ef88-4e97-a4d0-b28fe00d7432",
+   "4c3bf477-ea41-4b81-abda-c2f623a48784",
+   "342dda49-1266-4b0c-9dd5-7d5b230989d9",
+   "d2ef1385-40dc-4b25-a276-5e96f27b0e06",
+   "2b877cce-b809-46ed-9eb3-c9d8c7abfc59",
+   "68b98df5-4c58-42bb-b3b7-2e41d3cad449",
+   "b4ba66ab-f160-457c-95a3-59115765d2a1"
+  ],
+  "rows": [
+   {
+    "id": "8ecf87cb-7d3e-4bc2-857a-eb34006c427a",
+    "source_id": "slide-refine:4a844003-410a-4627-b1e4-0fba0de58586#6",
+    "title": "郵送請求業務を取り巻く環境変化（法人請求オンラインサービス提案スライド）｜スライド壁打ち｜2026-07-27｜1/7｜6",
+    "similarity": 0.879503,
+    "content_md5": "45d3e63070f795d19b1b1124dbad8ac4"
+   },
+   {
+    "id": "c4a1a7ae-84ee-4051-bd85-2e14920b713e",
+    "source_id": "deliverable:日本列島地方議員勉強会:text:無題:2026-08-14#6",
+    "title": "無題｜メモ｜text1｜6",
+    "similarity": 0.863348,
+    "content_md5": "b5a19d61ae7a16832416e27f404eda8b"
+   },
+   {
+    "id": "43fd4f76-e943-4659-9dd3-44b43b663416",
+    "source_id": "plaud:4cb2eea9bcbd4903635ca7a11807a5a1",
+    "title": "【社内】自治体向け郵送請求業務の制度転換とDX推進：定額小為替終了・郵便料金値上げ・人手不足への対応｜1",
+    "similarity": 0.86045,
+    "content_md5": "71df73b68477fb72f7248983188a8586"
+   },
+   {
+    "id": "b0c064a4-3eae-49d2-b287-03e53218ea2e",
+    "source_id": "slide-refine:4a844003-410a-4627-b1e4-0fba0de58586#3",
+    "title": "郵送請求業務を取り巻く環境変化（法人請求オンラインサービス提案スライド）｜スライド壁打ち｜2026-07-27｜1/7｜3",
+    "similarity": 0.856236,
+    "content_md5": "00af90a2cce86370e671de3dbdb24ec1"
+   },
+   {
+    "id": "314d4ac2-dff3-4e8b-bd6c-7a6ec56b2c30",
+    "source_id": "plaud:7bfd2b77ccfdec862a1b099b341fdbcd",
+    "title": "法人向けオンライン請求サービス導入推進に関する協議サマリー｜1",
+    "similarity": 0.860171,
+    "content_md5": "a0e96974ae05ef565a28b45e1873f485"
+   },
+   {
+    "id": "9ad8566b-019c-432b-acaf-e9efe543c73b",
+    "source_id": "plaud:7bfd2b77ccfdec862a1b099b341fdbcd#2",
+    "title": "法人向けオンライン請求サービス導入推進に関する協議サマリー｜2",
+    "similarity": 0.874018,
+    "content_md5": "3e17b17537c42ddc6e757224354270ea"
+   },
+   {
+    "id": "8d95feee-63c9-4e77-b6ed-28781e2bed4b",
+    "source_id": "slide-refine:4a844003-410a-4627-b1e4-0fba0de58586#8",
+    "title": "郵送請求業務を取り巻く環境変化（法人請求オンラインサービス提案スライド）｜スライド壁打ち｜2026-07-27｜1/7｜8",
+    "similarity": 0.855466,
+    "content_md5": "2a4841cfc5304e7574784565657fab7d"
+   },
+   {
+    "id": "7ffb996e-5a6c-44ca-9e82-9ffe7c10531d",
+    "source_id": "slide-refine:4a844003-410a-4627-b1e4-0fba0de58586#2",
+    "title": "郵送請求業務を取り巻く環境変化（法人請求オンラインサービス提案スライド）｜スライド壁打ち｜2026-07-27｜1/7｜2",
+    "similarity": 0.857276,
+    "content_md5": "ba06a011b44a7d63a4078ea7b37a752f"
+   },
+   {
+    "id": "12b6c040-3073-4695-bedb-9b2100a04755",
+    "source_id": "deliverable:日本列島地方議員勉強会:text:無題:2026-08-14#16",
+    "title": "無題｜メモ｜text1｜16",
+    "similarity": 0.857449,
+    "content_md5": "90d9b0cc6fa1f3c6e42380f849ab6c56"
+   },
+   {
+    "id": "25ba48c1-3f6b-466e-8ff1-050ac99a4654",
+    "source_id": "plaud:e1383f8a49e97673b0bb70466045a571#2",
+    "title": "08-14 自治体における法人からの郵送請求DX化推進の提言｜2",
+    "similarity": 0.849609,
+    "content_md5": "e46b7c5239de4de396900b87a9d1d277"
+   },
+   {
+    "id": "30c0b36b-47d1-4d4b-a03c-152b1280da0f",
+    "source_id": "plaud:954e9dcd32e142cf1691fa06b841643d",
+    "title": "【熊本市・キャリアリンク・富士フイルムシステムサービス】法人請求オンライン化トライアル条件協議と現場調整",
+    "similarity": 0.839987,
+    "content_md5": "a7d7ff4f5e80b0aca2af9adb718979e0"
+   },
+   {
+    "id": "dde9f089-8f6a-47e7-822a-3dae4dda01c7",
+    "source_id": "deliverable:共通:【法人OS：お客様向け】法人請求オンラインサービス_実施理由書_最終版_課金テーブル反映.txt#21",
+    "title": "実施理由書_最終版_課金テーブル反映｜提案書｜slide1｜21",
+    "similarity": 0.878306,
+    "content_md5": "42f9707f5abe294188aff88f31b954b3"
+   },
+   {
+    "id": "0e732f8b-1d92-40de-9cd3-698c5617838c",
+    "source_id": "deliverable:共通:【法人OS：お客様向け】法人請求オンラインサービス_実施理由書_最終版_課金テーブル反映.txt#23",
+    "title": "実施理由書_最終版_課金テーブル反映｜提案書｜slide1｜23",
+    "similarity": 0.878244,
+    "content_md5": "9307f2a9d8a1003b36c31b12768bb99f"
+   },
+   {
+    "id": "4c278a51-ef88-4e97-a4d0-b28fe00d7432",
+    "source_id": "deliverable:共通:【法人OS：お客様向け】法人請求オンラインサービス_実施理由書_最終版_課金テーブル反映.txt#19",
+    "title": "実施理由書_最終版_課金テーブル反映｜提案書｜slide1｜19",
+    "similarity": 0.878044,
+    "content_md5": "42eb3c3d092d1630f0226a37b9389c96"
+   },
+   {
+    "id": "4c3bf477-ea41-4b81-abda-c2f623a48784",
+    "source_id": "plaud:1012451368b626c7567fd2974c4c5dbe",
+    "title": "【官民連携】法人郵送請求業務DX化の提案説明と資料体裁調整｜1",
+    "similarity": 0.839479,
+    "content_md5": "4bbdb1c06f8285a078d1de288e9326ff"
+   },
+   {
+    "id": "342dda49-1266-4b0c-9dd5-7d5b230989d9",
+    "source_id": "deliverable:戦略合宿:text:無題:2026-08-21:text10",
+    "title": "無題｜メモ｜text10",
+    "similarity": 0.872975,
+    "content_md5": "eae3c78e5d699cd24621337860dc938c"
+   },
+   {
+    "id": "d2ef1385-40dc-4b25-a276-5e96f27b0e06",
+    "source_id": "deliverable:日本列島地方議員勉強会:20260814_日本列島地方議員勉強会.pptx#7",
+    "title": "20260814_日本列島地方議員勉強会｜スライド｜slide1｜7",
+    "similarity": 0.841622,
+    "content_md5": "c01e6f56ee032e94731f2a666be7777d"
+   },
+   {
+    "id": "2b877cce-b809-46ed-9eb3-c9d8c7abfc59",
+    "source_id": "weekly_report:3e3f9c28-ed09-4b38-a540-5dabb3731863:1",
+    "title": "2026-08-24週｜支店｜関西支店",
+    "similarity": 0.861788,
+    "content_md5": "71da8a08a223768c164853f7c624ede3"
+   },
+   {
+    "id": "68b98df5-4c58-42bb-b3b7-2e41d3cad449",
+    "source_id": "deliverable:新宿区:text:無題:2026-08-19:text18",
+    "title": "無題｜メモ｜text18",
+    "similarity": 0.824134,
+    "content_md5": "55aae0dc2ddd23bb846a8e0cb71ac3f4"
+   },
+   {
+    "id": "b4ba66ab-f160-457c-95a3-59115765d2a1",
+    "source_id": "deliverable:日本列島地方議員勉強会:text:無題:2026-08-14#22",
+    "title": "無題｜メモ｜text1｜22",
+    "similarity": 0.860739,
+    "content_md5": "794a99f8ec9a83a74a2f2ec26abe0083"
+   }
+  ],
+  "ms": 425
+ },
+ {
+  "case": "person",
+  "payload": {
+   "query": "リーダーシップ",
+   "person": "伊藤羊一",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 2,
+  "keys": [
+   "047553a6-d0b1-4e54-a2a4-30739385e94f",
+   "68301fc4-08dd-4bc7-9b6d-8cbba07d8670"
+  ],
+  "rows": [
+   {
+    "id": "047553a6-d0b1-4e54-a2a4-30739385e94f",
+    "source_id": "https://app.notion.com/p/39c9363cfff881baa3acdf848be618c2",
+    "title": "コミュニティFLAGS——一人ひとりが自分の旗を立て、主体的に未来を創る｜1",
+    "similarity": 0.852967,
+    "content_md5": "f8d1f44912bbd186a99968148cef30f4"
+   },
+   {
+    "id": "68301fc4-08dd-4bc7-9b6d-8cbba07d8670",
+    "source_id": "https://app.notion.com/p/39c9363cfff881baa3acdf848be618c2#2",
+    "title": "コミュニティFLAGS——一人ひとりが自分の旗を立て、主体的に未来を創る｜2",
+    "similarity": 0.865788,
+    "content_md5": "89a9427fa80680842221d8e0ba84b047"
+   }
+  ],
+  "ms": 423
+ },
+ {
+  "case": "theme",
+  "payload": {
+   "query": "組織",
+   "theme": "マネジメント・組織",
+   "match_count": 8
+  },
+  "status": 200,
+  "count": 0,
+  "keys": [],
+  "rows": [],
+  "ms": 383
+ }
+]

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { serviceCreds } from "@/lib/supabase";
+import { logSearch } from "@/lib/searchLog";
 
 // memory_chunks.source_type の CHECK制約と一致させること。
 // ここに無い値が来ると source_type がpayloadに載らず、フィルタが「黙って無視」される
@@ -80,6 +82,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const t0 = Date.now();
     const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
       method: "POST",
       headers: {
@@ -100,6 +103,24 @@ export async function POST(req: NextRequest) {
     }
 
     const data = await res.json();
+
+    // 検索ログ（W3「生成ログの記録」）。fire-and-forget——ログの失敗で検索を止めない。
+    const c = serviceCreds();
+    if (c) {
+      await logSearch(c, {
+        source: "search",
+        query,
+        filters: {
+          source_type: payload.source_type,
+          person: payload.person,
+          theme: payload.theme,
+          match_count: payload.match_count,
+        },
+        results: Array.isArray(data?.results) ? data.results : [],
+        ms: Date.now() - t0,
+      });
+    }
+
     return NextResponse.json(data);
   } catch (error) {
     console.error("検索プロキシエラー:", error);
