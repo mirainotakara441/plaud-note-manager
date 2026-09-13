@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds, anonCreds, restHeaders } from "@/lib/supabase";
 import { captureAuthorized, withShopHashtag } from "@/lib/ramen";
+import { uprightJpeg } from "@/lib/photoImage";
 import {
   xCreds,
   uploadMedia,
@@ -197,8 +198,19 @@ export async function POST(req: NextRequest) {
         cache: "no-store",
       });
       if (!obj.ok) throw new Error(`写真の取得に失敗（${path}: ${obj.status}）`);
-      const buf = Buffer.from(await obj.arrayBuffer());
-      mediaIds.push(await uploadMedia(buf, contentTypeOf(path), x));
+      const raw = Buffer.from(await obj.arrayBuffer());
+      // 向きを画素に焼いてから渡す。移行した写真の7割はEXIFの向き情報で
+      // 立っているだけなので、そのまま渡すと横倒しで公開される恐れがある。
+      // 公開してからでは取り返しがつかないので、ここで直す。
+      let buf: Buffer = raw;
+      let mediaType = contentTypeOf(path);
+      try {
+        buf = await uprightJpeg(raw, { quality: 90 });
+        mediaType = "image/jpeg";
+      } catch (err) {
+        console.error("X画像の向き直しに失敗（原本のまま送ります）:", err);
+      }
+      mediaIds.push(await uploadMedia(buf, mediaType, x));
     }
   } catch (e) {
     console.error("X画像アップロード失敗:", e);

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChartTitle, StatTile } from "@/app/components/charts";
-import { starsText, withShopHashtag } from "@/lib/ramen";
+import { PHOTO_RENDER_VERSION, starsText, withShopHashtag } from "@/lib/ramen";
 
 // ラーメン（ライフOS側の第1ブロック）。1行＝1杯（1訪問）。
 // データは /api/ramen（Supabase ramen_logs・読み取り専用）。
@@ -85,8 +85,9 @@ function fmtMonth(ym: string) {
 //
 // w を付けるとサーバー側で縮めて返す。原寸は1枚0.7〜1MBあり、一覧に並べると
 // 1か月ぶんで10MBを超える。拡大表示だけ原寸を使う。
+// v は作り方の版（lib/ramen.ts）。上げると端末のキャッシュを取り直させられる。
 function photoUrl(path: string, width?: 480 | 1280) {
-  const w = width ? `&w=${width}` : "";
+  const w = width ? `&w=${width}&v=${PHOTO_RENDER_VERSION}` : "";
   return `/api/ramen/photo?path=${encodeURIComponent(path)}${w}`;
 }
 

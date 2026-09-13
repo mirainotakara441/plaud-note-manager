@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds } from "@/lib/supabase";
 import { captureAuthorized, isSafePhotoPath, PHOTO_EXT, RAMEN_BUCKET } from "@/lib/ramen";
+import { uprightJpeg } from "@/lib/photoImage";
 
 // 写真の出し入れ。
 //
@@ -143,12 +144,9 @@ export async function GET(req: NextRequest) {
 
   if (wantedWidth) {
     try {
-      const sharp = (await import("sharp")).default;
-      const out = await sharp(Buffer.from(buf))
-        // 元より大きくはしない（拡大してもデータが増えるだけで綺麗にならない）
-        .resize({ width: wantedWidth, withoutEnlargement: true })
-        .jpeg({ quality: 78 })
-        .toBuffer();
+      // 縮小と同時に EXIF の向きを画素に焼き込む。焼かずに縮めると、
+      // 向き情報だけ落ちて横倒しの写真が並ぶ（lib/photoImage.ts の説明参照）
+      const out = await uprightJpeg(Buffer.from(buf), { width: wantedWidth });
       // Buffer のままだと NextResponse の型（BodyInit）に合わないので ArrayBuffer へ写す
       body = out.buffer.slice(
         out.byteOffset,

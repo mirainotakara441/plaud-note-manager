@@ -30,6 +30,15 @@ export type RamenRow = {
 
 export const RAMEN_BUCKET = "ramen-photos";
 
+// 写真の作り方を変えたら1つ上げる。
+//
+// 写真のURLは中身が変わらない前提で1年キャッシュしている（immutable）。
+// 作り方だけ直してもURLが同じなら、端末に残った古い絵がそのまま出続ける。
+// この番号をURLに混ぜてあるので、上げれば別物として取り直される。
+//   1 … 最初（縮小のみ）
+//   2 … EXIFの向きを画素に焼くようにした（横倒しで並ぶのを直した・2026-09-13）
+export const PHOTO_RENDER_VERSION = 2;
+
 export const PHOTO_EXT: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",

@@ -90,6 +90,43 @@ test.describe("ラーメンの写真", () => {
     await ctx.dispose();
   });
 
+  // iPhoneの写真は「横倒しの画素＋EXIFの向き情報」で入っていることが多く、
+  // 移行した162枚のうち114枚がそれだった。縮小するときに向きを焼き込まないと、
+  // 向き情報だけ落ちて一覧にラーメンが横向きで並ぶ（2026-09-13に実際に発生）。
+  test("縮小した写真が横倒しにならない", async ({ playwright, baseURL }) => {
+    const ctx = await playwright.request.newContext({
+      baseURL,
+      extraHTTPHeaders: { cookie: `${COOKIE_NAME}=${authCookieValue()}` },
+    });
+    // 横倒しで保存されている実例（EXIF orientation=6 の写真）
+    const path = "217/19024679966159-lrjrqo.jpg";
+    const res = await ctx.get(
+      `/api/ramen/photo?path=${encodeURIComponent(path)}&w=480`
+    );
+    expect(res.status()).toBe(200);
+
+    // JPEGのSOF0/SOF2マーカーから縦横を読む（画像ライブラリ無しで確かめる）
+    const buf = await res.body();
+    let w = 0;
+    let h = 0;
+    for (let i = 2; i < buf.length - 9; ) {
+      if (buf[i] !== 0xff) {
+        i += 1;
+        continue;
+      }
+      const marker = buf[i + 1];
+      if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+        h = buf.readUInt16BE(i + 5);
+        w = buf.readUInt16BE(i + 7);
+        break;
+      }
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+    expect(w, "縮小した画像の大きさが読めませんでした").toBeGreaterThan(0);
+    expect(h, `${w}x${h} で返っています。横倒しのままです`).toBeGreaterThan(w);
+    await ctx.dispose();
+  });
+
   test("写真の配信は合言葉が無いと通らない", async ({ playwright, baseURL }) => {
     const bare = await playwright.request.newContext({ baseURL });
     const res = await bare.get("/api/ramen/photo?path=187%2Fnope.jpg");

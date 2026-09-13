@@ -1,12 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { COOKIE_NAME, authCookieValue } from "./auth";
 
-// 「食べたもの全部」の一覧（/ramen/all）。
+// 「◯◯年 訪問店」の一覧（/ramen/all）。
 // この画面の値打ちは、過去をスクロールせずに見渡せること。だから
 // 「開ける」だけでなく、件数が並んでいるか・写真が本当に出ているか・
 // 通算杯数から来られるかまで見る。
 
-test.describe("食べたもの全部", () => {
+test.describe("年ごとの訪問店一覧", () => {
   test.beforeEach(async ({ context, baseURL }) => {
     const url = new URL(baseURL ?? "http://localhost:3024");
     await context.addCookies([
@@ -37,7 +37,7 @@ test.describe("食べたもの全部", () => {
     await expect(tile).toBeVisible({ timeout: 30_000 });
     await tile.click();
     await page.waitForURL("**/ramen/all");
-    await expect(page.getByRole("heading", { name: /食べたもの全部/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /\d{4}年 訪問店/ })).toBeVisible();
   });
 
   test("1杯1枚で並び、写真が実際に出ている", async ({ page }) => {
@@ -81,9 +81,16 @@ test.describe("食べたもの全部", () => {
     await page.goto("/ramen/all");
     await expect(page.locator("section").first()).toBeVisible({ timeout: 30_000 });
     await page.getByRole("button", { name: "写真ありのみ" }).click();
-    // 絞った後は、写真の無い枠（🍜のプレースホルダ）が1つも残らない
-    await expect(page.locator("text=🍜").filter({ hasNotText: "食べたもの" })).toHaveCount(0, {
-      timeout: 10_000,
-    });
+    // 絞った後は、写真の無い枠が1つも残らない。
+    // 題名にも🍜が入っているので、一覧の中（section）だけを見る
+    await expect(async () => {
+      const blanks = await page.evaluate(
+        () =>
+          Array.from(document.querySelectorAll("section > div > div")).filter(
+            (c) => c.querySelector('img[src*="/api/ramen/photo"]') === null
+          ).length
+      );
+      expect(blanks, "写真の無い枠が残っています").toBe(0);
+    }).toPass({ timeout: 10_000 });
   });
 });

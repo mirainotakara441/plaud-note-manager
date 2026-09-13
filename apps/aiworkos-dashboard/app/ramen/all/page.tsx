@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { starsText } from "@/lib/ramen";
+import { PHOTO_RENDER_VERSION, starsText } from "@/lib/ramen";
 
 // 食べたものを1枚で見渡すページ。/ramen の「通算杯数」から来る。
 //
@@ -51,8 +51,9 @@ function fmtMonthHead(ym: string) {
 }
 
 // 一覧は縮小版で出す。原寸は1枚0.7〜1MBあり、200件並べると端末が持たない。
+// v は作り方の版（lib/ramen.ts）。上げると端末のキャッシュを取り直させられる。
 function photoUrl(path: string, width?: 480 | 1280) {
-  const w = width ? `&w=${width}` : "";
+  const w = width ? `&w=${width}&v=${PHOTO_RENDER_VERSION}` : "";
   return `/api/ramen/photo?path=${encodeURIComponent(path)}${w}`;
 }
 
@@ -114,6 +115,9 @@ export default function RamenAllPage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterKey>("all");
   const [zoom, setZoom] = useState<string | null>(null);
+  // 見ている年。題名に年を出す以上、中身もその年に揃える
+  // （年をまたぐと「2027年 訪問店」の下に2026年が並ぶことになるため）
+  const [year, setYear] = useState<string>("");
 
   const load = useCallback(async () => {
     setError(null);
@@ -131,8 +135,18 @@ export default function RamenAllPage() {
     load();
   }, [load]);
 
+  const years = useMemo(() => {
+    const set = new Set((items ?? []).map((i) => i.eaten_on.slice(0, 4)));
+    return Array.from(set).sort((a, b) => (a < b ? 1 : -1));
+  }, [items]);
+
+  useEffect(() => {
+    if (!year && years.length > 0) setYear(years[0]);
+  }, [years, year]);
+
   const shown = useMemo(() => {
     let all = items ?? [];
+    if (year) all = all.filter((i) => i.eaten_on.startsWith(year));
     if (filter === "ramen") all = all.filter((i) => i.is_ramen);
     if (filter === "photo") all = all.filter((i) => (i.photo_urls ?? []).length > 0);
     // 新しい順。同じ日に複数あるときは杯番号の大きい方（後に食べた方）を先に出す
@@ -140,7 +154,7 @@ export default function RamenAllPage() {
       if (a.eaten_on !== b.eaten_on) return a.eaten_on < b.eaten_on ? 1 : -1;
       return (b.bowl_no ?? 0) - (a.bowl_no ?? 0);
     });
-  }, [items, filter]);
+  }, [items, filter, year]);
 
   // 月ごとに区切る。1枚で見渡すページなので、どこを見ているか分かる目印が要る
   const byMonth = useMemo(() => {
@@ -154,15 +168,18 @@ export default function RamenAllPage() {
     return Array.from(map.entries());
   }, [shown]);
 
+  // 見出しの数字は、いま見ている年のもの
   const stats = useMemo(() => {
-    const all = items ?? [];
+    const all = (items ?? []).filter((i) => !year || i.eaten_on.startsWith(year));
     const bowls = all.map((i) => i.bowl_no).filter((n): n is number => n != null);
     return {
       total: all.length,
+      ramen: all.filter((i) => i.is_ramen).length,
+      shops: new Set(all.map((i) => i.shop)).size,
       latestBowl: bowls.length ? Math.max(...bowls) : null,
       withPhoto: all.filter((i) => (i.photo_urls ?? []).length > 0).length,
     };
-  }, [items]);
+  }, [items, year]);
 
   const loading = !items && !error;
 
@@ -173,7 +190,7 @@ export default function RamenAllPage() {
           ← ラーメン
         </Link>
         <h1 className="mt-2 text-2xl font-bold tracking-tight text-gray-900">
-          🍜 食べたもの全部
+          🍜 {year}年 訪問店
         </h1>
         <p className="mt-1 text-sm leading-relaxed text-gray-500">
           {stats.latestBowl != null && (
@@ -181,8 +198,29 @@ export default function RamenAllPage() {
               通算<span className="font-bold text-gray-900">{stats.latestBowl}</span>杯目まで・
             </>
           )}
-          記録{stats.total}件・写真つき{stats.withPhoto}杯
+          <span className="font-bold text-gray-900">{stats.shops}</span>店・記録
+          {stats.total}件・写真つき{stats.withPhoto}杯
         </p>
+
+        {/* 年をまたいだ時だけ出す。1年しか無いうちは選ぶものが無い */}
+        {years.length > 1 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {years.map((y) => (
+              <button
+                key={y}
+                type="button"
+                onClick={() => setYear(y)}
+                className={`rounded-full px-3 py-1 text-sm font-medium transition active:scale-95 ${
+                  year === y
+                    ? "bg-gray-900 text-white"
+                    : "bg-white text-gray-600 ring-1 ring-gray-200"
+                }`}
+              >
+                {y}年
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       {error && (
