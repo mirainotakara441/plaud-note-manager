@@ -56,6 +56,17 @@ const f = (v: number | null | undefined, d = 1) =>
 const i = (v: number | null | undefined) =>
   v == null ? "—" : Math.round(Number(v)).toLocaleString();
 
+/**
+ * コメント欄の行数。改行だけでなく、折り返しぶんも数える。
+ * 1行に収まらない長文を書いたときに、勝手に隠れてしまわないようにするため。
+ */
+function commentRows(v: string, perLine = 28, min = 2, max = 8): number {
+  const lines = v
+    .split("\n")
+    .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / perLine)), 0);
+  return Math.min(max, Math.max(min, lines));
+}
+
 /** その日を含む週の土曜。週の移動もこれ1本で済ませる。 */
 function shiftWeek(start: string, deltaWeeks: number): string {
   const [y, m, d] = start.split("-").map(Number);
@@ -567,11 +578,12 @@ export function WeeklyReport() {
                       })}
                     </div>
                   </div>
-                  <input
+                  <textarea
                     value={ratings[m]?.comment ?? ""}
                     onChange={(e) => setRating(m, { comment: e.target.value })}
-                    placeholder="コメント（任意）"
-                    className="mt-1.5 w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[0.78rem] outline-none placeholder:text-gray-300 focus:border-teal-400"
+                    rows={commentRows(ratings[m]?.comment ?? "")}
+                    placeholder="コメント（任意・改行できます）"
+                    className="mt-1.5 w-full resize-y rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[0.78rem] leading-relaxed outline-none placeholder:text-gray-300 focus:border-teal-400"
                   />
                 </div>
               ))}

@@ -18,6 +18,7 @@ import {
   type PlanEntry,
   type UnmatchedRecord,
 } from "@/lib/legislators";
+import { CardImport } from "./cardImport";
 
 // 議員リスト。
 //
@@ -39,7 +40,9 @@ import {
 // （iPhoneから議員に掛けるのが実運用でいちばん多い操作のため）。
 //
 // 接点あり名簿の実体は notion_contacts で、毎時の同期で「Notionに無い行は削除」
-// されるため、この画面から議員は追加できない。候補リストも表示専用。
+// される。だから3つ目のタブ「名刺を写メで追加」は、写しにだけ入れるのではなく
+// Notion「人脈DB」へ作ってから写しへ入れる（ライトスルー。app/api/legislators/cards）。
+// 候補リストは表示専用。
 //
 // 文字サイズは px 直指定を使わない（app/globals.css で root font-size を
 // 画面幅に応じて上げているため、rem / Tailwind のクラスで書く）。
@@ -49,7 +52,7 @@ type View =
   | { kind: "detail"; id: string }
   | { kind: "candidate"; id: string };
 type Axis = "faction" | "assembly";
-type Tab = "contacts" | "candidates";
+type Tab = "contacts" | "candidates" | "cards";
 
 const KIND_STYLE: Record<HistoryEntry["kind"], string> = {
   週報: "bg-cyan-100 text-cyan-800",
@@ -897,20 +900,22 @@ export default function LegislatorsPage() {
   const [tab, setTab] = useState<Tab>("contacts");
   const [view, setView] = useState<View>({ kind: "list" });
 
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/legislators", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
-      .then((d: LegislatorPayload) => {
-        if (alive) setData(d);
-      })
-      .catch(() => {
-        if (alive) setError("議員リストの取得に失敗しました。");
-      });
-    return () => {
-      alive = false;
-    };
+  // 名刺を登録したあとに読み直せるよう、取得を関数に出してある。
+  // 写しへの反映はライトスルーで即時なので、次の同期を待たずに一覧へ出る。
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/legislators", { cache: "no-store" });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      setData((await r.json()) as LegislatorPayload);
+      setError(null);
+    } catch {
+      setError("議員リストの取得に失敗しました。");
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const groups = useMemo(
     () => (data ? buildGroups(data.legislators, axis) : []),
@@ -1052,11 +1057,13 @@ export default function LegislatorsPage() {
             接点あり（人脈DB）と候補（未接点）は性格が違うのでタブで分ける。
             同じ一覧に混ぜると「もう会った人」と「これから当たる人」の区別が消える。
           */}
-          <div className="grid grid-cols-2 gap-1 rounded-xl border border-gray-300 bg-white p-1">
+          <div className="grid grid-cols-3 gap-1 rounded-xl border border-gray-300 bg-white p-1">
             {(
               [
                 ["contacts", "接点あり", data.legislators.length],
                 ["candidates", "候補（未接点）", data.candidates.length],
+                // 名刺の追加口。人数を出すものではないので count は持たせない。
+                ["cards", "📷 名刺", null],
               ] as const
             ).map(([key, label, count]) => (
               <button
@@ -1068,16 +1075,20 @@ export default function LegislatorsPage() {
                 }`}
               >
                 {label}
-                <span
-                  className={`ml-1.5 text-xs font-bold ${
-                    tab === key ? "text-indigo-100" : "text-gray-400"
-                  }`}
-                >
-                  {count}
-                </span>
+                {count !== null && (
+                  <span
+                    className={`ml-1.5 text-xs font-bold ${
+                      tab === key ? "text-indigo-100" : "text-gray-400"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
               </button>
             ))}
           </div>
+
+          {tab === "cards" && <CardImport onSaved={load} />}
 
           {tab === "candidates" && (
             <CandidateSection

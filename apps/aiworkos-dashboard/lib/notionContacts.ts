@@ -258,6 +258,92 @@ export async function notionCreateOrgPage(
   };
 }
 
+// 人脈DBへ人物ページを作る。名刺の写メ取り込み（/legislators）から呼ぶ。
+//
+// 団体と同じくライトスルー。Notion（正）へ作ってから写しへ入れる。
+// 写しにだけ入れると、毎時の同期（mark and sweep）で消える。
+//
+// ★ステータスとフラグは呼び出し側で決めさせない★
+// 「名刺が1年以上前」と「担当を外れた」は別物で、混ぜると過去担当が量産される
+// （名刺スキル ROLE.md §3-5）。ここで交換日から機械的に決める。
+export async function notionCreateContactPage(
+  token: string,
+  fields: {
+    name: string;
+    orgPageId: string;
+    department: string | null;
+    title: string | null;
+    /** 名刺の交換日 YYYY-MM-DD。分からなければ null（その場合フラグは付けない）。 */
+    exchangedOn: string | null;
+    memo: string;
+    /** 今日 YYYY-MM-DD。1年以内かの判定に使う。 */
+    today: string;
+  },
+  orgName: string
+): Promise<ContactRow> {
+  const recent = isWithinOneYear(fields.exchangedOn, fields.today);
+  const status = fields.exchangedOn ? (recent ? "現役" : "要確認") : "要確認";
+  const flag = recent ? "現担当" : null;
+
+  const props: Record<string, unknown> = {
+    氏名: { title: [{ type: "text", text: { content: fields.name.slice(0, 2000) } }] },
+    組織名: { relation: [{ id: fields.orgPageId }] },
+    データ源: { multi_select: [{ name: "Eight" }] },
+    ステータス: { select: { name: status } },
+    メモ: {
+      rich_text: [{ type: "text", text: { content: fields.memo.slice(0, 2000) } }],
+    },
+  };
+  if (fields.department) {
+    props["部署"] = {
+      rich_text: [{ type: "text", text: { content: fields.department.slice(0, 2000) } }],
+    };
+  }
+  if (fields.title) {
+    props["役職"] = {
+      rich_text: [{ type: "text", text: { content: fields.title.slice(0, 2000) } }],
+    };
+  }
+  if (fields.exchangedOn) props["Eight登録日"] = { date: { start: fields.exchangedOn } };
+  // 空欄は「まだ判断していない」を意味する。select に null は送れないので、
+  // 付けないときはプロパティごと省く（空文字を送ると選択肢が増える）。
+  if (flag) props["フラグ"] = { select: { name: flag } };
+
+  const data = (await notionFetch(token, "/pages", {
+    parent: { database_id: NOTION_CONTACTS_DATABASE_ID },
+    properties: props,
+  })) as { id?: unknown; last_edited_time?: unknown };
+
+  const id = typeof data?.id === "string" ? data.id : null;
+  if (!id) throw new Error("Notionページ作成のレスポンスにidがありません");
+
+  return {
+    notion_page_id: id,
+    name: fields.name,
+    org_page_id: fields.orgPageId,
+    org_name: orgName,
+    department: fields.department,
+    title: fields.title,
+    status,
+    flag,
+    sources: ["Eight"],
+    memo: fields.memo,
+    eight_registered_on: fields.exchangedOn,
+    last_verified_on: null,
+    notion_last_edited_at:
+      typeof data.last_edited_time === "string" ? data.last_edited_time : null,
+  };
+}
+
+/** 交換日が今日から1年以内か。日付が無ければ false（＝現担当を付けない）。 */
+export function isWithinOneYear(day: string | null, today: string): boolean {
+  if (!day) return false;
+  const d = Date.parse(`${day}T00:00:00Z`);
+  const t = Date.parse(`${today}T00:00:00Z`);
+  if (!Number.isFinite(d) || !Number.isFinite(t)) return false;
+  return t - d <= 366 * 24 * 60 * 60 * 1000 && d <= t;
+}
+
 // データベースの全ページを取得する。
 // archived / in_trash のページはNotionのqueryが返さないため、返ってきたIDの集合が
 // 「Notionに生きて存在する行」になる。取り込み側の削除判定はこれを使う。
