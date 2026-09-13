@@ -4,453 +4,34 @@ import {
   llmErrorMessage,
   llmErrorStatus,
   isLlmConfigured,
-  structured,
 } from "@/lib/llm";
-import { COMMON_ORG, fetchLatestMetrics } from "@/lib/metrics";
-import { proposalSignature } from "@/lib/cacheSignature.mjs";
-import { parseSegmentTarget } from "@/lib/categories";
+import { serviceCreds } from "@/lib/supabase";
+import {
+  type Meeting,
+  type MemoResult,
+  type Proposal,
+  COMMON_ORG,
+  fetchLatestMetrics,
+  parseSegmentTarget,
+  fetchOrgHistory,
+  fetchRelatedMemos,
+  fetchDeliverables,
+  fetchProposalCache,
+  saveProposalCache,
+  computeSignature,
+  generateProposal,
+  runDeepForOrg,
+  isComplete,
+} from "@/lib/proposal/engine";
 
+// 提案エージェントの入口。生成ロジックの本体は lib/proposal/engine.ts
+// （2026-09-12 に夜間の自動仕込み /api/agent/refresh と共有するため移設。挙動は不変）。
+//
 // thinking を有効化すると生成に時間がかかるため、Vercel の関数タイムアウトを引き上げる
 // （Hobby プランの上限。org-history/search-memory/Claude 生成を合算しても収まる想定）。
+// ★mode:"deep"（tool use で追加調査してから組む）は2〜4分かかるので、この上限がある
+//   Vercel 上では使わないこと。夜間の自動仕込みとローカル実行が使い口。
 export const maxDuration = 60;
-
-type Meeting = {
-  id: string;
-  source_type: string;
-  title: string;
-  content: string;
-  event_date: string | null;
-  metadata: Record<string, unknown> | null;
-  organization: string | null;
-};
-
-type MemoResult = {
-  id: string;
-  source_type: string;
-  title: string;
-  content: string;
-  event_date: string | null;
-  metadata: Record<string, unknown> | null;
-  similarity: number;
-};
-
-type Proposal = {
-  summary: string;
-  issues: string[];
-  actions: { title: string; detail: string }[];
-  materialOutline: string[];
-};
-
-// claude-sonnet-5: 入力 $3/MTok（〜2026-08-31 は導入価格 $2）、出力 $15/MTok（同 $10）。
-// system＋tools は毎回同一なので cache_control を付けて prefix キャッシュ対象にする
-// （レンダリング順は tools → system → messages。最後の system ブロックに breakpoint を
-// 置くと tools と system がまとめてキャッシュされる）。キャッシュ読取は約0.1倍・書込は約1.25倍。
-// モデル名と cache_control は lib/llm.ts に集約（DEFAULT_MODEL / structured() の cache 既定 true）。
-
-const SYSTEM_PROMPT = `あなたは、富士フイルムシステムサービス「法人請求オンラインサービス」営業推進統括責任者・吉井嗣和さんの参謀です。
-自治体（地方公共団体）・議員への営業・提案戦略を立案します。対象は特定の団体のこともあれば、「政令市」「国会議員」のような区分全体（セグメント）への汎用的な訴求のこともあります。
-
-厳守事項:
-- 必ず与えられた「会議履歴」「過去成果物（過去にこの団体向けに作った提案書・資料）」「関連メモ」に書かれた事実のみに基づいて分析すること。
-- 過去成果物がある場合は、それを今回の提案の土台（ベース）として最大限活用し、会議履歴の最新状況で更新・発展させること。過去に整理済みの論点・打ち手・骨子は引き継ぎ、変化があった点だけ差し替える。
-- 【実績数値は「最新実績サマリ」が絶対の正】導入実績・自治体数・事業者数・人口カバー率を書くときは、冒頭に与えられる「最新実績サマリ」の数値だけを使うこと。他の資料（会議録・過去の提案書・年度振り返り等）に別の数値があっても、それは作成当時の値であり最新ではない。資料の日付が新しくても同じ（古い数値を含む資料が新しい日付で登録されていることがある）。サマリ以外の実績数値を引用してはならない。
-- 【団体別優先の範囲】「この団体向けの記述を優先する」のは、その団体固有の事情（経緯・キーパーソン・懸念・約束事）に限る。全社共通の実績数値には適用しない。
-- 資料に無い数字・人名・経緯・約束事などを憶測で創作してはならない。情報が不足している場合は、その旨を前提として扱う。
-- 関西弁ではなく、通常の丁寧なビジネス日本語で書くこと。
-- 出力は必ず指定された JSON スキーマに従って構造化して返すこと。issues・actions・materialOutline は必ず中身を埋め、空配列で返してはならない。まず過去成果物と会議履歴を読み込んで論点と打ち手を分析し、その分析結果を各フィールドに反映すること。`;
-
-// structured outputs（output_config.format）で JSON 形状を保証する。
-// ツール強制（tool_choice: tool）だと Sonnet が「考えずに即出力」して summary だけ埋め
-// issues/actions/materialOutline を空配列で返す問題があったため、ツール使用をやめて
-// adaptive thinking を有効化し、思考の上で全フィールドを埋めさせる方式に変更した。
-// フィールド順は issues→actions→materialOutline→summary（重要な分析フィールドを先に）。
-const PROPOSAL_SCHEMA = {
-  type: "object",
-  properties: {
-    issues: {
-      type: "array",
-      description:
-        "現状の論点・ボトルネックを2〜4個。会議履歴の「課題：」を材料にする。空配列にしないこと。",
-      items: { type: "string" },
-    },
-    actions: {
-      type: "array",
-      description:
-        "次の打ち手を3〜5個。会議履歴の「アクション：」「示唆：」を材料にする。空配列にしないこと。",
-      items: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "打ち手の見出し（簡潔に）" },
-          detail: { type: "string", description: "具体的な内容・進め方" },
-        },
-        required: ["title", "detail"],
-        additionalProperties: false,
-      },
-    },
-    materialOutline: {
-      type: "array",
-      description: "提案資料の見出し骨子を4〜6個。空配列にしないこと。",
-      items: { type: "string" },
-    },
-    summary: {
-      type: "string",
-      description: "これまでの経緯を時系列で3〜5文でまとめた要約。",
-    },
-  },
-  required: ["issues", "actions", "materialOutline", "summary"],
-  additionalProperties: false,
-};
-
-async function fetchOrgHistory(
-  supabaseUrl: string,
-  anonKey: string,
-  organization: string
-): Promise<Meeting[]> {
-  const res = await fetch(`${supabaseUrl}/functions/v1/org-history`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${anonKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ organization }),
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    console.error("org-history エラー:", res.status, text);
-    throw new Error("会議履歴の取得に失敗しました");
-  }
-  const data = await res.json();
-  return Array.isArray(data?.meetings) ? (data.meetings as Meeting[]) : [];
-}
-
-async function fetchRelatedMemos(
-  supabaseUrl: string,
-  anonKey: string,
-  organization: string
-): Promise<MemoResult[]> {
-  try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${anonKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query: organization, match_count: 8 }),
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data?.results) ? (data.results as MemoResult[]) : [];
-  } catch (err) {
-    // 補強用なので失敗しても致命的ではない
-    console.error("fetchRelatedMemos: search-memory呼び出し失敗", err);
-    return [];
-  }
-}
-
-// COMMON_ORG（特定団体に紐づかない横断資料の擬似団体名）・METRICS_QUERY・
-// fetchLatestMetrics（実績数値の「正」を1枚に持たせた記録の取得）は
-// /weapons と共通のため lib/metrics.ts に一本化（2026-07-25 P2対応）。
-
-// 過去成果物（source_type:成果物）を organization で絞って取得。提案のベースとして使う。
-// organization フィルタで RPC が対象団体の行のみを返す。
-// 検索クエリは絞込先ではなく「提案対象の団体」で作る（共通資料を引くときも、その団体に
-// 関連の深い型・戦略が上位に来るようにするため）。
-async function fetchDeliverables(
-  supabaseUrl: string,
-  anonKey: string,
-  targetOrg: string,
-  filterOrg: string, // 空文字なら団体で絞らない（セグメント向けの横断検索）
-  matchCount: number
-): Promise<MemoResult[]> {
-  try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/search-memory`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${anonKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: `${targetOrg} 提案 論点 打ち手 骨子`,
-        source_type: "成果物",
-        ...(filterOrg ? { organization: filterOrg } : {}),
-        match_count: matchCount,
-      }),
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data?.results) ? (data.results as MemoResult[]) : [];
-  } catch (err) {
-    console.error("fetchDeliverables: search-memory呼び出し失敗", err);
-    return [];
-  }
-}
-
-// 会議＋過去成果物の決定的署名。いずれかが変われば（＝新しい成果物を登録した等）
-// キャッシュが無効化され、提案が再生成される。
-//
-// 実装は lib/cacheSignature.mjs 1本だけ。ここには書き写さない——月報側にも
-// 同じ役割の関数があり、以前は両方が別実装で同じ弱点（件数と content.length の
-// 合計しか見ない＝並べ替えても誤字を直しても署名が変わらない）を持っていた。
-const computeSignature = proposalSignature;
-
-// proposal-cache Edge Function から取得。失敗しても null を返し生成にフォールバック。
-async function fetchProposalCache(
-  supabaseUrl: string,
-  anonKey: string,
-  organization: string
-): Promise<{ signature: string; proposal: Proposal; edited: boolean } | null> {
-  try {
-    const res = await fetch(`${supabaseUrl}/functions/v1/proposal-cache`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${anonKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ action: "get", organization }),
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const cache = data?.cache;
-    if (
-      cache &&
-      typeof cache.signature === "string" &&
-      cache.proposal &&
-      typeof cache.proposal === "object"
-    ) {
-      return {
-        signature: cache.signature,
-        proposal: cache.proposal as Proposal,
-        edited: cache.edited === true,
-      };
-    }
-    return null;
-  } catch (err) {
-    console.error("fetchProposalCache: proposal-cache呼び出し失敗", err);
-    return null;
-  }
-}
-
-// proposal-cache Edge Function へ保存。失敗は握りつぶす（保存できなくても返却は続行）。
-async function saveProposalCache(
-  supabaseUrl: string,
-  anonKey: string,
-  payload: {
-    organization: string;
-    signature: string;
-    proposal: Proposal;
-    meetings: Meeting[];
-    model: string;
-    edited: boolean;
-  }
-): Promise<void> {
-  try {
-    await fetch(`${supabaseUrl}/functions/v1/proposal-cache`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${anonKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ action: "set", ...payload }),
-      cache: "no-store",
-    });
-  } catch (err) {
-    // キャッシュ保存失敗は致命的でない
-    console.error("saveProposalCache: proposal-cache保存失敗", err);
-  }
-}
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return "日付不明";
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return dateStr;
-  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-}
-
-// 数値の食い違いを日付で解決させるため、資料には必ず日付を添える。
-// 日付が見えないと「新しい方を採用する」という判断ができない。
-function formatDeliverables(docs: MemoResult[], emptyLabel: string): string {
-  if (docs.length === 0) return emptyLabel;
-  return docs
-    .map((d) => {
-      const kind = (d.metadata?.["種別"] as string) ?? "成果物";
-      return `- [${formatDate(d.event_date)}][${kind}] ${d.title}: ${d.content}`;
-    })
-    .join("\n");
-}
-
-// 吉井さんが手直しした提案を、再生成時に引き継ぐためのテキスト。
-// 手直しは「AIの間違いの訂正」か「吉井さん自身の案」であり、会議・成果物が増えた
-// というだけで捨ててよいものではない。
-function formatEdited(p: Proposal): string {
-  const lines: string[] = [];
-  if (p.summary) lines.push(`【経緯】${p.summary}`);
-  if (p.issues.length) lines.push(`【論点】\n${p.issues.map((s) => `- ${s}`).join("\n")}`);
-  if (p.actions.length)
-    lines.push(
-      `【打ち手】\n${p.actions.map((a) => `- ${a.title}: ${a.detail}`).join("\n")}`
-    );
-  if (p.materialOutline.length)
-    lines.push(`【骨子】\n${p.materialOutline.map((s) => `- ${s}`).join("\n")}`);
-  return lines.join("\n\n");
-}
-
-function buildUserPrompt(
-  organization: string,
-  meetings: Meeting[],
-  memos: MemoResult[],
-  deliverables: MemoResult[],
-  commonDocs: MemoResult[],
-  editedProposal: Proposal | null,
-  metrics: MemoResult | null
-): string {
-  const meetingsText =
-    meetings.length > 0
-      ? meetings
-          .map(
-            (m, i) =>
-              `【会議${i + 1}】${formatDate(m.event_date)} ${m.title}\n${m.content}`
-          )
-          .join("\n\n")
-      : "（会議履歴なし）";
-
-  const deliverablesText = formatDeliverables(deliverables, "（この団体向けの過去成果物なし）");
-  const commonText = formatDeliverables(commonDocs, "（共通資料なし）");
-
-  const memosText =
-    memos.length > 0
-      ? memos
-          .map(
-            (m) =>
-              `- [${m.source_type}] ${formatDate(m.event_date)} ${m.title}: ${m.content}`
-          )
-          .join("\n")
-      : "（関連メモなし）";
-
-  const editedText = editedProposal
-    ? `
-========================================
-以下は、前回の提案を【吉井さん自身が手直しした版】です。AIの間違いを訂正したか、
-吉井さんの考えを反映したものであり、最も信頼できる情報です。
-- ここに書かれた内容は原則そのまま引き継ぐこと。特に訂正された事実・数字・固有名詞は絶対に元に戻さないこと。
-- 会議履歴に新しい動きがあった場合のみ、その部分を更新・追記する。
-- 吉井さんが削除した項目を復活させないこと。
-==== 吉井さんが手直しした前回の提案 ====
-${formatEdited(editedProposal)}
-========================================
-`
-    : "";
-
-  // 実績数値の唯一の正。他の資料に別の数値があっても、こちらを使わせる。
-  const metricsText = metrics
-    ? `
-==== 最新実績サマリ（実績数値はこれだけを使うこと）====
-${metrics.content}
-`
-    : "";
-
-  // セグメントは「相手が決まっていない」のではなく「特定しないのが狙い」。
-  // 明示しないと、最初の出力が「どの自治体ですか」の確認で埋まる。
-  const seg = parseSegmentTarget(organization);
-  const targetLine = seg
-    ? `対象: ${organization}（特定の団体ではなく「${organization}」という区分全体への汎用的な訴求。個別の団体名を特定せず、${organization}に共通する構造・決裁の通り方・響く論点を扱うこと。${seg === "議員" ? "相手は行政職員ではなく議員。議会質問・政策実績・地元へのメリットという議員の関心軸で組み立てること。" : ""}）`
-    : `対象自治体: ${organization}`;
-
-  return `${targetLine}
-${metricsText}${editedText}
-以下は、法人請求オンラインサービスの【共通資料】（特定の団体に限らない、サービス標準の提案の型・セミナー資料・事業戦略）の抜粋です。提案の「型」「サービスの価値訴求」「全社戦略との整合」はここに従ってください。
-==== 共通資料 ====
-${commonText}
-
-以下は、過去にこの自治体向けに作成した成果物（提案書・資料など）の抜粋です。今回の提案の【土台（ベース）】として活用してください。共通資料と重複する内容は、この団体向けの記述を優先してください。
-==== この団体向けの過去成果物 ====
-${deliverablesText}
-
-以下は、この自治体に関するこれまでの会議履歴（時系列・古い順）です。
-==== 会議履歴 ====
-${meetingsText}
-
-以下は、日記・学びから抽出した関連メモ（補強用）です。
-==== 関連メモ ====
-${memosText}
-
-上記の事実だけをもとに（共通資料の提案の型と、この団体向けの過去成果物を土台に、会議履歴の最新状況で更新して）、${organization}への営業・提案戦略を指定の JSON スキーマで構造化して返してください。
-その際、summary（経緯）だけでなく、以下も必ず空にせず具体的に記述すること:
-- issues: 現状の論点・ボトルネックを2〜4個。会議履歴中の「課題：」を主な材料にする。
-- actions: 次の打ち手を3〜5個。それぞれ title（見出し）と detail（具体策）。会議履歴中の「アクション：」「示唆：」を材料にする。
-- materialOutline: 提案資料の見出し骨子を4〜6個。
-いずれのフィールドも空配列のまま返してはならない。`;
-}
-
-// summary だけでなく論点・打ち手・骨子まで揃っているか。空の結果をキャッシュしないための判定。
-function isComplete(p: Proposal): boolean {
-  return (
-    !!p.summary &&
-    p.issues.length > 0 &&
-    p.actions.length > 0 &&
-    p.materialOutline.length > 0
-  );
-}
-
-// Claude で1回生成し Proposal を組み立てる。
-// structured outputs（output_config.format）で JSON 形状を保証しつつ、
-// adaptive thinking で会議履歴を分析させてから全フィールドを埋めさせる。
-async function generateProposal(
-  organization: string,
-  meetings: Meeting[],
-  memos: MemoResult[],
-  deliverables: MemoResult[],
-  commonDocs: MemoResult[],
-  editedProposal: Proposal | null,
-  metrics: MemoResult | null
-): Promise<Proposal> {
-  // ツール強制の代わりに structured outputs で JSON 形状を保証する。
-  // 思考（adaptive thinking）は structured() の既定 true のまま使い、
-  // 即出力ではなく会議履歴を分析させてから各フィールドを埋めさせる。
-  // 拒否・打ち切り・空応答は structured() が例外に変換するので、ここでは投げっぱなしでよい。
-  const input = await structured<Partial<Proposal>>({
-    system: SYSTEM_PROMPT,
-    prompt: buildUserPrompt(
-      organization,
-      meetings,
-      memos,
-      deliverables,
-      commonDocs,
-      editedProposal,
-      metrics
-    ),
-    schema: PROPOSAL_SCHEMA,
-    // thinking + 4フィールドの構造化出力を収めるため 16000 に引き上げ。
-    maxTokens: 16000,
-    label: "提案生成",
-  });
-
-  return {
-    summary: typeof input.summary === "string" ? input.summary : "",
-    issues: Array.isArray(input.issues)
-      ? input.issues.filter((s): s is string => typeof s === "string")
-      : [],
-    actions: Array.isArray(input.actions)
-      ? input.actions
-          .filter(
-            (a): a is { title: string; detail: string } =>
-              !!a &&
-              typeof a === "object" &&
-              typeof (a as { title?: unknown }).title === "string" &&
-              typeof (a as { detail?: unknown }).detail === "string"
-          )
-          .map((a) => ({ title: a.title, detail: a.detail }))
-      : [],
-    materialOutline: Array.isArray(input.materialOutline)
-      ? input.materialOutline.filter((s): s is string => typeof s === "string")
-      : [],
-  };
-}
 
 // 手直しの保存。吉井さんが論点・打ち手・骨子を直したら、その版をキャッシュに書き戻す。
 // Claude は呼ばない（訂正をAIに再解釈させない）。
@@ -521,7 +102,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { organization?: unknown; force?: unknown };
+  let body: { organization?: unknown; force?: unknown; mode?: unknown };
   try {
     body = await req.json();
   } catch (err) {
@@ -539,6 +120,25 @@ export async function POST(req: NextRequest) {
       { error: "自治体を選択してください" },
       { status: 400 }
     );
+  }
+
+  // deep = tool use で追加調査してから組む。常に再生成（キャッシュ照合を飛ばす）。
+  // 編成は engine.runDeepForOrg に一本化（夜間の /api/agent/refresh と共有）。
+  if (body.mode === "deep") {
+    const creds = serviceCreds();
+    if (!creds) {
+      return NextResponse.json({ error: "Supabase未設定（service role）" }, { status: 500 });
+    }
+    try {
+      const r = await runDeepForOrg(creds, anonKey, organization);
+      return NextResponse.json({ ...r, cached: false, deep: true });
+    } catch (error) {
+      console.error("提案生成(deep)エラー:", error);
+      return NextResponse.json(
+        { error: llmErrorMessage(error, "AIによる提案生成に失敗しました。") },
+        { status: llmErrorStatus(error) }
+      );
+    }
   }
 
   // セグメント（政令市・特別区・国会議員など）＝特定の団体ではなく区分全体への訴求。
@@ -566,7 +166,6 @@ export async function POST(req: NextRequest) {
   //   - 共通資料: 全団体分の横断資料（100件超）が対象なので、類似度上位のみに絞って
   //     プロンプトの肥大を防ぐ。
   //   - セグメント: 団体タグで絞ると0件になるので、絞りを外して横断で引く。
-  //     「政令市 向けの提案」のような検索語で、区分に関連の深い過去資料が上位に来る。
   const [deliverables, commonDocs, metrics] = await Promise.all([
     segment
       ? fetchDeliverables(supabaseUrl, anonKey, `${organization} ${segment}`, "", 40)
@@ -603,8 +202,6 @@ export async function POST(req: NextRequest) {
   // c. Claude で提案生成（structured outputs + adaptive thinking）
   let proposal: Proposal;
   try {
-    // adaptive thinking で過去成果物・会議履歴を分析させてから構造化出力するため、
-    // 1回の生成で全フィールドが埋まる想定（従来の空配列問題への対処）。
     proposal = await generateProposal(
       organization,
       meetings,

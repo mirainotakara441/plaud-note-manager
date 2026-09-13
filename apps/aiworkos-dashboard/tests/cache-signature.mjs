@@ -117,15 +117,26 @@ const meeting = (id, content, event_date) => ({ id, content, event_date });
   const { readFileSync } = await import("node:fs");
   const { join, dirname } = await import("node:path");
   const ROOT = join(dirname(new URL(import.meta.url).pathname), "..");
+  // agent の生成ロジックは 2026-09-12 に lib/proposal/engine.ts へ移設された
+  // （夜間の /api/agent/refresh と共有するため）。署名の読み元もそちらに移ったので、
+  // このガードも engine を見る。route 側は engine 経由でしか署名に触れないことを別途見る。
   for (const [name, file, fn] of [
-    ["agent", "app/api/agent/route.ts", "proposalSignature"],
+    ["agent(engine)", "lib/proposal/engine.ts", "proposalSignature"],
     ["月報", "app/api/monthly-report/route.ts", "monthlyReportSignature"],
   ]) {
     const src = readFileSync(join(ROOT, file), "utf8");
     check(`7. ${name}: 共有モジュールから読む`, src.includes(`from "@/lib/cacheSignature.mjs"`));
     check(`7. ${name}: ${fn} を使う`, src.includes(`const computeSignature = ${fn};`));
     check(`7. ${name}: 自前で署名を組み立てていない`,
-      !/function computeSignature\s*\(/.test(src), "route内に旧実装が残っている");
+      !/function computeSignature\s*\(/.test(src), "旧実装が残っている");
+  }
+  {
+    const src = readFileSync(join(ROOT, "app/api/agent/route.ts"), "utf8");
+    check("7. agent(route): 署名は engine 経由でだけ触る",
+      src.includes(`from "@/lib/proposal/engine"`) &&
+        !src.includes(`from "@/lib/cacheSignature.mjs"`) &&
+        !/function computeSignature\s*\(/.test(src),
+      "route が署名を直接読む/自前実装すると、engine と二重になる");
   }
 }
 
