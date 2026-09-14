@@ -53,10 +53,13 @@ const C_X = "#4a3aa7";
 
 type FilterKey = "all" | "ramen" | "no_x";
 
+// 既定はラーメンだけ。積み上げを見る画面なので、うどん・カレー・カフェが
+// 混ざると杯数が読めなくなる（2026-09-13に本人が指定）。
+// 「すべて」だけがラーメン以外も見せる逃げ道で、他はラーメンが前提。
 const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: "all", label: "すべて" },
   { key: "ramen", label: "ラーメンのみ" },
   { key: "no_x", label: "X未リンク" },
+  { key: "all", label: "すべて" },
 ];
 
 const MONTHLY_KINDS = [
@@ -83,9 +86,13 @@ function fmtMonth(ym: string) {
 // 写真は非公開バケットに置いてあり、公開URLを持たない。
 // 表示はこのプロキシ経由（合言葉認証の内側の端末からしか見えない）。
 //
-// w を付けるとサーバー側で縮めて返す。原寸は1枚0.7〜1MBあり、一覧に並べると
-// 1か月ぶんで10MBを超える。拡大表示だけ原寸を使う。
+// w を付けるとサーバー側で縮めて返す。原寸は1枚0.7〜3.2MBあり、一覧に並べると
+// 1か月ぶんで10MBを超える。
 // v は作り方の版（lib/ramen.ts）。上げると端末のキャッシュを取り直させられる。
+//
+// 拡大表示も 1280 を使う。原寸は3.0秒かかるのに対し1280は0.24秒で、
+// iPhoneの幅390pxに対して3倍の解像度がある（写真のメモ欄の手書き★も読める）。
+// /ramen/all の拡大も同じ 1280（2026-09-13に揃えた）。
 function photoUrl(path: string, width?: 480 | 1280) {
   const w = width ? `&w=${width}&v=${PHOTO_RENDER_VERSION}` : "";
   return `/api/ramen/photo?path=${encodeURIComponent(path)}${w}`;
@@ -695,7 +702,7 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={photoUrl(zoom)}
+            src={photoUrl(zoom, 1280)}
             alt={log.shop}
             className="max-h-full max-w-full rounded-lg object-contain"
           />
@@ -1060,9 +1067,20 @@ function MonthlyDrafts({
 }
 
 export default function RamenPage() {
-  const [items, setItems] = useState<Log[] | null>(null);
+  // 取得は2段構え。
+  //
+  // 1段目（view=list）… 全行の軽い列。積み上げ・月次グラフ・月の一覧を出す
+  // 2段目（view=text）… 実際にカードを描く行だけを全列で。未処理＋選んだ月
+  //
+  // 以前は全230件を全列（339KB）で1回取っていた。描くのは未処理と1か月ぶんだけ
+  // なのに全部の下書き本文を運んでいて、混み合うと10秒超・タイムアウト・500で
+  // 「ラーメン記録の取得に失敗しました」になっていた（2026-09-13 実測）。
+  const [base, setBase] = useState<Log[] | null>(null);
+  const [texts, setTexts] = useState<Record<number, Log>>({});
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<FilterKey>("all");
+  // 2段目だけが失敗した状態。画面は出せるので、赤いエラー箱とは分けて持つ
+  const [textError, setTextError] = useState(false);
+  const [filter, setFilter] = useState<FilterKey>("ramen");
   const [month, setMonth] = useState<string>("");
 
   // 再取得中かどうか。初回の loading とは別に持つ。
@@ -1070,24 +1088,64 @@ export default function RamenPage() {
   // 数秒かかる再取得の間「何も起きていない」ように見えていた（2026-08-28）。
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(null);
-    setRefreshing(true);
-    try {
-      const res = await fetch("/api/ramen", { cache: "no-store" });
-      const d = await res.json();
-      if (!res.ok || d.error) throw new Error(d?.error ?? `status ${res.status}`);
-      setItems(d.items ?? []);
-    } catch {
-      setError("ラーメン記録の取得に失敗しました");
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+  // 子（記録フォーム・カードの操作）から「取り直して」と言われた回数。
+  // 増えると1段目・2段目の両方が走る
+  const [reloadCount, setReloadCount] = useState(0);
+  const load = useCallback(() => setReloadCount((n) => n + 1), []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let alive = true;
+    (async () => {
+      setError(null);
+      setRefreshing(true);
+      try {
+        const res = await fetch("/api/ramen?view=list", { cache: "no-store" });
+        const d = await res.json();
+        if (!res.ok || d.error) throw new Error(d?.error ?? `status ${res.status}`);
+        if (alive) setBase(d.items ?? []);
+      } catch {
+        if (alive) setError("ラーメン記録の取得に失敗しました");
+      } finally {
+        if (alive) setRefreshing(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [reloadCount]);
+
+  useEffect(() => {
+    if (!month) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/ramen?view=text&month=${month}`, {
+          cache: "no-store",
+        });
+        const d = await res.json();
+        if (!res.ok || d.error) throw new Error(d?.error ?? `status ${res.status}`);
+        const map: Record<number, Log> = {};
+        for (const row of d.items ?? []) map[row.id] = row;
+        if (alive) {
+          setTexts(map);
+          setTextError(false);
+        }
+      } catch {
+        // ここが失敗しても、1段目で出した積み上げと一覧の骨格は残る。
+        // 本文が出ないことだけを伝えて、画面ごと消さない
+        if (alive) setTextError(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [month, reloadCount]);
+
+  // 軽い行に、取れた本文を重ねる。描かない行は本文が無いままでよい
+  const items = useMemo(
+    () => (base ? base.map((r) => ({ ...r, ...(texts[r.id] ?? {}) })) : null),
+    [base, texts]
+  );
 
   const months = useMemo(() => {
     const set = new Set((items ?? []).map((i) => i.eaten_on.slice(0, 7)));
@@ -1153,7 +1211,9 @@ export default function RamenPage() {
   const shown = useMemo(() => {
     let all = (items ?? []).filter((i) => i.status === "posted");
     if (month) all = all.filter((i) => i.eaten_on.slice(0, 7) === month);
-    if (filter === "ramen") all = all.filter((i) => i.is_ramen);
+    // ラーメン以外を出すのは「すべて」を選んだときだけ。
+    // 「X未リンク」でうどんが戻ってくると、絞ったつもりが絞れていない
+    if (filter !== "all") all = all.filter((i) => i.is_ramen);
     if (filter === "no_x") all = all.filter((i) => !i.x_url);
     return all;
   }, [items, filter, month]);
@@ -1191,6 +1251,21 @@ export default function RamenPage() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="h-28 animate-pulse rounded-2xl border border-gray-200 bg-gray-100" />
           ))}
+        </div>
+      )}
+
+      {/* 下書き・メモだけが取れなかったとき。積み上げと一覧は出ているので、
+          画面を消さずに「本文が欠けている」ことだけを伝える */}
+      {textError && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span>下書き・メモを読み込めませんでした（記録そのものは出ています）</span>
+          <button
+            type="button"
+            onClick={load}
+            className="ml-auto shrink-0 rounded-full bg-amber-600 px-2 py-0.5 font-bold text-white active:scale-95"
+          >
+            取り直す
+          </button>
         </div>
       )}
 

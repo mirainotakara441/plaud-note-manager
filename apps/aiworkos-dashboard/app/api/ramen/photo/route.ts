@@ -29,7 +29,25 @@ const EXT = PHOTO_EXT;
 // 縮小して返す幅。一覧のサムネイル（3列）と、1枚だけのカード用。
 const ALLOWED_WIDTHS = new Set(THUMB_WIDTHS);
 
-function imageResponse(body: ArrayBuffer, type: string) {
+// 縮小はまず Storage の image transformation に作らせる。
+//
+// 原寸を丸ごと落としてから縮めると、39KBのサムネイル1枚に3.2MBが動いて
+// 1枚3〜6秒かかる（2026-09-13 実測）。作り置きがあっても初回はこれを払う。
+// render/image なら落ちてくるのが最初から30〜80KBで、Supabase側のCDNが
+// 変換結果を持つ（12枚 9.6秒 → 0.9秒、2回目は0.1秒）。EXIFの向きも起こして
+// 返す（向き=6 の写真が 480x640 で返るのを実測で確認）。
+//
+// これが使えない時（機能が無効・対応外の形式）は、下の作り置き＋sharp へ落ちる。
+function renderUrl(base: string, path: string, width: number) {
+  // resize=contain は枠に収める指定。幅だけ渡せば縦横比はそのまま。
+  // quality は sharp 側と同じ78に合わせる
+  return (
+    `${base}/storage/v1/render/image/authenticated/${BUCKET}/${path}` +
+    `?width=${width}&quality=78&resize=contain`
+  );
+}
+
+function imageResponse(body: ArrayBuffer | ReadableStream, type: string) {
   return new NextResponse(body, {
     headers: {
       "Content-Type": type,
@@ -147,6 +165,30 @@ export async function GET(req: NextRequest) {
   // 200件を並べる一覧では、スクロールするたびにこれが効いて重い。
   // 一度作ったらバケットへ置いておき、次からはただ取り出すだけにする。
   if (wantedWidth) {
+    const rendered = await fetch(renderUrl(c.url, path, wantedWidth), {
+      headers: { apikey: c.key, Authorization: `Bearer ${c.key}` },
+    }).catch(() => null);
+    if (rendered?.ok && rendered.body) {
+      // 受け切ってから返すと、落とす時間と返す時間が直列に足し算になる。
+      // そのまま流して重ねる
+      return imageResponse(
+        rendered.body,
+        rendered.headers.get("content-type") ?? "image/jpeg"
+      );
+    }
+    if (rendered) {
+      // 本文（短いJSONのエラー）を読み切って接続を返す。cancel() だと
+      // この後の取得がつながらず、消した写真のリクエストが永久に返らなくなる
+      const detail = await rendered.text().catch(() => "");
+      if (rendered.status !== 400 && rendered.status !== 404) {
+        console.error(
+          "ramen photo: Storage変換が使えず作り置きへ切替",
+          rendered.status,
+          detail.slice(0, 200)
+        );
+      }
+    }
+
     const cached = await fetch(
       `${c.url}/storage/v1/object/${BUCKET}/${thumbPath(path, wantedWidth)}`,
       { headers: { apikey: c.key, Authorization: `Bearer ${c.key}` }, cache: "no-store" }
@@ -171,37 +213,42 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  if (!wantedWidth) {
+    // 原寸はそのまま流す。3MBを受け切ってから返すと往復が直列になるので、
+    // 届いた先から返して重ねる
+    return imageResponse(res.body!, res.headers.get("content-type") ?? "image/jpeg");
+  }
+
   const buf = await res.arrayBuffer();
   let body: ArrayBuffer = buf;
   let type = res.headers.get("content-type") ?? "image/jpeg";
 
-  if (wantedWidth) {
-    try {
-      // 縮小と同時に EXIF の向きを画素に焼き込む。焼かずに縮めると、
-      // 向き情報だけ落ちて横倒しの写真が並ぶ（lib/photoImage.ts の説明参照）
-      const out = await uprightJpeg(Buffer.from(buf), { width: wantedWidth });
-      // Buffer のままだと NextResponse の型（BodyInit）に合わないので ArrayBuffer へ写す
-      body = out.buffer.slice(
-        out.byteOffset,
-        out.byteOffset + out.byteLength
-      ) as ArrayBuffer;
-      type = "image/jpeg";
-      // 作り置きとして残す。失敗しても今回の応答は返すので待たずに投げっぱなしにする
-      // （次に開いた誰かが作り直すだけ）。
-      void fetch(`${c.url}/storage/v1/object/${BUCKET}/${thumbPath(path, wantedWidth)}`, {
-        method: "POST",
-        headers: {
-          apikey: c.key,
-          Authorization: `Bearer ${c.key}`,
-          "Content-Type": "image/jpeg",
-          "x-upsert": "true",
-        },
-        body: new Uint8Array(out),
-      }).catch((err) => console.error("ramen photo: 作り置きの保存に失敗", err));
-    } catch (err) {
-      // 縮小に失敗したら原寸を返す。重いだけで、写真が出ないより良い
-      console.error("ramen photo: 縮小に失敗", err);
-    }
+  // Storage の変換が使えなかったときの控え。手元の sharp で起こして縮め、作り置く。
+  try {
+    // 縮小と同時に EXIF の向きを画素に焼き込む。焼かずに縮めると、
+    // 向き情報だけ落ちて横倒しの写真が並ぶ（lib/photoImage.ts の説明参照）
+    const out = await uprightJpeg(Buffer.from(buf), { width: wantedWidth });
+    // Buffer のままだと NextResponse の型（BodyInit）に合わないので ArrayBuffer へ写す
+    body = out.buffer.slice(
+      out.byteOffset,
+      out.byteOffset + out.byteLength
+    ) as ArrayBuffer;
+    type = "image/jpeg";
+    // 作り置きとして残す。失敗しても今回の応答は返すので待たずに投げっぱなしにする
+    // （次に開いた誰かが作り直すだけ）。
+    void fetch(`${c.url}/storage/v1/object/${BUCKET}/${thumbPath(path, wantedWidth)}`, {
+      method: "POST",
+      headers: {
+        apikey: c.key,
+        Authorization: `Bearer ${c.key}`,
+        "Content-Type": "image/jpeg",
+        "x-upsert": "true",
+      },
+      body: new Uint8Array(out),
+    }).catch((err) => console.error("ramen photo: 作り置きの保存に失敗", err));
+  } catch (err) {
+    // 縮小に失敗したら原寸を返す。重いだけで、写真が出ないより良い
+    console.error("ramen photo: 縮小に失敗", err);
   }
 
   return imageResponse(body, type);

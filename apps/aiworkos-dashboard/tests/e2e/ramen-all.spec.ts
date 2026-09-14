@@ -5,6 +5,9 @@ import { COOKIE_NAME, authCookieValue } from "./auth";
 // この画面の値打ちは、過去をスクロールせずに見渡せること。だから
 // 「開ける」だけでなく、件数が並んでいるか・写真が本当に出ているか・
 // 通算杯数から来られるかまで見る。
+//
+// 既定はラーメンだけ（2026-09-13に本人が指定）。うどん・カレー・カフェが
+// 混ざると杯数が読めなくなるため、ここもそれを見張る。
 
 test.describe("年ごとの訪問店一覧", () => {
   test.beforeEach(async ({ context, baseURL }) => {
@@ -66,6 +69,30 @@ test.describe("年ごとの訪問店一覧", () => {
       )
     );
     expect(Math.max(...perCard), "1杯に2枚以上出ています").toBeLessThanOrEqual(1);
+  });
+
+  // 既定でラーメン以外（うどん・カレー・カフェ等）が混ざらないこと。
+  // 杯番号は is_ramen の行にしか付かないので、「1枚1枚に杯目が付いている」が
+  // そのまま「ラーメンしか並んでいない」の証明になる。
+  test("既定ではラーメンだけが並ぶ", async ({ page }) => {
+    await page.goto("/ramen/all");
+    await expect(page.locator("section").first()).toBeVisible({ timeout: 30_000 });
+
+    const cards = page.locator("section > div > div");
+    // 見出しにも「通算158杯目まで」と出るので、数えるのは一覧の中だけに限る
+    const bowls = page.locator("section").locator("text=/\\d+杯目/");
+    const [cardCount, bowlCount] = await Promise.all([cards.count(), bowls.count()]);
+    expect(cardCount, "一覧が空です").toBeGreaterThan(100);
+    expect(bowlCount, "杯数の無いもの（ラーメン以外）が混ざっています").toBe(cardCount);
+
+    // ラーメン以外の枠（🍽）は1つも出ない
+    await expect(page.locator("text=🍽")).toHaveCount(0);
+
+    // 「すべて」を押せばラーメン以外も戻ってくる（逃げ道は残してある）
+    await page.getByRole("button", { name: "すべて" }).click();
+    await expect
+      .poll(async () => await page.locator("section > div > div").count(), { timeout: 10_000 })
+      .toBeGreaterThan(cardCount);
   });
 
   test("日付・杯番号・★・店名がそろって出ている", async ({ page }) => {

@@ -48,6 +48,44 @@ const COLUMNS = [
   "photo_urls",
 ].join(",");
 
+// 一覧だけを描く画面（/ramen/all）向けの軽い列。
+//
+// 全列だと229件で213KB返る。その44%が excerpt・memo・draft_tabelog・draft_x
+// といった下書き・本文系で、一覧は日付・杯番号・★・店名・写真しか使わない。
+// 下書き全文まで毎回運ぶと、サムネイルが出始めるまでの待ちがその分延びる
+// （2026-09-13 実測）。
+const LIST_COLUMNS = [
+  "id",
+  "eaten_on",
+  "bowl_no",
+  "bowl_label",
+  "shop",
+  "area",
+  "menu",
+  "stars",
+  "stars_label",
+  "score",
+  "photo_urls",
+  "is_ramen",
+  // /ramen 側が積み上げの集計（X投稿率）・未処理の抽出・よく行く店の
+  // リンクに使う。いずれも短い列
+  "status",
+  "x_url",
+  "tabelog_shop_url",
+].join(",");
+
+// view=text 用。ある月のカードを描くのに要る行だけを、全列で取り直すときに使う。
+// 月の指定は "YYYY-MM" だけを許す（そのままクエリへ入るため、形を絞る）。
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** その月の翌月1日。PostgREST へ gte / lt で渡すため。 */
+function nextMonthStart(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return m === 12
+    ? `${y + 1}-01-01`
+    : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+}
+
 function creds() {
   const url = process.env.SUPABASE_URL;
   const anon = process.env.SUPABASE_ANON_KEY;
@@ -55,12 +93,37 @@ function creds() {
   return { url, anon };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const c = creds();
   if (!c) return NextResponse.json({ error: "Supabase未設定" }, { status: 500 });
 
+  const sp = new URL(req.url).searchParams;
+  const view = sp.get("view");
+
+  // view=list は一覧用の軽い列だけ。指定が無ければ従来どおり全列。
+  const columns = view === "list" ? LIST_COLUMNS : COLUMNS;
+
+  // view=text は「いま画面に出す行」だけを全列で取る。
+  //
+  // /ramen は下書き・メモ・本文を出すが、実際に描くのは未処理と選んだ月だけ。
+  // それでも全230件ぶんの本文を運んでいて、混み合うと落ちていた
+  // （画像100枚と並行で叩くと10秒超・タイムアウト・500。2026-09-13 実測）。
+  // 集計と月の一覧は view=list が担い、こちらは描く行だけに絞る。
+  const month = sp.get("month") ?? "";
+  let filter = "";
+  if (view === "text") {
+    if (!MONTH_RE.test(month)) {
+      return NextResponse.json({ error: "monthの形式が不正です" }, { status: 400 });
+    }
+    // 未処理（下書きまち・投稿まち）は月に関係なく常に要る。画面の最上段に出るため
+    filter =
+      `&or=(status.neq.posted,status.is.null,` +
+      `and(eaten_on.gte.${month}-01,eaten_on.lt.${nextMonthStart(month)}))`;
+  }
+
   const res = await fetch(
-    `${c.url}/rest/v1/${TABLE}?select=${COLUMNS}&order=eaten_on.desc,bowl_no.desc,id.desc`,
+    `${c.url}/rest/v1/${TABLE}?select=${columns}${filter}` +
+      `&order=eaten_on.desc,bowl_no.desc,id.desc`,
     {
       headers: {
         apikey: c.anon,

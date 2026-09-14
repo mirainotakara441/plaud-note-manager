@@ -14,6 +14,27 @@ import { familyAuthorized } from "@/lib/familyAuth";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+// 縮小して返す幅。一覧のサムネイルと、拡大表示用。
+// 任意の数を許すと同じ写真が無数の別URLになってキャッシュが効かないので、
+// 許す値だけに絞る（/api/ramen/photo と同じ考え方）。
+const ALLOWED_WIDTHS = new Set([480, 1280]);
+
+// 縮小は Storage の image transformation に作らせる。
+//
+// 以前はここで原寸を丸ごと落として、そのまま返していた。送る前にcanvasで
+// 長辺1600pxへ落としてあるとはいえ1枚560KB前後あり、1枚1.2秒・11枚で6.0MB
+// かかっていた（2026-09-13 実測）。枚数が増えるほど効いてくる。
+//
+// render/image なら落ちてくるのが幅480で38KB。Supabase側のCDNが変換結果を
+// 持つので、2回目以降は作り直しも起きない。
+function renderUrl(base: string, path: string, width: number) {
+  // resize=contain は枠に収める指定。幅だけ渡せば縦横比はそのまま。
+  return (
+    `${base}/storage/v1/render/image/authenticated/${FAMILY_BUCKET}/${path}` +
+    `?width=${width}&quality=78&resize=contain`
+  );
+}
+
 export async function POST(req: NextRequest) {
   if (!(await familyAuthorized(req))) {
     return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
@@ -94,13 +115,53 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "サーバー設定エラー" }, { status: 500 });
   }
 
-  const path = new URL(req.url).searchParams.get("path") ?? "";
+  const sp = new URL(req.url).searchParams;
+  const path = sp.get("path") ?? "";
   if (!isSafePhotoPath(path)) {
     return NextResponse.json({ error: "パスが不正です" }, { status: 400 });
   }
 
+  const wantedWidth = ALLOWED_WIDTHS.has(Number(sp.get("w"))) ? Number(sp.get("w")) : null;
+
+  const auth = { apikey: c.key, Authorization: `Bearer ${c.key}` };
+
+  // パスは毎回ユニーク（上書きしない）なので端末側に長く置いてよい。
+  // private を付けて共有キャッシュには残さない。
+  const CACHE = "private, max-age=31536000, immutable";
+
+  if (wantedWidth) {
+    const rendered = await fetch(renderUrl(c.url, path, wantedWidth), {
+      headers: auth,
+    }).catch(() => null);
+    if (rendered?.ok && rendered.body) {
+      // 受け切ってから返すと、落とす時間と返す時間が直列に足し算になる。
+      // そのまま流して重ねる。
+      return new NextResponse(rendered.body, {
+        headers: {
+          "Content-Type": rendered.headers.get("content-type") ?? "image/jpeg",
+          "Cache-Control": CACHE,
+        },
+      });
+    }
+    // 変換機能が使えないか、変換できない形式（HEIC等）だったとき。
+    // 写真が出ないよりはマシなので、下の原寸へ落ちる。
+    // 存在しないパスもここへ来るが、その判定は下の取得に任せる。
+    if (rendered) {
+      // 本文（短いJSONのエラー）を読み切って接続を返す。捨てたままにすると
+      // この後の原寸取得がつながらない
+      const detail = await rendered.text().catch(() => "");
+      if (rendered.status !== 400 && rendered.status !== 404) {
+        console.error(
+          "family photo: Storage変換が使えず原寸へ切替",
+          rendered.status,
+          detail.slice(0, 200)
+        );
+      }
+    }
+  }
+
   const res = await fetch(`${c.url}/storage/v1/object/${FAMILY_BUCKET}/${path}`, {
-    headers: { apikey: c.key, Authorization: `Bearer ${c.key}` },
+    headers: auth,
     cache: "no-store",
   });
 
@@ -114,13 +175,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const buf = await res.arrayBuffer();
-  return new NextResponse(buf, {
+  // 原寸はそのまま流す。受け切ってから返すと往復が直列になるので、
+  // 届いた先から返して重ねる。
+  return new NextResponse(res.body, {
     headers: {
       "Content-Type": res.headers.get("content-type") ?? "image/jpeg",
-      // パスは毎回ユニーク（上書きしない）なので端末側に長く置いてよい。
-      // private を付けて共有キャッシュには残さない。
-      "Cache-Control": "private, max-age=31536000, immutable",
+      "Cache-Control": CACHE,
     },
   });
 }

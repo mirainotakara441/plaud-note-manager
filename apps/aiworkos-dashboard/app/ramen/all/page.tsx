@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PHOTO_RENDER_VERSION, starsText } from "@/lib/ramen";
 
-// 食べたものを1枚で見渡すページ。/ramen の「通算杯数」から来る。
+// 食べた一杯を1枚で見渡すページ。/ramen の「通算杯数」から来る。
 //
 // /ramen 本体は「いま手を動かす一杯」を回すための画面で、1杯あたりの情報が多く、
 // 過去を遡るには延々スクロールすることになる。こちらは逆に、1杯あたりを
@@ -32,10 +32,13 @@ const C_BOWL = "#eb6834";
 
 type FilterKey = "all" | "ramen" | "photo";
 
+// 既定はラーメンだけ。この画面は杯数を追う場所で、うどん・カレー・カフェが
+// 混ざると「何杯目まで来たか」が読めなくなる（2026-09-13に本人が指定）。
+// 「すべて」だけがラーメン以外も見せる逃げ道で、他はラーメンが前提。
 const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: "all", label: "すべて" },
   { key: "ramen", label: "ラーメンのみ" },
   { key: "photo", label: "写真ありのみ" },
+  { key: "all", label: "すべて" },
 ];
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
@@ -113,7 +116,7 @@ function Card({ log, onZoom }: { log: Log; onZoom: (p: string) => void }) {
 export default function RamenAllPage() {
   const [items, setItems] = useState<Log[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<FilterKey>("all");
+  const [filter, setFilter] = useState<FilterKey>("ramen");
   const [zoom, setZoom] = useState<string | null>(null);
   // 見ている年。題名に年を出す以上、中身もその年に揃える
   // （年をまたぐと「2027年 訪問店」の下に2026年が並ぶことになるため）
@@ -122,7 +125,9 @@ export default function RamenAllPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch("/api/ramen", { cache: "no-store" });
+      // view=list は一覧に要る列だけ。下書き・本文系を省くと半分以下になり、
+      // サムネイルが出始めるまでの待ちが縮む
+      const res = await fetch("/api/ramen?view=list", { cache: "no-store" });
       const d = await res.json();
       if (!res.ok || d.error) throw new Error(d?.error ?? `status ${res.status}`);
       setItems(d.items ?? []);
@@ -147,7 +152,9 @@ export default function RamenAllPage() {
   const shown = useMemo(() => {
     let all = items ?? [];
     if (year) all = all.filter((i) => i.eaten_on.startsWith(year));
-    if (filter === "ramen") all = all.filter((i) => i.is_ramen);
+    // ラーメン以外を出すのは「すべて」を選んだときだけ。
+    // 「写真ありのみ」でうどんが戻ってくると、絞ったつもりが絞れていない
+    if (filter !== "all") all = all.filter((i) => i.is_ramen);
     if (filter === "photo") all = all.filter((i) => (i.photo_urls ?? []).length > 0);
     // 新しい順。同じ日に複数あるときは杯番号の大きい方（後に食べた方）を先に出す
     return [...all].sort((a, b) => {
@@ -168,16 +175,18 @@ export default function RamenAllPage() {
     return Array.from(map.entries());
   }, [shown]);
 
-  // 見出しの数字は、いま見ている年のもの
+  // 見出しの数字は、いま見ている年の、既定で見えているもの＝ラーメンに合わせる。
+  // 記録229件と出しながら158件しか並んでいないと、どちらが本当か分からなくなる
   const stats = useMemo(() => {
-    const all = (items ?? []).filter((i) => !year || i.eaten_on.startsWith(year));
-    const bowls = all.map((i) => i.bowl_no).filter((n): n is number => n != null);
+    const ramen = (items ?? []).filter(
+      (i) => i.is_ramen && (!year || i.eaten_on.startsWith(year))
+    );
+    const bowls = ramen.map((i) => i.bowl_no).filter((n): n is number => n != null);
     return {
-      total: all.length,
-      ramen: all.filter((i) => i.is_ramen).length,
-      shops: new Set(all.map((i) => i.shop)).size,
+      ramenCount: ramen.length,
+      shops: new Set(ramen.map((i) => i.shop)).size,
       latestBowl: bowls.length ? Math.max(...bowls) : null,
-      withPhoto: all.filter((i) => (i.photo_urls ?? []).length > 0).length,
+      withPhoto: ramen.filter((i) => (i.photo_urls ?? []).length > 0).length,
     };
   }, [items, year]);
 
@@ -198,8 +207,8 @@ export default function RamenAllPage() {
               通算<span className="font-bold text-gray-900">{stats.latestBowl}</span>杯目まで・
             </>
           )}
-          <span className="font-bold text-gray-900">{stats.shops}</span>店・記録
-          {stats.total}件・写真つき{stats.withPhoto}杯
+          <span className="font-bold text-gray-900">{stats.shops}</span>店・
+          {stats.ramenCount}杯・写真つき{stats.withPhoto}杯
         </p>
 
         {/* 年をまたいだ時だけ出す。1年しか無いうちは選ぶものが無い */}

@@ -53,8 +53,12 @@ function todayJst(): string {
   return `${jst.getFullYear()}-${m}-${d}`;
 }
 
-function photoUrl(path: string) {
-  return `/api/family/photo?path=${encodeURIComponent(path)}`;
+// w を付けるとサーバー側で縮めて返す。原寸は1枚560KB前後あり、
+// 並べると1画面で数MBになる。拡大表示も1280で足りる
+// （iPhoneの幅390pxに対して3倍の解像度。2026-09-13に /ramen と揃えた）。
+function photoUrl(path: string, width?: 480 | 1280) {
+  const w = width ? `&w=${width}` : "";
+  return `/api/family/photo?path=${encodeURIComponent(path)}${w}`;
 }
 
 // iPhoneの写真はそのままだと数MBあり、Vercelのボディ上限に当たる。
@@ -486,7 +490,7 @@ function LogCard({ log, onDeleted }: { log: Log; onDeleted: () => void }) {
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={photoUrl(p)}
+                src={photoUrl(p, 480)}
                 alt={`${log.title} の写真 ${i + 1}`}
                 loading="lazy"
                 className={`w-full object-cover ${
@@ -563,7 +567,7 @@ function LogCard({ log, onDeleted }: { log: Log; onDeleted: () => void }) {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={photoUrl(zoom)}
+            src={photoUrl(zoom, 1280)}
             alt={log.title}
             className="max-h-full max-w-full rounded-lg object-contain"
           />

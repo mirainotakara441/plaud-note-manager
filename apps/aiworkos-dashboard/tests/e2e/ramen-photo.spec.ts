@@ -72,6 +72,36 @@ test.describe("ラーメンの写真", () => {
     await expect(page.locator("text=/食べログ\\d\\.\\d/").first()).toBeVisible();
   });
 
+  // /ramen も既定はラーメンだけ（2026-09-13に本人が指定）。
+  // うどん・カレー・カフェが混ざると積み上げの杯数が読めなくなる。
+  // 月別の一覧は「その月に投稿済みのもの」しか出ないため件数は月次第。
+  // データに依らず確かめられる「どの絞り込みが選ばれて開くか」を見る。
+  test("既定の絞り込みがラーメンのみになっている", async ({ page }) => {
+    await page.goto("/ramen");
+    const ramenBtn = page.getByRole("button", { name: "ラーメンのみ" });
+    await expect(ramenBtn).toBeVisible({ timeout: 30_000 });
+    // 選ばれているボタンだけが塗りつぶし（bg-indigo-600）になる
+    await expect(ramenBtn, "開いた直後がラーメンのみになっていません").toHaveClass(
+      /bg-indigo-600/
+    );
+    await expect(
+      page.getByRole("button", { name: "すべて" }),
+      "「すべて」が既定になっています"
+    ).not.toHaveClass(/bg-indigo-600/);
+  });
+
+  // /ramen の取得は2段構え（軽い一覧 → 描く行だけ全列）。2段目が落ちると
+  // 積み上げや店名は出たまま、下書き・メモだけが黙って消える。
+  // 「一覧は出ているので気づかない」が一番たちが悪いので、本文まで見る。
+  test("下書きの本文まで読み込めている", async ({ page }) => {
+    await page.goto("/ramen");
+    // 未処理（下書きまち・投稿まち）は最上段に出る
+    await expect(page.getByText("食べログ用").first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: "本文をコピー" }).first()).toBeVisible();
+    // 2段目が落ちたときの注意書きが出ていないこと
+    await expect(page.getByText("下書き・メモを読み込めませんでした")).toHaveCount(0);
+  });
+
   // 3.75 のように記号で書けない★を、丸めずにそのまま出せているか。
   // stars は numeric(2,1) だったので Postgres が黙って 3.8 にしていた（2026-09-12に修正）。
   test("記号で書けない★も丸めずに出る", async ({ playwright, baseURL }) => {
