@@ -539,7 +539,17 @@ function FeatureGroup({
 export default function Home() {
   const [stats, setStats] = useState<HomeStats | null>(null);
   const [fetchFailed, setFetchFailed] = useState(false);
-  const [now, setNow] = useState(() => new Date());
+  // 日付と挨拶は、画面が出てから決める。
+  //
+  // このページはビルド時に静的なHTMLへ焼き込まれる。最初から new Date() を
+  // 持つと、焼き込まれるのは「ビルドした瞬間」の日時になり、開いた時のブラウザ側と
+  // 文字が食い違って hydration が崩れる（React #418。2026-09-16 に E2E で検出）。
+  // Vercel のビルドは UTC で走るので、朝9時前は日付まで前日になっていた。
+  // 下の開閉状態と同じ理由で、マウント後に埋める。
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setNow(new Date());
+  }, []);
   // AdvisorCardから上がってくる「要対応」の件数。カード本体は2画面下にあり、
   // アラートが出ていても上からは見えないので、作戦盤直下の赤帯で知らせる。
   const [alertCount, setAlertCount] = useState(0);
@@ -576,7 +586,7 @@ export default function Home() {
 
   const loading = !stats && !fetchFailed;
   const cards = buildStatCards(stats, fetchFailed);
-  const weekday = WD[now.getDay()];
+  const weekday = now ? WD[now.getDay()] : "";
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-16 pt-[max(2.5rem,env(safe-area-inset-top))]">
@@ -593,10 +603,11 @@ export default function Home() {
 
       <section className="mb-6">
         <div className="mb-3 flex items-baseline justify-between">
+          {/* 埋まるまでは空白を1文字置いて、高さが跳ねないようにする */}
           <p className="text-sm font-bold text-gray-900">
-            {now.getMonth() + 1}月{now.getDate()}日（{weekday}）
+            {now ? `${now.getMonth() + 1}月${now.getDate()}日（${weekday}）` : "\u00a0"}
           </p>
-          <p className="text-xs text-gray-400">{greeting(now.getHours())}</p>
+          <p className="text-xs text-gray-400">{now ? greeting(now.getHours()) : "\u00a0"}</p>
         </div>
 
         {loading ? (
