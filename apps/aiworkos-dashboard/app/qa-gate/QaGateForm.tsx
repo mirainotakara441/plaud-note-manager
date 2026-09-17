@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { HOJIN_SEIKYU_QA_URL } from "@/lib/externalLinks";
 
 // 合言葉の入力フォーム。app/login/page.tsx と同じ作り。
-// 成功したら外部のQA検索サイトへ移動する（cookieは/api/qa-gateが発行済み）。
+// 成功したら本体内のQA検索（/hojin-qa）へ移動する（cookieは/api/qa-gateが発行済み）。
+
+const HOJIN_QA_PATH = "/hojin-qa";
 
 export default function QaGateForm() {
   const [passphrase, setPassphrase] = useState("");
@@ -27,9 +28,10 @@ export default function QaGateForm() {
         setError((d && d.error) || "確認に失敗しました");
         return;
       }
-      // cookie が付いたので実サイトへ。以後この端末では合言葉なしで通る
+      // cookie が付いたので実体へ。以後この端末では合言葉なしで通る
       // （/qa-gate を開き直すとサーバー側でcookieを見て自動で送り出す）。
-      window.location.href = HOJIN_SEIKYU_QA_URL;
+      // proxy.ts が cookie を見る経路なので、フル遷移で cookie を確実に載せる。
+      window.location.href = HOJIN_QA_PATH;
     } catch {
       setError("通信エラーが発生しました");
     } finally {

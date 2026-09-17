@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookieValueFor, constantTimeEqual } from "@/lib/auth";
+import {
+  HOJIN_QA_COOKIE_NAME,
+  hojinQaPassphrase,
+  isHojinQaPath,
+} from "@/lib/hojinQaAuth";
 
 // 合言葉認証（2026-07-18 CTOレビューの最重要指摘への対応）。
 // このアプリには個人の日記・実名の商談データ・課金を伴う生成APIが載っており、
@@ -35,7 +40,7 @@ const PUBLIC_PATHS = [
   /^\/api\/cron\/notion-sync$/,
   // 法人請求QA検索の入り口（lib/hojinQaAuth.ts）。法人請求チームの同僚に共有する
   // 前提のページなので、AIワークOS本体の合言葉は要求しない。ここ独自の合言葉
-  // （houjin）で守る。
+  // （HOJIN_QA_PASSPHRASE）で守る。実体の /hojin-qa は下の別分岐で判定する。
   /^\/qa-gate$/,
   /^\/api\/qa-gate$/,
 ];
@@ -48,6 +53,30 @@ export async function proxy(request: NextRequest) {
   // ここを通しても無認証では実行できない。
   if (PUBLIC_PATHS.some((re) => re.test(pathname))) {
     return NextResponse.next();
+  }
+
+  // 法人請求QA検索の実体（/hojin-qa）。本体の合言葉ではなく、QA専用の合言葉
+  // cookie（hojin_qa_auth）だけを見る。メンバーはこの cookie しか持たないので、
+  // ここ以外のページ・APIには入れない（下の本体判定に進まないため）。
+  // 本体の合言葉 cookie を持っていても、ここは QA 側の cookie が無ければ /qa-gate へ
+  // 送る（判定を1本に揃えて、抜け道を作らない）。
+  if (isHojinQaPath(pathname)) {
+    const qaPassphrase = hojinQaPassphrase();
+    if (!qaPassphrase) {
+      // フェイルクローズ（lib/hojinQaAuth.ts 参照）
+      return new NextResponse("サーバー設定エラー: QAの合言葉が構成されていません", {
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+    const qaCookie = request.cookies.get(HOJIN_QA_COOKIE_NAME)?.value ?? "";
+    if (constantTimeEqual(qaCookie, await cookieValueFor(qaPassphrase))) {
+      return NextResponse.next();
+    }
+    const url = request.nextUrl.clone();
+    url.pathname = "/qa-gate";
+    url.search = "";
+    return NextResponse.redirect(url);
   }
 
   const passphrase = process.env.APP_PASSPHRASE;

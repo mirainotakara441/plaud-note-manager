@@ -22,6 +22,14 @@ export default function BottomNav() {
 
   // ログイン画面（合言葉ゲート）ではまだ中に入っていないので、導線を見せない。
   if (pathname === "/login" || pathname.startsWith("/login/")) return null;
+  // 法人請求QA（/qa-gate・/hojin-qa）は本体の合言葉を持たないメンバーが開く画面。
+  // 本体の導線を見せても /login に弾かれるだけなので出さない（lib/hojinQaAuth.ts）。
+  if (
+    pathname === "/qa-gate" ||
+    pathname === "/hojin-qa" ||
+    pathname.startsWith("/hojin-qa/")
+  )
+    return null;
 
   return (
     <nav

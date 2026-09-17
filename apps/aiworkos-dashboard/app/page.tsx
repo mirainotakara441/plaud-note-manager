@@ -122,15 +122,15 @@ const PROPOSE_FEATURES: Feature[] = [
     accent: "bg-amber-100 text-amber-700",
   },
   {
-    // 実サイトは chatgpt.site（外部・こちらから手を入れられない）にあり、無防備に
-    // 誰でも開けた。/qa-gate は合言葉「houjin」で守ってから送り出す入り口
-    // （lib/hojinQaAuth.ts、2026-08-23）。AIワークOS本体の合言葉とは別物。
+    // 2026-09-17 にQAの実体を本体の /hojin-qa へ取り込んだ（それまでは chatgpt.site の
+    // 外部サイトへ送り出すだけだった）。/qa-gate はQA専用の合言葉を照合する入り口で、
+    // 通った端末は cookie で以後素通り。本体の合言葉とは別物（lib/hojinQaAuth.ts）。
+    // メンバーにはこの入り口のURLと合言葉だけを配る。
     href: "/qa-gate",
     icon: "QA",
     title: "法人請求QA検索",
-    desc: "相手の発言から引く営業実戦QA59件。職員の「やらない理由」への返しと、議員が使える問いの型。合言葉を入れてから別タブで開きます",
+    desc: "相手の発言から引く営業実戦QA87件。職員の「やらない理由」への返しと、議員が使える問いの型。QA専用の合言葉で開きます（メンバー共有可）",
     accent: "bg-emerald-100 text-emerald-700",
-    external: true,
   },
   {
     href: PROPOSAL_MATERIAL_GALLERY_URL,

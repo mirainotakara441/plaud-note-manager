@@ -52,3 +52,26 @@ export function authCookieValue(): string {
     ? createHmac("sha256", secret).update(passphrase).digest("hex")
     : createHash("sha256").update(passphrase).digest("hex");
 }
+
+// ---- 法人請求QA（/hojin-qa）専用の合言葉 cookie ----
+//
+// 本体の合言葉とは別の扉（lib/hojinQaAuth.ts）。cookie名も値の元になる合言葉も別。
+// 値の作り方は同じ cookieValueFor なので、計算だけ共有する。
+// 本番ビルド（next start）では HOJIN_QA_PASSPHRASE が無いと扉が閉じる（フェイルクローズ）
+// ため、E2Eでも .env.local か環境変数に必ず置く。
+
+export const HOJIN_QA_COOKIE_NAME = "hojin_qa_auth";
+
+export function hojinQaCookieValue(): string {
+  const env = loadEnv();
+  const passphrase = process.env.HOJIN_QA_PASSPHRASE || env.HOJIN_QA_PASSPHRASE;
+  if (!passphrase) {
+    throw new Error(
+      "HOJIN_QA_PASSPHRASE が読めません（.env.local か環境変数に設定してください）"
+    );
+  }
+  const secret = (process.env.AUTH_COOKIE_SECRET || env.AUTH_COOKIE_SECRET || "").trim();
+  return secret
+    ? createHmac("sha256", secret).update(passphrase).digest("hex")
+    : createHash("sha256").update(passphrase).digest("hex");
+}

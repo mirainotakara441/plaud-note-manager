@@ -10,7 +10,8 @@
     "test": "npm run test:smoke",
     "test:smoke": "node tests/smoke.mjs",
     "test:e2e": "playwright test",
-    "test:all": "node tests/run-all.mjs"
+    "test:all": "node tests/run-all.mjs",
+    "build:hojin-qa": "node scripts/build-hojin-qa.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
