@@ -35,13 +35,13 @@ test.describe("QA専用cookieだけを持つメンバー", () => {
     });
   });
 
-  test("/hojin-qa が開き、検索窓と87件の一覧が出る", async ({ page }) => {
+  test("/hojin-qa が開き、検索窓と92件の一覧が出る", async ({ page }) => {
     const found = watch(page);
     const res = await page.goto("/hojin-qa", { waitUntil: "domcontentloaded" });
     const body = await expectHealthyPage(page, found, "法人請求QA検索", res);
     expect(new URL(page.url()).pathname).toBe("/hojin-qa");
     expect(body).toContain("法人請求QA検索");
-    expect(body).toContain("87");
+    expect(body).toContain("92");
     await expect(page.getByPlaceholder("相手の発言・キーワードで探す")).toBeVisible();
     // 本体の導線（下部タブ）は出さない。押しても /login に弾かれるだけなので。
     await expect(page.getByRole("navigation", { name: "主要ページ" })).toHaveCount(0);
