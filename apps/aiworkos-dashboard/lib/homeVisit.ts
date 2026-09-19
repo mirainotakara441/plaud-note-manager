@@ -20,6 +20,8 @@ export type VisitMember = {
   birth_date: string | null; // YYYY-MM-DD
   age_manual: number | null; // 生年月日が分からない人だけ手入力
   address: string | null; // 名簿の表記そのまま（地図用の整形は mapsQuery で行う）
+  phone: string | null; // 03-xxxx-xxxx / 090-xxxx-xxxx。複数は " / " 区切り（出典: 地区名簿 2026-07-18版）
+  phone_note: string | null; // 番号の出所。本人欄なら null、同世帯の番号なら「世帯の番号（名簿の◯◯欄）」
   note: string | null;
   active: boolean;
   sort_order: number;

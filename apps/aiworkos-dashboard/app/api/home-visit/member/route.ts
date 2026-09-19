@@ -38,6 +38,7 @@ type Body = {
   birth_date?: string | null;
   age_manual?: number | string | null;
   address?: string;
+  phone?: string;
   note?: string;
   active?: boolean;
 };
@@ -97,6 +98,10 @@ export async function POST(req: NextRequest) {
     birth_date: birth ?? null,
     age_manual: birth ? null : age != null && age >= 0 && age < 130 ? age : null,
     address: text(body.address),
+    // 電話は手で直せる。空にしたら消える（名簿から入れた番号を本人の申告で上書きする用途）。
+    // 出所の注記は「名簿から入れた」ことの記録なので、人が番号を書き換えたら外す。
+    phone: text(body.phone),
+    phone_note: text(body.phone) ? undefined : null,
     note: text(body.note),
     active: body.active !== false,
   };

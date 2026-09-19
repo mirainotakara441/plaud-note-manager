@@ -69,6 +69,53 @@ function Chip({
   );
 }
 
+// 電話番号を発信リンクにする。家庭訪問のリストから、その場でかけるため。
+// 複数番号（" / " 区切り）は1つずつリンクにする。世帯の番号は注記を添えて、
+// 「本人の携帯」だと思って掛けないようにする。
+function PhoneLinks({
+  phone,
+  note,
+  compact,
+}: {
+  phone: string | null;
+  note?: string | null;
+  compact?: boolean;
+}) {
+  if (!phone) return null;
+  const numbers = phone.split(" / ").map((s) => s.trim()).filter(Boolean);
+  const tel = (n: string) => `tel:${n.replace(/[^\d+]/g, "")}`;
+
+  if (compact) {
+    return (
+      <a
+        href={tel(numbers[0])}
+        onClick={(e) => e.stopPropagation()}
+        className="shrink-0 text-xs font-bold text-emerald-600 active:opacity-70"
+        title={numbers.join(" / ")}
+      >
+        📞
+      </a>
+    );
+  }
+
+  return (
+    <div className="mb-2 rounded-xl bg-emerald-50 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {numbers.map((n) => (
+          <a
+            key={n}
+            href={tel(n)}
+            className="text-sm font-bold text-emerald-700 underline active:opacity-70"
+          >
+            📞 {n}
+          </a>
+        ))}
+      </div>
+      {note && <p className="mt-0.5 text-xs text-gray-500">{note}</p>}
+    </div>
+  );
+}
+
 // 住所を地図で開くリンク。番地まで書かれていない住所（「埼玉県」だけ等）は
 // 地図に出しても意味が無いので、その時は文字だけ出してリンクにしない。
 function MapLinks({ address, compact }: { address: string | null; compact?: boolean }) {
@@ -339,6 +386,7 @@ type MemberDraft = {
   birth_date: string;
   age_manual: string;
   address: string;
+  phone: string;
   note: string;
   active: boolean;
 };
@@ -353,6 +401,7 @@ function draftOf(m?: VisitMember): MemberDraft {
     birth_date: m?.birth_date ?? "",
     age_manual: m?.age_manual != null ? String(m.age_manual) : "",
     address: m?.address ?? "",
+    phone: m?.phone ?? "",
     note: m?.note ?? "",
     active: m?.active ?? true,
   };
@@ -505,6 +554,20 @@ function MemberForm({
         />
         <span className="mt-1 block text-xs leading-relaxed text-gray-400">
           町名から書けば地図で開けます（豊島区は「要町」「千早」だけでOK）
+        </span>
+      </label>
+
+      <label className="block">
+        <span className={labelClass}>電話（任意）</span>
+        <input
+          value={draft.phone}
+          onChange={(e) => set({ phone: e.target.value })}
+          placeholder="例：090-1234-5678 / 03-3957-0350"
+          inputMode="tel"
+          className={`${inputClass} bg-white`}
+        />
+        <span className="mt-1 block text-xs leading-relaxed text-gray-400">
+          名簿から入れた番号は「世帯の番号」の注記つき。本人の番号が分かったら書き換えてください
         </span>
       </label>
 
@@ -758,6 +821,9 @@ function MemberCard({
                 休止中
               </span>
             )}
+            {/* 畳んだままでも掛けられるように。<button> の中なので <a> は
+                クリックの伝播を止める（PhoneLinks 側で stopPropagation 済み） */}
+            <PhoneLinks phone={member.phone} compact />
           </div>
           <p className="mt-0.5 truncate text-xs text-gray-500">
             {[member.role, member.district, member.block].filter(Boolean).join(" ・ ")}
@@ -806,6 +872,7 @@ function MemberCard({
             </button>
           </div>
 
+          <PhoneLinks phone={member.phone} note={member.phone_note} />
           <MapLinks address={member.address} />
 
           {editing ? (
@@ -1195,6 +1262,7 @@ export default function HomeVisitPage() {
                                 <span className="ml-2 text-xs text-gray-400">{log.topics}</span>
                               )}
                             </button>
+                            <PhoneLinks phone={member.phone} compact />
                             <MapLinks address={member.address} compact />
                           </div>
                         ))}

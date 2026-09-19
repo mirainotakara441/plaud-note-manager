@@ -17,6 +17,8 @@ const MEMBER_COLUMNS = [
   "birth_date",
   "age_manual",
   "address",
+  "phone",
+  "phone_note",
   "note",
   "active",
   "sort_order",
