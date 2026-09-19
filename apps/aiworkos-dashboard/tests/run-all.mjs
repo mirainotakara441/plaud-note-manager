@@ -70,18 +70,19 @@ process.on("SIGINT", () => {
 });
 
 const main = async () => {
-  run("1/12 TypeScriptチェック", "npx", ["tsc", "--noEmit"]);
+  run("1/13 TypeScriptチェック", "npx", ["tsc", "--noEmit"]);
   // サーバー不要の純粋ロジック。ここで落ちるならビルドを待つ意味がないので先に回す。
-  run("2/12 純粋ロジック（Memory 2.0 Shadow）", "node", ["tests/shadow.mjs"]);
-  run("3/12 純粋ロジック（Identity導出）", "node", ["tests/identity.mjs"]);
-  run("4/12 純粋ロジック（Memory 2.0 監視）", "node", ["tests/memory-health.mjs"]);
-  run("5/12 純粋ロジック（チャンク接尾辞）", "node", ["tests/chunk-title.mjs"]);
+  run("2/13 純粋ロジック（Memory 2.0 Shadow）", "node", ["tests/shadow.mjs"]);
+  run("3/13 純粋ロジック（Identity導出）", "node", ["tests/identity.mjs"]);
+  run("4/13 純粋ロジック（Memory 2.0 監視）", "node", ["tests/memory-health.mjs"]);
+  run("5/13 純粋ロジック（チャンク接尾辞）", "node", ["tests/chunk-title.mjs"]);
   // v2はservice_roleでしか叩けないので .env.local の鍵を使う。サーバは要らない。
-  run("6/12 純粋ロジック（AIキャッシュ署名）", "node", ["tests/cache-signature.mjs"]);
-  run("7/12 純粋ロジック（日記の原文検証）", "node", ["tests/diary-raw.mjs"]);
-  run("8/12 本番DB（match_memory_chunks v1/v2 互換）", "node", ["tests/match-v2-compat.mjs"]);
-  run("9/12 純粋ロジック（健康週次レポート）", "node", ["tests/health-weekly.mjs"]);
-  run("10/12 本番ビルド", "npx", ["next", "build"]);
+  run("6/13 純粋ロジック（AIキャッシュ署名）", "node", ["tests/cache-signature.mjs"]);
+  run("7/13 純粋ロジック（日記の原文検証）", "node", ["tests/diary-raw.mjs"]);
+  run("8/13 本番DB（match_memory_chunks v1/v2 互換）", "node", ["tests/match-v2-compat.mjs"]);
+  run("9/13 純粋ロジック（健康週次レポート）", "node", ["tests/health-weekly.mjs"]);
+  run("10/13 純粋ロジック（ラーメン種別判定）", "node", ["tests/ramen-bowl-type.mjs"]);
+  run("11/13 本番ビルド", "npx", ["next", "build"]);
 
   step(`検証用サーバーを起動（${BASE}）`);
   server = spawn("npx", ["next", "start", "-p", String(PORT)], {
@@ -98,9 +99,9 @@ const main = async () => {
   }
   console.log("  起動しました");
 
-  run("11/12 スモークテスト（API）", "node", ["tests/smoke.mjs"], { BASE });
+  run("12/13 スモークテスト（API）", "node", ["tests/smoke.mjs"], { BASE });
   // E2E_BASE_URL を渡すと playwright.config.ts は自前でサーバーを立てず、ここのものを使う。
-  run("12/12 E2Eテスト（ブラウザ）", "npx", ["playwright", "test"], { E2E_BASE_URL: BASE });
+  run("13/13 E2Eテスト（ブラウザ）", "npx", ["playwright", "test"], { E2E_BASE_URL: BASE });
 
   stopServer();
   console.log("\n\x1b[32m✔ すべて通りました\x1b[0m");

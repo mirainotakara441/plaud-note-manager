@@ -134,7 +134,9 @@ async function checkAuthGate(path, method) {
   }
 }
 
-const PUBLIC_PATHS = [/^\/login$/, /^\/cron\//, /^\/push\//];
+// proxy.ts の PUBLIC と揃える。qa-open の enter/feedback は外部の閲覧者が使う口なので
+// 合言葉の外（2026-09-19 f8a0a77 で追加。ここへの追随が漏れて 400 を「認証なし」と誤検知していた）
+const PUBLIC_PATHS = [/^\/login$/, /^\/cron\//, /^\/push\//, /^\/qa-open\/(enter|feedback)$/];
 const isPublic = (p) => PUBLIC_PATHS.some((re) => re.test(p));
 
 const routes = collectRoutes().sort((a, b) => a.path.localeCompare(b.path));

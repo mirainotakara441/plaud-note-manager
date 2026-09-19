@@ -7,6 +7,7 @@ import {
   starsLabel,
   thumbPathsFor,
 } from "@/lib/ramen";
+import { BOWL_STYLES, BOWL_TASTES } from "@/lib/ramenBowlType.mjs";
 
 // 既に記録した一杯を、後から手で直す口。
 //
@@ -14,6 +15,8 @@ import {
 //   stars        … 自分の★（0.0〜5.0・半分刻み）。stars_label も一緒に書く。
 //   score        … 食べログに付けた点数（0.0〜5.0）。★とは別物。
 //   memo         … その場の一言（写真から思い出して足す場面がある）。
+//   bowl_style   … 形態（つけ麺・まぜそば…）の手入力。自動判定が違う時に直す。
+//   bowl_taste   … 味・系統（塩・豚骨…）の手入力。自動で決められない杯に付ける。
 //   add_photos   … 写真の後付け。/api/ramen/photo で上げたパスを追記する。
 //   remove_photo … 1枚だけ外す。Storageの実体も消す。
 //
@@ -33,6 +36,8 @@ type Body = {
   stars?: number | string | null;
   score?: number | string | null;
   memo?: string | null;
+  bowl_style?: string | null;
+  bowl_taste?: string | null;
   add_photos?: string[];
   remove_photo?: string;
 };
@@ -105,6 +110,23 @@ export async function POST(req: NextRequest) {
   if ("memo" in body) {
     const memo = (body.memo ?? "").trim();
     patch.memo = memo === "" ? null : memo;
+  }
+
+  // 種別の手入力。語彙は lib/ramenBowlType.mjs だけが持つ（ここで別に書かない）。
+  // 空・null は「手入力を消して自動判定に戻す」。語彙に無い値は弾く。
+  if ("bowl_style" in body) {
+    const v = (body.bowl_style ?? "").trim();
+    if (v !== "" && !BOWL_STYLES.includes(v)) {
+      return NextResponse.json({ error: `形態の値が不正です（${v}）` }, { status: 400 });
+    }
+    patch.bowl_style = v === "" ? null : v;
+  }
+  if ("bowl_taste" in body) {
+    const v = (body.bowl_taste ?? "").trim();
+    if (v !== "" && !BOWL_TASTES.includes(v)) {
+      return NextResponse.json({ error: `味・系統の値が不正です（${v}）` }, { status: 400 });
+    }
+    patch.bowl_taste = v === "" ? null : v;
   }
 
   const adding = Array.isArray(body.add_photos) ? body.add_photos : [];

@@ -4,6 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChartTitle, StatTile } from "@/app/components/charts";
 import { PHOTO_RENDER_VERSION, starsText, withShopHashtag } from "@/lib/ramen";
+import {
+  BOWL_STYLES,
+  BOWL_TASTES,
+  normalizeShopName,
+  summarizeBowlTypes,
+  tabelogShopId,
+} from "@/lib/ramenBowlType.mjs";
 
 // ラーメン（ライフOS側の第1ブロック）。1行＝1杯（1訪問）。
 // データは /api/ramen（Supabase ramen_logs・読み取り専用）。
@@ -45,6 +52,12 @@ type Log = {
   x_posted_on: string | null;
   x_excerpt: string | null;
   is_ramen: boolean;
+  // 種別。style/taste はAPIが付けた判定結果（手入力があればそれ）、
+  // bowl_style/bowl_taste は手入力そのもの（null なら自動判定）
+  style?: string;
+  taste?: string | null;
+  bowl_style?: string | null;
+  bowl_taste?: string | null;
   note: string | null;
 };
 
@@ -132,6 +145,326 @@ function MonthlyBars({ rows }: { rows: { ym: string; ramen: number; other: numbe
   );
 }
 
+// 横棒1本。ラベル・本数・最大値から幅を出す（ジャンル別・駅別で共用）
+function CountBar({
+  label,
+  count,
+  max,
+  color,
+  sub,
+}: {
+  label: string;
+  count: number;
+  max: number;
+  color: string;
+  sub?: string;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-24 shrink-0 truncate text-right text-xs font-medium text-gray-600">
+        {label}
+      </span>
+      <div className="h-5 flex-1 overflow-hidden rounded-md bg-gray-100">
+        <div className="h-full" style={{ width: `${(count / Math.max(1, max)) * 100}%`, backgroundColor: color }} />
+      </div>
+      <span className="w-14 shrink-0 text-xs text-gray-500">
+        <span className="font-bold text-gray-900">{count}</span>杯
+        {sub && <span className="ml-1 text-gray-400">{sub}</span>}
+      </span>
+    </div>
+  );
+}
+
+type Hyakumeiten = {
+  id: number;
+  list_order: number;
+  shop: string;
+  station: string | null;
+  holiday: string | null;
+  tabelog_url: string;
+  tabelog_shop_id: string;
+};
+
+type RankTab = "shops" | "types" | "stations" | "best" | "hyaku";
+const RANK_TABS: { key: RankTab; label: string }[] = [
+  { key: "shops", label: "杯数が多い順" },
+  { key: "types", label: "ジャンル別" },
+  { key: "stations", label: "駅別" },
+  { key: "best", label: "マイベスト" },
+  { key: "hyaku", label: "百名店" },
+];
+
+// ラーメンの積み上げを切り口を変えて見る枠。
+//
+//   杯数が多い順 … 行った回数が多い店のベスト5
+//   ジャンル別   … 形態（つけ麺・まぜそば…）と味・系統（塩・豚骨…）ごとの杯数
+//   駅別         … 食べログの最寄り駅ごとの杯数
+//   マイベスト   … 自分の★が高い順
+//   百名店       … 食べログ「ラーメン TOKYO 百名店」100店のうち、行った／まだ
+//
+// 種別の判定はAPI（lib/ramenBowlType.mjs）が付けたものを数えるだけ。ここでは決めない。
+// 対象はラーメン（is_ramen）のみ。うどん・カレーが混ざると杯数が読めなくなる。
+function RamenRankings({ ramen }: { ramen: Log[] }) {
+  const [tab, setTab] = useState<RankTab>("shops");
+  const [hyaku, setHyaku] = useState<Hyakumeiten[] | null>(null);
+  const [hyakuError, setHyakuError] = useState(false);
+  const [onlyUnvisited, setOnlyUnvisited] = useState(true);
+
+  // 百名店は開いた時だけ取る（毎回100行を運ばない）
+  useEffect(() => {
+    if (tab !== "hyaku" || hyaku) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/ramen/hyakumeiten", { cache: "no-store" });
+        const d = await res.json();
+        if (!res.ok || d.error) throw new Error(d?.error ?? `status ${res.status}`);
+        if (alive) setHyaku(d.items ?? []);
+      } catch {
+        if (alive) setHyakuError(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tab, hyaku]);
+
+  // 店ごとの回数。同数なら最後に行った日が新しい方を上に
+  const shops = useMemo(() => {
+    const map = new Map<string, { shop: string; count: number; url: string | null; last: string }>();
+    for (const r of ramen) {
+      const cur = map.get(r.shop);
+      if (cur) {
+        cur.count += 1;
+        if (r.eaten_on > cur.last) cur.last = r.eaten_on;
+        if (!cur.url && r.tabelog_shop_url) cur.url = r.tabelog_shop_url;
+      } else {
+        map.set(r.shop, { shop: r.shop, count: 1, url: r.tabelog_shop_url, last: r.eaten_on });
+      }
+    }
+    return Array.from(map.values())
+      .sort((a, b) => b.count - a.count || (a.last < b.last ? 1 : -1))
+      .slice(0, 5);
+  }, [ramen]);
+
+  const types = useMemo(() => summarizeBowlTypes(ramen), [ramen]);
+
+  // 駅別。食べログの最寄り駅は「地下鉄成増、成増」のように複数書かれているので先頭だけ使う。
+  // 駅が入っていない杯は「（駅なし）」で別に数え、棒には混ぜない
+  const stations = useMemo(() => {
+    const map = new Map<string, number>();
+    let none = 0;
+    for (const r of ramen) {
+      const st = (r.area ?? "").split(/[、,]/)[0]?.trim() ?? "";
+      if (!st) {
+        none += 1;
+        continue;
+      }
+      map.set(st, (map.get(st) ?? 0) + 1);
+    }
+    const rows = Array.from(map.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "ja"))
+      .slice(0, 8);
+    return { rows, none, total: map.size };
+  }, [ramen]);
+
+  // 自分の★が高い順。同点は新しい方を上に。★を付けていない杯は入らない
+  const best = useMemo(
+    () =>
+      ramen
+        .filter((r) => r.stars != null)
+        .sort((a, b) => Number(b.stars) - Number(a.stars) || (a.eaten_on < b.eaten_on ? 1 : -1))
+        .slice(0, 10),
+    [ramen]
+  );
+
+  // 百名店との突き合わせ。食べログの店ID（URL末尾の数字）で当て、
+  // 店URLが入っていない杯のために店名（空白・全半角だけ吸収）でも当てる
+  const visited = useMemo(() => {
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    for (const r of ramen) {
+      const id = tabelogShopId(r.tabelog_shop_url);
+      if (id) ids.add(id);
+      names.add(normalizeShopName(r.shop));
+    }
+    return { ids, names };
+  }, [ramen]);
+  const hyakuRows = useMemo(() => {
+    if (!hyaku) return null;
+    const rows = hyaku.map((h) => ({
+      ...h,
+      done: visited.ids.has(h.tabelog_shop_id) || visited.names.has(normalizeShopName(h.shop)),
+    }));
+    return { rows, doneCount: rows.filter((r) => r.done).length };
+  }, [hyaku, visited]);
+
+  const maxStyle = Math.max(1, ...types.styles.map((x) => x.count));
+  const maxTaste = Math.max(1, ...types.tastes.map((x) => x.count));
+  const maxStation = Math.max(1, ...stations.rows.map((x) => x.count));
+
+  return (
+    <Section>
+      <ChartTitle color={C_BOWL} title="ランキング" hint={`ラーメン${ramen.length}杯から`} />
+      <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="ランキングの切り口">
+        {RANK_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+            className={`rounded-full px-3 py-1 text-xs font-bold transition active:scale-95 ${
+              tab === t.key ? "text-white" : "bg-white text-gray-600 ring-1 ring-gray-200"
+            }`}
+            style={tab === t.key ? { backgroundColor: C_BOWL } : undefined}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "shops" && (
+        <ol className="space-y-2" data-testid="rank-shops">
+          {shops.map((r, i) => (
+            <li key={r.shop} className="flex items-center gap-3">
+              <span className="w-4 shrink-0 text-xs font-bold text-gray-400">{i + 1}</span>
+              {r.url ? (
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800 underline decoration-gray-300 active:opacity-70"
+                >
+                  {r.shop}
+                </a>
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">{r.shop}</span>
+              )}
+              <span className="shrink-0 text-sm text-gray-500">
+                <span className="font-bold text-gray-900">{r.count}</span>回
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {tab === "types" && (
+        <div data-testid="rank-types">
+          <p className="mb-1 text-[0.625rem] font-bold text-gray-400">形態</p>
+          <div className="space-y-2">
+            {types.styles.map((x) => (
+              <CountBar key={x.label} label={x.label} count={x.count} max={maxStyle} color={C_BOWL} />
+            ))}
+          </div>
+          <p className="mb-1 mt-4 text-[0.625rem] font-bold text-gray-400">味・系統</p>
+          <div className="space-y-2">
+            {types.tastes.map((x) => (
+              <CountBar key={x.label} label={x.label} count={x.count} max={maxTaste} color="#c9a227" />
+            ))}
+          </div>
+          <p className="pt-2 text-[0.625rem] text-gray-400">
+            種別はメニュー欄・題名・本文の言葉から自動で判定。
+            {types.tasteUnknown > 0 && (
+              <>
+                味が読み取れなかった{types.tasteUnknown}杯は数えていません。
+              </>
+            )}
+            カードの「種別」を押せば直せます。
+          </p>
+        </div>
+      )}
+
+      {tab === "stations" && (
+        <div data-testid="rank-stations">
+          <div className="space-y-2">
+            {stations.rows.map((x) => (
+              <CountBar key={x.label} label={x.label} count={x.count} max={maxStation} color={C_BOWL} />
+            ))}
+          </div>
+          <p className="pt-2 text-[0.625rem] text-gray-400">
+            食べログの最寄り駅（先頭の駅）で数えた上位{stations.rows.length}駅／全{stations.total}駅。
+            {stations.none > 0 && <>駅の無い{stations.none}杯は含みません。</>}
+          </p>
+        </div>
+      )}
+
+      {tab === "best" && (
+        <ol className="space-y-2" data-testid="rank-best">
+          {best.map((r, i) => (
+            <li key={r.id} className="flex items-center gap-3">
+              <span className="w-4 shrink-0 text-xs font-bold text-gray-400">{i + 1}</span>
+              <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-800 ring-1 ring-orange-200">
+                {starsText(r.stars, r.stars_label)}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-gray-800">{r.shop}</span>
+                <span className="block truncate text-[0.6875rem] text-gray-400">
+                  {r.eaten_on.slice(5).replace("-", "/")}
+                  {r.menu ? `・${r.menu}` : ""}
+                </span>
+              </span>
+            </li>
+          ))}
+          {best.length === 0 && <li className="text-sm text-gray-400">★を付けた杯がまだありません</li>}
+        </ol>
+      )}
+
+      {tab === "hyaku" && (
+        <div data-testid="rank-hyaku">
+          {hyakuError && <p className="text-sm text-rose-600">百名店の一覧を読み込めませんでした</p>}
+          {!hyakuRows && !hyakuError && <p className="text-sm text-gray-400">読み込み中…</p>}
+          {hyakuRows && (
+            <>
+              <div className="mb-2 flex items-center gap-2">
+                <p className="text-sm text-gray-600">
+                  ラーメン TOKYO 百名店 2025 ─ 訪問済み{" "}
+                  <span className="font-bold text-gray-900">{hyakuRows.doneCount}</span> / 100
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setOnlyUnvisited((v) => !v)}
+                  className={`ml-auto rounded-full px-2 py-0.5 text-xs font-bold ring-1 active:scale-95 ${
+                    onlyUnvisited ? "bg-indigo-600 text-white ring-indigo-600" : "bg-white text-gray-600 ring-gray-200"
+                  }`}
+                >
+                  {onlyUnvisited ? "まだの店だけ" : "全部"}
+                </button>
+              </div>
+              <ol className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+                {hyakuRows.rows
+                  .filter((r) => !onlyUnvisited || !r.done)
+                  .map((r) => (
+                    <li key={r.id} className="flex items-center gap-2">
+                      <span className={`w-4 shrink-0 text-center text-xs ${r.done ? "text-emerald-600" : "text-gray-300"}`}>
+                        {r.done ? "✓" : "・"}
+                      </span>
+                      <a
+                        href={r.tabelog_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={`min-w-0 flex-1 truncate text-sm underline decoration-gray-300 active:opacity-70 ${
+                          r.done ? "text-gray-400" : "font-medium text-gray-800"
+                        }`}
+                      >
+                        {r.shop}
+                      </a>
+                      <span className="shrink-0 text-[0.6875rem] text-gray-500">{r.station ?? ""}</span>
+                    </li>
+                  ))}
+              </ol>
+              <p className="pt-2 text-[0.625rem] text-gray-400">
+                出典：食べログ（2025年12月2日発表）。行ったかどうかは食べログの店URLで突き合わせ。
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
   return (
@@ -146,6 +479,92 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     >
       {done ? "コピーしました" : label}
     </button>
+  );
+}
+
+// 種別のバッジ。タップで選択肢が開き、選ぶと手入力として保存される。
+// 「自動」を選ぶと手入力を消して自動判定に戻す。
+function BowlTypeBadges({
+  log,
+  busy,
+  onPick,
+}: {
+  log: Log;
+  busy: boolean;
+  onPick: (field: "bowl_style" | "bowl_taste", value: string | null) => void;
+}) {
+  const [open, setOpen] = useState<"bowl_style" | "bowl_taste" | null>(null);
+  const style = log.style ?? "ラーメン";
+  const taste = log.taste ?? null;
+  const manualStyle = !!log.bowl_style;
+  const manualTaste = !!log.bowl_taste;
+
+  const chip = (
+    label: string,
+    manual: boolean,
+    field: "bowl_style" | "bowl_taste",
+    placeholder: boolean
+  ) => (
+    <button
+      type="button"
+      onClick={() => setOpen(open === field ? null : field)}
+      className={`rounded-full px-2 py-0.5 text-xs font-bold ring-1 active:scale-95 ${
+        placeholder
+          ? "bg-white text-gray-400 ring-dashed ring-gray-300"
+          : manual
+            ? "bg-gray-800 text-white ring-gray-800"
+            : "bg-gray-100 text-gray-700 ring-gray-200"
+      }`}
+      title={manual ? "手で選んだ種別" : "本文からの自動判定（押して直せる）"}
+    >
+      {label}
+    </button>
+  );
+
+  const choices = open === "bowl_style" ? BOWL_STYLES : BOWL_TASTES;
+  const current = open === "bowl_style" ? style : taste;
+
+  return (
+    <div className="mt-2">
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="text-[0.625rem] font-bold text-gray-400">種別</span>
+        {chip(style, manualStyle, "bowl_style", false)}
+        {chip(taste ?? "味は未設定", manualTaste, "bowl_taste", taste == null)}
+      </div>
+      {open && (
+        <div className="mt-1 flex flex-wrap gap-1 rounded-lg bg-gray-50 p-2">
+          {choices.map((c) => (
+            <button
+              key={c}
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                onPick(open, c);
+                setOpen(null);
+              }}
+              className={`rounded-full px-2 py-0.5 text-xs font-medium active:scale-95 disabled:opacity-50 ${
+                c === current ? "bg-indigo-600 text-white" : "bg-white text-gray-700 ring-1 ring-gray-200"
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+          {(open === "bowl_style" ? manualStyle : manualTaste) && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                onPick(open, null);
+                setOpen(null);
+              }}
+              className="rounded-full px-2 py-0.5 text-xs text-gray-500 underline active:scale-95 disabled:opacity-50"
+            >
+              自動に戻す
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -330,6 +749,14 @@ function LogCard({ log, onChanged }: { log: Log; onChanged: () => void }) {
           <span className="ml-1 text-gray-400">・{log.visit_count}回目</span>
         )}
       </p>
+
+      {/* 種別（形態・味）。自動判定はメニュー欄や本文の言葉に引きずられることが
+          あるので、押せば直せる。手入力は自動判定より必ず優先される。 */}
+      <BowlTypeBadges
+        log={log}
+        busy={busy === "type"}
+        onPick={(field, value) => patch({ [field]: value }, "type")}
+      />
 
       {log.menu && (
         <p className="mt-2 text-sm font-medium text-gray-700">
@@ -1187,20 +1614,8 @@ export default function RamenPage() {
     return Array.from(map.values()).sort((a, b) => (a.ym < b.ym ? 1 : -1));
   }, [items]);
 
-  // 食べログの「何回目」は行ったカレンダー経由では取れないため、
-  // ここに溜まっている記録そのものを数える＝今年の訪問回数。通算ではない。
-  const repeats = useMemo(() => {
-    const map = new Map<string, { shop: string; count: number; url: string | null }>();
-    for (const i of items ?? []) {
-      const cur = map.get(i.shop);
-      if (cur) cur.count += 1;
-      else map.set(i.shop, { shop: i.shop, count: 1, url: i.tabelog_shop_url });
-    }
-    return Array.from(map.values())
-      .filter((r) => r.count > 1)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 6);
-  }, [items]);
+  // ランキングの対象はラーメンだけ（うどん・カレーが混ざると杯数が読めない）
+  const ramenOnly = useMemo(() => (items ?? []).filter((i) => i.is_ramen), [items]);
 
   // 未処理（文章まち・投稿まち）はいつでも最上段。埋もれると運用が止まるため。
   const pending = useMemo(
@@ -1333,35 +1748,7 @@ export default function RamenPage() {
             <MonthlyBars rows={monthly} />
           </Section>
 
-          {repeats.length > 0 && (
-            <Section>
-              <ChartTitle color={C_BOWL} title="通っている店" hint="2026年の訪問回数" />
-              <ol className="space-y-2">
-                {repeats.map((r, i) => (
-                  <li key={r.shop} className="flex items-center gap-3">
-                    <span className="w-4 shrink-0 text-xs font-bold text-gray-400">{i + 1}</span>
-                    {r.url ? (
-                      <a
-                        href={r.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800 underline decoration-gray-300 active:opacity-70"
-                      >
-                        {r.shop}
-                      </a>
-                    ) : (
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800">
-                        {r.shop}
-                      </span>
-                    )}
-                    <span className="shrink-0 text-sm text-gray-500">
-                      <span className="font-bold text-gray-900">{r.count}</span>回
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            </Section>
-          )}
+          <RamenRankings ramen={ramenOnly} />
 
           <MonthlyDrafts months={months} month={month} onMonthChange={setMonth} />
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serviceCreds } from "@/lib/supabase";
 import { captureAuthorized, thumbPathsFor } from "@/lib/ramen";
+import { bowlStyleOf, bowlTasteOf } from "@/lib/ramenBowlType.mjs";
 
 // ラーメン（ライフOS側）：1行＝1杯（1訪問）の記録 ramen_logs を読む。
 // 食べログ（mirainotakara）の口コミと X（@0kara1_man）の投稿を同じ行に束ねてあり、
@@ -46,6 +47,8 @@ const COLUMNS = [
   "draft_tabelog",
   "draft_x",
   "photo_urls",
+  "bowl_style",
+  "bowl_taste",
 ].join(",");
 
 // 一覧だけを描く画面（/ramen/all）向けの軽い列。
@@ -54,7 +57,7 @@ const COLUMNS = [
 // といった下書き・本文系で、一覧は日付・杯番号・★・店名・写真しか使わない。
 // 下書き全文まで毎回運ぶと、サムネイルが出始めるまでの待ちがその分延びる
 // （2026-09-13 実測）。
-const LIST_COLUMNS = [
+const LIST_COLUMN_NAMES = [
   "id",
   "eaten_on",
   "bowl_no",
@@ -72,7 +75,21 @@ const LIST_COLUMNS = [
   "status",
   "x_url",
   "tabelog_shop_url",
-].join(",");
+];
+
+
+// view=list で「種別」を付けるためにサーバー側だけで読む列。
+// 判定（lib/ramenBowlType.mjs）は menu・title・memo・excerpt・genre と手入力の2列を見る。
+// 本文は返す前に落とすので、端末へ行く量は増えない。
+const CLASSIFY_ONLY_COLUMNS = [
+  "menu",
+  "title",
+  "memo",
+  "excerpt",
+  "genre",
+  "bowl_style",
+  "bowl_taste",
+];
 
 // view=text 用。ある月のカードを描くのに要る行だけを、全列で取り直すときに使う。
 // 月の指定は "YYYY-MM" だけを許す（そのままクエリへ入るため、形を絞る）。
@@ -101,7 +118,10 @@ export async function GET(req: NextRequest) {
   const view = sp.get("view");
 
   // view=list は一覧用の軽い列だけ。指定が無ければ従来どおり全列。
-  const columns = view === "list" ? LIST_COLUMNS : COLUMNS;
+  const columns =
+    view === "list"
+      ? [...LIST_COLUMN_NAMES, ...CLASSIFY_ONLY_COLUMNS.filter((c) => !LIST_COLUMN_NAMES.includes(c))].join(",")
+      : COLUMNS;
 
   // view=text は「いま画面に出す行」だけを全列で取る。
   //
@@ -142,7 +162,23 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const items = await res.json();
+  const raw: Record<string, unknown>[] = await res.json();
+
+  // 種別（形態・味）を付けて返す。手入力があればそれ、無ければ本文から判定。
+  // 判定は1か所（lib/ramenBowlType.mjs）に寄せ、画面では数えるだけにする。
+  const items = raw.map((row) => {
+    const withType = {
+      ...row,
+      style: bowlStyleOf(row),
+      taste: bowlTasteOf(row),
+    };
+    if (view !== "list") return withType;
+    // 一覧には判定用に読んだ本文を渡さない（一覧の列に無いものを落とす）
+    for (const col of CLASSIFY_ONLY_COLUMNS) {
+      if (!LIST_COLUMN_NAMES.includes(col)) delete (withType as Record<string, unknown>)[col];
+    }
+    return withType;
+  });
   return NextResponse.json({ items });
 }
 
