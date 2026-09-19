@@ -265,6 +265,13 @@ const LIFESTYLE_HEALTH_FEATURES: Feature[] = [
     desc: "壮年部・男子部を人ごとに、いつ訪ね会えたか・何を話したかと次の予定を残す",
     accent: "bg-violet-100 text-violet-700",
   },
+  {
+    href: "/gakkai",
+    icon: "📄",
+    title: "学会書類",
+    desc: "毎朝取り込まれる書類の要約と提出期限を一覧し、納期3日前・前日・当日に通知を受ける",
+    accent: "bg-amber-100 text-amber-700",
+  },
 ];
 
 type HomeStats = {

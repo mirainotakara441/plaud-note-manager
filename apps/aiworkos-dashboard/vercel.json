@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/notion-sync",
       "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/gakkai/notify",
+      "schedule": "0 23 * * *"
     }
   ]
 }
