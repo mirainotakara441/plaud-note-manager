@@ -3,7 +3,7 @@ import { serviceCreds, restHeaders } from "@/lib/supabase";
 
 // AI発信者ウォッチ。/news の右カラムのカードと /news/creators が読む。
 //
-// 毎朝6時にMac上のClaudeが16名のXアカウントを読み、x-creators-put.py が
+// 毎朝6時にMac上のClaudeがXアカウント（x_creator_accounts が正）を読み、x-creators-put.py が
 // x_creator_runs / x_creator_posts へ書く。ここは読むだけ。
 //
 // 書き込み口をここに作っていないのは X監視ダイジェスト（x-digest）と同じ理由
