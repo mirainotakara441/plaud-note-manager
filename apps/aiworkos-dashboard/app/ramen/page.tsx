@@ -11,6 +11,11 @@ import {
   summarizeBowlTypes,
   tabelogShopId,
 } from "@/lib/ramenBowlType.mjs";
+import { stationKey } from "@/lib/stationGeo.mjs";
+import dynamic from "next/dynamic";
+
+// 地図は Leaflet（window 前提）なので、サーバー側では描かない
+const RamenMap = dynamic(() => import("./RamenMap"), { ssr: false });
 
 // ラーメン（ライフOS側の第1ブロック）。1行＝1杯（1訪問）。
 // データは /api/ramen（Supabase ramen_logs・読み取り専用）。
@@ -185,14 +190,17 @@ type Hyakumeiten = {
   tabelog_shop_id: string;
 };
 
-type RankTab = "shops" | "types" | "stations" | "best" | "hyaku";
+type RankTab = "shops" | "types" | "stations" | "best" | "hyaku" | "map";
 const RANK_TABS: { key: RankTab; label: string }[] = [
   { key: "shops", label: "杯数が多い順" },
   { key: "types", label: "ジャンル別" },
   { key: "stations", label: "駅別" },
   { key: "best", label: "マイベスト" },
   { key: "hyaku", label: "百名店" },
+  { key: "map", label: "地図" },
 ];
+
+type StationGeo = { station: string; lat: number; lng: number };
 
 // ラーメンの積み上げを切り口を変えて見る枠。
 //
@@ -209,10 +217,31 @@ function RamenRankings({ ramen }: { ramen: Log[] }) {
   const [hyaku, setHyaku] = useState<Hyakumeiten[] | null>(null);
   const [hyakuError, setHyakuError] = useState(false);
   const [onlyUnvisited, setOnlyUnvisited] = useState(true);
+  const [geo, setGeo] = useState<{ items: StationGeo[]; unresolved: number; deferred: number } | null>(null);
+  const [geoError, setGeoError] = useState(false);
 
-  // 百名店は開いた時だけ取る（毎回100行を運ばない）
+  // 駅の座標は地図を開いた時だけ取る（無い駅はAPIがその場で引いて足す）
   useEffect(() => {
-    if (tab !== "hyaku" || hyaku) return;
+    if (tab !== "map" || geo) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/ramen/stations", { cache: "no-store" });
+        const d = await res.json();
+        if (!res.ok || d.error) throw new Error(d?.error ?? `status ${res.status}`);
+        if (alive) setGeo({ items: d.items ?? [], unresolved: d.unresolved ?? 0, deferred: d.deferred ?? 0 });
+      } catch {
+        if (alive) setGeoError(true);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tab, geo]);
+
+  // 百名店は開いた時だけ取る（毎回100行を運ばない）。地図でも使う
+  useEffect(() => {
+    if ((tab !== "hyaku" && tab !== "map") || hyaku) return;
     let alive = true;
     (async () => {
       try {
@@ -245,6 +274,21 @@ function RamenRankings({ ramen }: { ramen: Log[] }) {
     return Array.from(map.values())
       .sort((a, b) => b.count - a.count || (a.last < b.last ? 1 : -1))
       .slice(0, 5);
+  }, [ramen]);
+
+  // 再訪率。訪問した店のうち2回以上行った店の割合と、再訪で食べた杯数
+  const revisit = useMemo(() => {
+    const perShop = new Map<string, number>();
+    for (const r of ramen) perShop.set(r.shop, (perShop.get(r.shop) ?? 0) + 1);
+    const shopsTotal = perShop.size;
+    const repeatShops = Array.from(perShop.values()).filter((n) => n >= 2).length;
+    const repeatBowls = Array.from(perShop.values()).reduce((a, n) => a + Math.max(0, n - 1), 0);
+    return {
+      shopsTotal,
+      repeatShops,
+      repeatBowls,
+      rate: shopsTotal ? Math.round((repeatShops / shopsTotal) * 100) : 0,
+    };
   }, [ramen]);
 
   const types = useMemo(() => summarizeBowlTypes(ramen), [ramen]);
@@ -300,6 +344,52 @@ function RamenRankings({ ramen }: { ramen: Log[] }) {
     return { rows, doneCount: rows.filter((r) => r.done).length };
   }, [hyaku, visited]);
 
+  // 地図の点。駅ごとにまとめ、訪問した駅は杯数、百名店の未訪問だけの駅は店数を持つ
+  const mapPoints = useMemo(() => {
+    if (!geo) return [];
+    const coord = new Map(geo.items.map((g) => [g.station, g]));
+    const visitedByStation = new Map<string, { count: number; shops: Map<string, number> }>();
+    for (const r of ramen) {
+      const k = stationKey(r.area);
+      if (!k || !coord.has(k)) continue;
+      const cur = visitedByStation.get(k) ?? { count: 0, shops: new Map<string, number>() };
+      cur.count += 1;
+      cur.shops.set(r.shop, (cur.shops.get(r.shop) ?? 0) + 1);
+      visitedByStation.set(k, cur);
+    }
+    const todoByStation = new Map<string, { name: string; url: string }[]>();
+    for (const h of hyakuRows?.rows ?? []) {
+      if (h.done) continue;
+      const k = stationKey(h.station);
+      if (!k || !coord.has(k)) continue;
+      const list = todoByStation.get(k) ?? [];
+      list.push({ name: h.shop, url: h.tabelog_url });
+      todoByStation.set(k, list);
+    }
+    const out: import("./RamenMap").MapPoint[] = [];
+    for (const [k, v] of visitedByStation) {
+      const g = coord.get(k)!;
+      const shops = Array.from(v.shops.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, n]) => ({ name, sub: `${n}杯` }));
+      const todo = todoByStation.get(k) ?? [];
+      out.push({
+        key: k,
+        lat: g.lat,
+        lng: g.lng,
+        kind: "visited",
+        count: v.count,
+        shops: [...shops, ...todo.map((t) => ({ name: t.name, sub: "百名店・まだ", url: t.url }))],
+      });
+    }
+    for (const [k, list] of todoByStation) {
+      if (visitedByStation.has(k)) continue;
+      const g = coord.get(k)!;
+      out.push({ key: k, lat: g.lat, lng: g.lng, kind: "todo", count: list.length, shops: list });
+    }
+    return out;
+  }, [geo, ramen, hyakuRows]);
+
   const maxStyle = Math.max(1, ...types.styles.map((x) => x.count));
   const maxTaste = Math.max(1, ...types.tastes.map((x) => x.count));
   const maxStation = Math.max(1, ...stations.rows.map((x) => x.count));
@@ -325,6 +415,13 @@ function RamenRankings({ ramen }: { ramen: Log[] }) {
         ))}
       </div>
 
+      {tab === "shops" && (
+        <p className="mb-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600" data-testid="rank-revisit">
+          訪問した <span className="font-bold text-gray-900">{revisit.shopsTotal}</span> 店のうち、2回以上行った店は{" "}
+          <span className="font-bold text-gray-900">{revisit.repeatShops}</span> 店（再訪率{" "}
+          <span className="font-bold text-gray-900">{revisit.rate}%</span>）。再訪で食べた杯数 {revisit.repeatBowls} 杯。
+        </p>
+      )}
       {tab === "shops" && (
         <ol className="space-y-2" data-testid="rank-shops">
           {shops.map((r, i) => (
@@ -458,6 +555,25 @@ function RamenRankings({ ramen }: { ramen: Log[] }) {
                 出典：食べログ（2025年12月2日発表）。行ったかどうかは食べログの店URLで突き合わせ。
               </p>
             </>
+          )}
+        </div>
+      )}
+
+      {tab === "map" && (
+        <div data-testid="rank-map">
+          {geoError && <p className="text-sm text-rose-600">駅の座標を読み込めませんでした</p>}
+          {!geo && !geoError && <p className="text-sm text-gray-400">駅の座標を読み込み中…</p>}
+          {geo && mapPoints.length > 0 && <RamenMap points={mapPoints} />}
+          {geo && (
+            <p className="pt-2 text-[0.625rem] leading-relaxed text-gray-400">
+              <span className="mr-2 inline-block h-2.5 w-2.5 rounded-full align-middle" style={{ backgroundColor: C_BOWL }} />
+              訪問した駅（丸の大きさ＝杯数）
+              <span className="ml-3 mr-2 inline-block h-2.5 w-2.5 rounded-full border-2 border-indigo-600 bg-white align-middle" />
+              百名店でまだの店がある駅。
+              店の位置ではなく最寄り駅に置いている。
+              {geo.unresolved > 0 && <>座標が引けなかった駅が{geo.unresolved}あり、その分は出ていない。</>}
+              {geo.deferred > 0 && <>残り{geo.deferred}駅は次に開いた時に引く。</>}
+            </p>
           )}
         </div>
       )}

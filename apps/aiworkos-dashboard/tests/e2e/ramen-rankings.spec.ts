@@ -116,6 +116,44 @@ test.describe("ラーメンのランキング", () => {
     await expect(items).toHaveCount(100);
   });
 
+  test("再訪率が出て、数字が実データと合う", async ({ page, playwright, baseURL }) => {
+    const ctx = await playwright.request.newContext({
+      baseURL,
+      extraHTTPHeaders: { cookie: `${COOKIE_NAME}=${authCookieValue()}` },
+    });
+    const json = await (await ctx.get("/api/ramen?view=list")).json();
+    const ramen = (json.items ?? []).filter((i: { is_ramen: boolean }) => i.is_ramen);
+    const per = new Map<string, number>();
+    for (const r of ramen) per.set(r.shop, (per.get(r.shop) ?? 0) + 1);
+    const shopsTotal = per.size;
+    const repeatShops = [...per.values()].filter((n) => n >= 2).length;
+    await ctx.dispose();
+
+    await page.goto("/ramen");
+    const box = page.getByTestId("rank-revisit");
+    await expect(box).toBeVisible({ timeout: 30_000 });
+    const text = (await box.textContent()) ?? "";
+    expect(text).toContain(`訪問した ${shopsTotal} 店`);
+    expect(text).toContain(`2回以上行った店は ${repeatShops} 店`);
+    expect(text).toContain(`再訪率 ${Math.round((repeatShops / shopsTotal) * 100)}%`);
+  });
+
+  test("地図に訪問した駅と百名店の駅が置かれる", async ({ page }) => {
+    await page.goto("/ramen");
+    await page.getByRole("tab", { name: "地図" }).click();
+    const map = page.getByTestId("ramen-map");
+    await expect(map).toBeVisible({ timeout: 60_000 });
+    // Leaflet が丸（SVGのpath）を描いている。訪問の駅が60ほどあるので、少なくとも数十
+    await expect
+      .poll(async () => await map.locator("path.leaflet-interactive").count(), { timeout: 30_000 })
+      .toBeGreaterThan(30);
+    // OpenStreetMap の帰属表示が消えていない
+    await expect(map.getByText("OpenStreetMap")).toBeVisible();
+    // 丸を押すと店名の吹き出しが出る
+    await map.locator("path.leaflet-interactive").first().click({ force: true });
+    await expect(map.locator(".leaflet-popup-content")).toBeVisible();
+  });
+
   test("百名店の口は合言葉が無いと通らない", async ({ playwright, baseURL }) => {
     const bare = await playwright.request.newContext({ baseURL });
     const res = await bare.get("/api/ramen/hyakumeiten");
