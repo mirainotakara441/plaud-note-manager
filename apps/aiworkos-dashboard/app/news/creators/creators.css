@@ -1,0 +1,251 @@
+/* AI発信者ウォッチ（/news/creators）の見た目。
+ *
+ * トークンは news.css の .nw をそのまま使う（同じ紙面の続きなので、色・書体・
+ * 角丸を別に持たない）。ここには、このページだけにある部品——日付ナビ・
+ * 総括4ブロック・発信者ごとの投稿束・監視一覧の表——だけを置く。
+ * クラス名は .nw-cr- で始める（news.css の .nw-card 等と衝突させない）。 */
+
+/* ---------- 日付ナビ ---------- */
+.nw-cr-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 1rem 0 0.75rem;
+  border-bottom: 2px solid var(--ff-gray-900);
+}
+.nw-cr-nav-date {
+  font: 700 var(--fs-20) / var(--lh-tight) var(--font-display);
+  letter-spacing: var(--ls-tight);
+}
+.nw-cr-nav-sub {
+  display: block;
+  margin-top: 0.25rem;
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  color: var(--text-muted);
+}
+.nw-cr-nav-btns {
+  display: flex;
+  gap: 0.5rem;
+}
+.nw-cr-nav-btn {
+  height: 2rem;
+  padding: 0 0.875rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font: 500 var(--fs-13) / var(--lh-snug) var(--font-body);
+  cursor: pointer;
+}
+.nw-cr-nav-btn:hover:not(:disabled) {
+  border-color: var(--ff-green-500);
+}
+.nw-cr-nav-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ---------- 総括4ブロック ---------- */
+.nw-cr-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0 2rem;
+}
+.nw-cr-block {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  overflow: hidden;
+}
+.nw-cr-block-head {
+  padding: 0.625rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+  font: 500 var(--fs-13) / var(--lh-snug) var(--font-body);
+}
+.nw-cr-block-body {
+  padding: 0.875rem 1rem;
+  font: var(--fs-15) / var(--lh-normal) var(--font-body);
+  color: var(--text-primary);
+  white-space: pre-line;
+}
+.nw-cr-block-body.is-empty {
+  color: var(--text-muted);
+  font-size: var(--fs-13);
+}
+/* 「今日の動向」は幅いっぱい。1〜2文の見出しなので、2段に割ると読みにくい */
+.nw-cr-block.is-wide {
+  grid-column: 1 / -1;
+}
+.nw-cr-block.is-wide .nw-cr-block-body {
+  font: 500 var(--fs-18) / var(--lh-snug) var(--font-display);
+  text-wrap: pretty;
+}
+
+/* ---------- 投稿一覧（発信者ごとの束） ---------- */
+.nw-cr-sechead {
+  margin: 2rem 0 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--ff-gray-900);
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+}
+.nw-cr-sechead b {
+  font: 700 var(--fs-16) / var(--lh-tight) var(--font-display);
+}
+.nw-cr-sechead span {
+  font: var(--fs-12) / var(--lh-snug) var(--font-latin);
+  color: var(--text-muted);
+}
+.nw-cr-group {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  margin-bottom: 1rem;
+  overflow: hidden;
+}
+.nw-cr-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+}
+.nw-cr-group-name {
+  font: 700 var(--fs-15) / var(--lh-snug) var(--font-body);
+  color: var(--text-primary);
+}
+.nw-cr-group-handle {
+  font: var(--fs-12) / var(--lh-snug) var(--font-latin);
+  color: var(--ff-blue-500);
+}
+.nw-cr-group-focus {
+  flex-basis: 100%;
+  font: var(--fs-12) / var(--lh-snug) var(--font-body);
+  color: var(--text-muted);
+}
+.nw-cr-cat {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.4375rem;
+  border-radius: var(--radius-xs);
+  font: 500 var(--fs-12) / 1 var(--font-body);
+  color: var(--text-inverse);
+  background: var(--cat-other);
+}
+.nw-cr-post {
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.nw-cr-post:last-child {
+  border-bottom: none;
+}
+.nw-cr-post-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+  font: var(--fs-12) / var(--lh-snug) var(--font-latin);
+  color: var(--text-muted);
+}
+.nw-cr-pattern {
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.4375rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  font: 500 var(--fs-11) / 1 var(--font-body);
+  color: var(--text-secondary);
+  background: var(--surface-card);
+}
+.nw-cr-post-body {
+  padding: 0.625rem 0.75rem;
+  background: var(--surface-subtle);
+  border-left: 2px solid var(--border-strong);
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nw-cr-post-summary {
+  margin-top: 0.5rem !important;
+  font: 500 var(--fs-15) / var(--lh-normal) var(--font-body);
+  color: var(--text-primary);
+}
+.nw-cr-post-why {
+  margin-top: 0.375rem !important;
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--ff-green-700);
+}
+.nw-cr-post-why::before {
+  content: "真似どころ：";
+  color: var(--text-muted);
+}
+.nw-cr-group-empty {
+  padding: 0.875rem 1rem;
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+  color: var(--text-muted);
+}
+
+/* ---------- 監視しているアカウント（表） ---------- */
+.nw-cr-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+.nw-cr-table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+  font: var(--fs-13) / var(--lh-normal) var(--font-body);
+}
+.nw-cr-table th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border-default);
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.nw-cr-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: top;
+}
+.nw-cr-table tr:last-child td {
+  border-bottom: none;
+}
+.nw-cr-table td.is-num {
+  text-align: right;
+  font-family: var(--font-latin);
+  white-space: nowrap;
+}
+.nw-cr-table tr.is-inactive td {
+  color: var(--text-muted);
+}
+
+/* ---------- 狭い画面 ---------- */
+@media (max-width: 40rem) {
+  .nw-cr-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nw-cr-nav-btns {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .nw-cr-nav-btn {
+    flex: 1;
+  }
+}

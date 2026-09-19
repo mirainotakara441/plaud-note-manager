@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import CreatorsCard from "./CreatorsCard";
 
 // 紙面の右カラム。毎朝6時のX監視3本を1枚にまとめて置く。
+// 4枚目の「AI発信者ウォッチ」は CreatorsCard.tsx（読む先が別なので分けてある）。
 //
 // 記事一覧とは別に読む（この中身は待たせない）。Xはログインの壁があって
 // 取れない朝が普通にあるので、「取れなかった」を空欄で誤魔化さず、
@@ -213,6 +215,9 @@ export default function XDigest() {
       </div>
 
       {d?.note && <p className="nw-card-note">{d.note}</p>}
+
+      {/* --- AI発信者ウォッチ（16名）。fetch は別 --- */}
+      <CreatorsCard />
     </div>
   );
 }
