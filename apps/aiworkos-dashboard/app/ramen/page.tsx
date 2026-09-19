@@ -462,14 +462,17 @@ function RamenRankings({ ramen }: { ramen: Log[] }) {
             ))}
           </div>
           <p className="pt-2 text-[0.625rem] text-gray-400">
-            種別はメニュー欄・題名・本文の言葉から自動で判定。
-            {types.tasteUnknown > 0 && (
-              <>
-                味が読み取れなかった{types.tasteUnknown}杯は数えていません。
-              </>
-            )}
-            カードの「種別」を押せば直せます。
+            種別はメニュー欄・題名・本文の言葉から自動で判定。カードの「種別」を押せば直せます。
           </p>
+          {types.tasteUnknown > 0 && (
+            <Link
+              href="/ramen/taste"
+              className="mt-2 flex items-center justify-between rounded-xl bg-orange-50 px-3 py-2 text-sm font-bold text-orange-900 ring-1 ring-orange-200 active:opacity-70"
+            >
+              <span>味が読み取れなかった {types.tasteUnknown} 杯に、1杯ずつ味をつける</span>
+              <span aria-hidden>→</span>
+            </Link>
+          )}
         </div>
       )}
 

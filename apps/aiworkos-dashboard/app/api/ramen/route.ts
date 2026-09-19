@@ -91,6 +91,25 @@ const CLASSIFY_ONLY_COLUMNS = [
   "bowl_taste",
 ];
 
+// view=taste 用。味・系統が決まっていないラーメンを、本人が1杯ずつ選ぶための列。
+// 写真・店名・メニュー・題名・本文の一部を見て思い出せるだけあればよい。
+const TASTE_QUEUE_COLUMNS = [
+  "id",
+  "eaten_on",
+  "bowl_no",
+  "shop",
+  "area",
+  "genre",
+  "menu",
+  "title",
+  "excerpt",
+  "memo",
+  "photo_urls",
+  "is_ramen",
+  "bowl_style",
+  "bowl_taste",
+].join(",");
+
 // view=text 用。ある月のカードを描くのに要る行だけを、全列で取り直すときに使う。
 // 月の指定は "YYYY-MM" だけを許す（そのままクエリへ入るため、形を絞る）。
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -117,11 +136,13 @@ export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams;
   const view = sp.get("view");
 
-  // view=list は一覧用の軽い列だけ。指定が無ければ従来どおり全列。
+  // view=list は一覧用の軽い列だけ。view=taste は味を選ぶ画面用。指定が無ければ全列。
   const columns =
     view === "list"
       ? [...LIST_COLUMN_NAMES, ...CLASSIFY_ONLY_COLUMNS.filter((c) => !LIST_COLUMN_NAMES.includes(c))].join(",")
-      : COLUMNS;
+      : view === "taste"
+        ? TASTE_QUEUE_COLUMNS
+        : COLUMNS;
 
   // view=text は「いま画面に出す行」だけを全列で取る。
   //
@@ -131,6 +152,10 @@ export async function GET(req: NextRequest) {
   // 集計と月の一覧は view=list が担い、こちらは描く行だけに絞る。
   const month = sp.get("month") ?? "";
   let filter = "";
+  if (view === "taste") {
+    // 味を選ぶのはラーメンだけ（うどん・カレーに味の系統は付けない）
+    filter = "&is_ramen=eq.true";
+  }
   if (view === "text") {
     if (!MONTH_RE.test(month)) {
       return NextResponse.json({ error: "monthの形式が不正です" }, { status: 400 });
@@ -166,18 +191,20 @@ export async function GET(req: NextRequest) {
 
   // 種別（形態・味）を付けて返す。手入力があればそれ、無ければ本文から判定。
   // 判定は1か所（lib/ramenBowlType.mjs）に寄せ、画面では数えるだけにする。
-  const items = raw.map((row) => {
+  const items = raw.flatMap((row) => {
     const withType = {
       ...row,
       style: bowlStyleOf(row),
       taste: bowlTasteOf(row),
     };
-    if (view !== "list") return withType;
+    // view=taste は味が決まっていない杯だけ。手で付けた杯は消える＝進む
+    if (view === "taste") return withType.taste ? [] : [withType];
+    if (view !== "list") return [withType];
     // 一覧には判定用に読んだ本文を渡さない（一覧の列に無いものを落とす）
     for (const col of CLASSIFY_ONLY_COLUMNS) {
       if (!LIST_COLUMN_NAMES.includes(col)) delete (withType as Record<string, unknown>)[col];
     }
-    return withType;
+    return [withType];
   });
   return NextResponse.json({ items });
 }
