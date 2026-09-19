@@ -11,7 +11,7 @@
     "test:smoke": "node tests/smoke.mjs",
     "test:e2e": "playwright test",
     "test:all": "node tests/run-all.mjs",
-    "build:hojin-qa": "node scripts/build-hojin-qa.mjs"
+    "build:hojin-qa": "node scripts/build-hojin-qa.mjs && node scripts/build-hojin-qa-public.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",

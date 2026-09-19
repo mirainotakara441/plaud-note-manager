@@ -43,6 +43,10 @@ const PUBLIC_PATHS = [
   // （HOJIN_QA_PASSPHRASE）で守る。実体の /hojin-qa は下の別分岐で判定する。
   /^\/qa-gate$/,
   /^\/api\/qa-gate$/,
+  // 法人請求QA 外部公開版（lib/qaOpen.ts）。合言葉の代わりに名前・メール登録を入口に
+  // するので、ここでは通す。書き込み API はルート側で来訪者 cookie を照合する。
+  /^\/qa-open$/,
+  /^\/api\/qa-open\/(enter|feedback)$/,
 ];
 
 export async function proxy(request: NextRequest) {

@@ -26,6 +26,7 @@ export default function BottomNav() {
   // 本体の導線を見せても /login に弾かれるだけなので出さない（lib/hojinQaAuth.ts）。
   if (
     pathname === "/qa-gate" ||
+    pathname === "/qa-open" ||
     pathname === "/hojin-qa" ||
     pathname.startsWith("/hojin-qa/")
   )
